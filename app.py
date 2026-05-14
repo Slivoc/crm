@@ -591,6 +591,23 @@ def inject_functions():
 
 
 
+
+@app.context_processor
+def inject_portal_access_request_counts():
+    if _is_static_request() or not current_user.is_authenticated:
+        return {'pending_portal_access_requests_count': 0}
+
+    pending_count_row = db_execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM portal_access_requests
+        WHERE status IN ('pending', 'reviewed')
+        """,
+        fetch='one'
+    ) or {}
+
+    return {'pending_portal_access_requests_count': int(pending_count_row.get('count') or 0)}
+
 @app.context_processor
 def inject_permissions():
     return dict(Permission=Permission)

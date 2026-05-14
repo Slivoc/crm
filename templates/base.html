@@ -885,6 +885,9 @@ input:-webkit-autofill {
               <a href="{{ url_for('portal_admin.portal_access_requests') }}"
                  class="link-dark rounded d-flex align-items-center ps-3 py-1">
                  <i class="bi bi-person-plus me-2"></i>Access Requests
+                 {% if pending_portal_access_requests_count > 0 %}
+                 <span class="badge bg-danger ms-2">{{ pending_portal_access_requests_count }}</span>
+                 {% endif %}
               </a>
           </li>
           <li>
