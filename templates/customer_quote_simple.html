@@ -664,18 +664,31 @@
                             {% endfor %}
                         </select>
                     </div>
-                    <button id="calculate-base-costs-btn" class="btn btn-sm btn-outline-secondary">
-                        <i class="bi bi-calculator me-1"></i>Recalculate Base Costs
-                    </button>
-                    <button id="calculate-delivery-btn" class="btn btn-sm btn-outline-secondary">
-                        <i class="bi bi-truck me-1"></i>Calculate Delivery
-                    </button>
-                    <button id="bulk-apply-margin-btn" class="btn btn-sm btn-outline-info">
-                        <i class="bi bi-percent me-1"></i>Bulk Apply Margin
-                    </button>
-                    <button id="calculate-all-btn" class="btn btn-sm btn-outline-primary">
-                        <i class="bi bi-arrow-repeat me-1"></i>Run All (Base + Delivery + Margin)
-                    </button>
+                    <div class="btn-group btn-group-sm" role="group">
+                        <button id="calculate-all-btn" class="btn btn-outline-primary" type="button">
+                            <i class="bi bi-arrow-repeat me-1"></i>Calculate Costs
+                        </button>
+                        <button type="button" class="btn btn-outline-primary dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-expanded="false">
+                            <span class="visually-hidden">Toggle cost actions</span>
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li>
+                                <button id="calculate-base-costs-btn" class="dropdown-item" type="button">
+                                    <i class="bi bi-calculator me-1"></i>Recalculate Base Costs
+                                </button>
+                            </li>
+                            <li>
+                                <button id="calculate-delivery-btn" class="dropdown-item" type="button">
+                                    <i class="bi bi-truck me-1"></i>Calculate Delivery
+                                </button>
+                            </li>
+                            <li>
+                                <button id="bulk-apply-margin-btn" class="dropdown-item" type="button">
+                                    <i class="bi bi-percent me-1"></i>Bulk Apply Margin
+                                </button>
+                            </li>
+                        </ul>
+                    </div>
                     <button id="save-all-btn" class="btn btn-sm btn-primary">
                         <i class="bi bi-save me-1"></i>Save All
                     </button>
