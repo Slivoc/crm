@@ -3,6 +3,7 @@ import logging
 import time
 import re
 import requests
+from decimal import Decimal, InvalidOperation
 from flask import current_app, g, render_template, abort
 from db import get_db_connection, execute as db_execute, db_cursor, CURRENCY_RATE_COLUMN
 from sqlalchemy import Column, String, Integer, Float, ForeignKey, create_engine, inspect, MetaData, Date, Boolean
@@ -415,14 +416,20 @@ def convert_currency(amount, from_currency, to_currency):
         to_currency: Target currency code
 
     Returns:
-        float: Converted amount
+        Converted amount. Decimal inputs return Decimal; other numeric inputs return float.
     """
+    if from_currency is None or to_currency is None:
+        raise ValueError("Source and target currencies are required")
+
+    from_currency = str(from_currency).upper()
+    to_currency = str(to_currency).upper()
+
     if from_currency == to_currency:
         return amount
 
     db = get_db_connection()
 
-    # Get rates (stored as rate to base currency)
+    # Rates are stored as "1 base currency = X currency".
     rate_col = CURRENCY_RATE_COLUMN or 'exchange_rate_to_eur'
     from_rate = db.execute(
         f'SELECT {rate_col} FROM currencies WHERE currency_code = ?',
@@ -439,6 +446,17 @@ def convert_currency(amount, from_currency, to_currency):
     if not from_rate or not to_rate:
         raise ValueError(f"Currency not found: {from_currency} or {to_currency}")
 
+    preserve_decimal = isinstance(amount, Decimal)
+    try:
+        amount_value = amount if preserve_decimal else Decimal(str(amount))
+        from_rate_value = Decimal(str(from_rate[rate_col]))
+        to_rate_value = Decimal(str(to_rate[rate_col]))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid currency amount or rate for {from_currency} to {to_currency}") from exc
+
+    if from_rate_value == 0:
+        raise ValueError(f"Invalid zero exchange rate for {from_currency}")
+
     # Convert: amount in from_currency -> base currency -> to_currency
     # If exchange_rate_to_base stores "1 BASE = X CURRENCY", then:
     # amount_in_base = amount / from_rate
@@ -448,12 +466,10 @@ def convert_currency(amount, from_currency, to_currency):
     # amount_in_base = amount * from_rate
     # amount_in_to = amount_in_base / to_rate
 
-    # Adjust based on how your rates are stored!
-    # Assuming: exchange_rate_to_eur = "1 BASE = X CURRENCY"
-    base_amount = amount / from_rate[rate_col]
-    converted = base_amount * to_rate[rate_col]
+    base_amount = amount_value / from_rate_value
+    converted = base_amount * to_rate_value
 
-    return converted
+    return converted if preserve_decimal else float(converted)
 
 def get_global_alternatives(base_part_number):
     base_part_number = create_base_part_number(base_part_number)
