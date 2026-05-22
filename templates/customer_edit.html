@@ -99,6 +99,11 @@
                  <i class="bi bi-link-45deg me-1"></i> Associations
                </a>
              </li>
+             <li class="nav-item">
+               <a class="nav-link" href="#commercial-insights" data-bs-toggle="tab">
+                 <i class="bi bi-cash-stack me-1"></i> Commercial Insights
+               </a>
+             </li>
            </ul>
 
            <div class="tab-content">
@@ -495,6 +500,340 @@
                                      <i class="bi bi-link-45deg fs-1"></i>
                                      <p>No associations yet</p>
                                  </div>
+                             </div>
+                         </div>
+                     </div>
+                 </div>
+             </div>
+
+             <!-- Commercial Insights Tab -->
+             <div class="tab-pane fade" id="commercial-insights" role="tabpanel">
+                 {% set sales_summary = commercial_insights.sales_summary %}
+                 {% set quote_summary = commercial_insights.quote_summary %}
+                 {% set quote_coverage = ((quote_summary.quoted_line_count or 0) / (quote_summary.parts_list_line_count or 1) * 100) %}
+
+                 <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+                     <div>
+                         <h5 class="mb-1">Commercial Insights</h5>
+                         <div class="text-muted small">
+                             Sales rankings are normalized to GBP from each order currency. Customer quote values are already stored in GBP.
+                             {% if commercial_insights.includes_subsidiaries %}
+                             This parent rollup includes {{ commercial_insights.scoped_customers|length - 1 }} subsidiary
+                             {{ 'company' if commercial_insights.scoped_customers|length == 2 else 'companies' }}.
+                             {% endif %}
+                         </div>
+                     </div>
+                     <div class="d-flex flex-wrap gap-2">
+                         <a class="btn btn-sm btn-outline-primary"
+                            href="{{ url_for('sales_orders.list_sales_orders', customer_id=customer.id) }}">
+                             <i class="bi bi-bag me-1"></i> Sales Orders
+                         </a>
+                         <a class="btn btn-sm btn-outline-primary"
+                            href="{{ url_for('parts_list.view_parts_lists', customer_id=customer.id) }}">
+                             <i class="bi bi-list-check me-1"></i> Parts Lists
+                         </a>
+                     </div>
+                 </div>
+
+                 {% if commercial_insights.includes_subsidiaries %}
+                 <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+                     <span class="text-muted small">Included companies:</span>
+                     {% for scoped_customer in commercial_insights.scoped_customers %}
+                     <span class="badge {{ 'text-bg-primary' if scoped_customer.is_current_customer else 'text-bg-light' }}">
+                         {{ scoped_customer.name }}
+                     </span>
+                     {% endfor %}
+                 </div>
+                 {% endif %}
+
+                 <div class="row g-3 mb-4">
+                     <div class="col-sm-6 col-xl-3">
+                         <div class="card h-100 border">
+                             <div class="card-body">
+                                 <div class="text-muted small">Lifetime Sales</div>
+                                 <div class="fs-4 fw-semibold">GBP {{ "{:,.2f}".format(sales_summary.total_order_value_gbp or 0) }}</div>
+                                 <div class="small">{{ sales_summary.order_count or 0 }} orders across {{ sales_summary.order_line_count or 0 }} lines</div>
+                             </div>
+                         </div>
+                     </div>
+                     <div class="col-sm-6 col-xl-3">
+                         <div class="card h-100 border">
+                             <div class="card-body">
+                                 <div class="text-muted small">Average Order</div>
+                                 <div class="fs-4 fw-semibold">GBP {{ "{:,.2f}".format(sales_summary.average_order_value_gbp or 0) }}</div>
+                                 <div class="small">Last order {{ sales_summary.last_order_date or '-' }}</div>
+                             </div>
+                         </div>
+                     </div>
+                     <div class="col-sm-6 col-xl-3">
+                         <div class="card h-100 border">
+                             <div class="card-body">
+                                 <div class="text-muted small">Quoted Parts Lists</div>
+                                 <div class="fs-4 fw-semibold">GBP {{ "{:,.2f}".format(quote_summary.quoted_value_gbp or 0) }}</div>
+                                 <div class="small">{{ quote_summary.parts_list_count or 0 }} lists, {{ quote_summary.quoted_line_count or 0 }} quoted lines</div>
+                             </div>
+                         </div>
+                     </div>
+                     <div class="col-sm-6 col-xl-3">
+                         <div class="card h-100 border">
+                             <div class="card-body">
+                                 <div class="text-muted small">Quote Coverage</div>
+                                 <div class="fs-4 fw-semibold">{{ "{:.0f}".format(quote_coverage) }}%</div>
+                                 <div class="small">
+                                     {{ quote_summary.parts_list_line_count or 0 }} requested lines, {{ quote_summary.no_bid_line_count or 0 }} no-bids
+                                 </div>
+                             </div>
+                         </div>
+                     </div>
+                 </div>
+
+                 <div class="row g-3">
+                     <div class="col-xl-6">
+                         <div class="card h-100 border">
+                             <div class="card-header d-flex justify-content-between align-items-center">
+                                 <h6 class="mb-0">Biggest Orders</h6>
+                                 <span class="badge text-bg-light">{{ commercial_insights.biggest_orders|length }}</span>
+                             </div>
+                             <div class="table-responsive">
+                                 <table class="table table-sm table-hover align-middle mb-0">
+                                     <thead>
+                                         <tr>
+                                             <th>Order</th>
+                                             <th>Date</th>
+                                             <th class="text-end">Lines</th>
+                                             <th class="text-end">Value</th>
+                                         </tr>
+                                     </thead>
+                                     <tbody>
+                                         {% for order in commercial_insights.biggest_orders %}
+                                         <tr>
+                                             <td>
+                                                 <a href="{{ url_for('sales_orders.edit_sales_order', sales_order_id=order.id) }}">{{ order.sales_order_ref }}</a>
+                                                 {% if commercial_insights.includes_subsidiaries %}
+                                                 <div class="text-muted small">{{ order.customer_name }}</div>
+                                                 {% endif %}
+                                                 {% if order.customer_po_ref %}
+                                                 <div class="text-muted small">PO {{ order.customer_po_ref }}</div>
+                                                 {% endif %}
+                                             </td>
+                                             <td>
+                                                 {{ order.date_entered or '-' }}
+                                                 {% if order.status_name %}
+                                                 <div class="text-muted small">{{ order.status_name }}</div>
+                                                 {% endif %}
+                                             </td>
+                                             <td class="text-end">{{ order.line_count or 0 }}</td>
+                                             <td class="text-end">
+                                                 <div>GBP {{ "{:,.2f}".format(order.order_value_gbp or 0) }}</div>
+                                                 <div class="text-muted small">{{ order.currency_code }} {{ "{:,.2f}".format(order.order_value or 0) }}</div>
+                                             </td>
+                                         </tr>
+                                         {% else %}
+                                         <tr><td colspan="4" class="text-muted text-center py-3">No sales orders yet.</td></tr>
+                                         {% endfor %}
+                                     </tbody>
+                                 </table>
+                             </div>
+                         </div>
+                     </div>
+
+                     <div class="col-xl-6">
+                         <div class="card h-100 border">
+                             <div class="card-header d-flex justify-content-between align-items-center">
+                                 <h6 class="mb-0">Highest Value Sales Lines</h6>
+                                 <span class="badge text-bg-light">{{ commercial_insights.highest_value_order_lines|length }}</span>
+                             </div>
+                             <div class="table-responsive">
+                                 <table class="table table-sm table-hover align-middle mb-0">
+                                     <thead>
+                                         <tr>
+                                             <th>Part</th>
+                                             <th>Order</th>
+                                             <th class="text-end">Qty</th>
+                                             <th class="text-end">Line Value</th>
+                                         </tr>
+                                     </thead>
+                                     <tbody>
+                                         {% for line in commercial_insights.highest_value_order_lines %}
+                                         <tr>
+                                             <td>
+                                                 <div class="fw-semibold">{{ line.base_part_number or '-' }}</div>
+                                                 <div class="text-muted small">Line {{ line.line_number }}</div>
+                                             </td>
+                                             <td>
+                                                 <a href="{{ url_for('sales_orders.edit_sales_order', sales_order_id=line.sales_order_id) }}">{{ line.sales_order_ref }}</a>
+                                                 <div class="text-muted small">{{ line.date_entered or '-' }}</div>
+                                                 {% if commercial_insights.includes_subsidiaries %}
+                                                 <div class="text-muted small">{{ line.customer_name }}</div>
+                                                 {% endif %}
+                                             </td>
+                                             <td class="text-end">{{ line.quantity or 0 }}</td>
+                                             <td class="text-end">
+                                                 <div>GBP {{ "{:,.2f}".format(line.line_value_gbp or 0) }}</div>
+                                                 <div class="text-muted small">{{ line.currency_code }} {{ "{:,.2f}".format(line.line_value or 0) }}</div>
+                                             </td>
+                                         </tr>
+                                         {% else %}
+                                         <tr><td colspan="4" class="text-muted text-center py-3">No sales lines yet.</td></tr>
+                                         {% endfor %}
+                                     </tbody>
+                                 </table>
+                             </div>
+                         </div>
+                     </div>
+
+                     <div class="col-xl-6">
+                         <div class="card h-100 border">
+                             <div class="card-header d-flex justify-content-between align-items-center">
+                                 <h6 class="mb-0">Most Ordered Parts</h6>
+                                 <span class="badge text-bg-light">{{ commercial_insights.most_ordered_parts|length }}</span>
+                             </div>
+                             <div class="table-responsive">
+                                 <table class="table table-sm table-hover align-middle mb-0">
+                                     <thead>
+                                         <tr>
+                                             <th>Part</th>
+                                             <th class="text-end">Orders</th>
+                                             <th class="text-end">Qty</th>
+                                             <th class="text-end">Sales</th>
+                                         </tr>
+                                     </thead>
+                                     <tbody>
+                                         {% for part in commercial_insights.most_ordered_parts %}
+                                         <tr>
+                                             <td>
+                                                 <div class="fw-semibold">{{ part.base_part_number }}</div>
+                                                 <div class="text-muted small">{{ part.line_count or 0 }} lines, last {{ part.last_order_date or '-' }}</div>
+                                             </td>
+                                             <td class="text-end">{{ part.order_count or 0 }}</td>
+                                             <td class="text-end">{{ part.total_quantity or 0 }}</td>
+                                             <td class="text-end">GBP {{ "{:,.2f}".format(part.sales_value_gbp or 0) }}</td>
+                                         </tr>
+                                         {% else %}
+                                         <tr><td colspan="4" class="text-muted text-center py-3">No ordered parts yet.</td></tr>
+                                         {% endfor %}
+                                     </tbody>
+                                 </table>
+                             </div>
+                         </div>
+                     </div>
+
+                     <div class="col-xl-6">
+                         <div class="card h-100 border">
+                             <div class="card-header d-flex justify-content-between align-items-center">
+                                 <h6 class="mb-0">Top Quoted Parts Lists</h6>
+                                 <span class="badge text-bg-light">{{ commercial_insights.top_quoted_parts_lists|length }}</span>
+                             </div>
+                             <div class="table-responsive">
+                                 <table class="table table-sm table-hover align-middle mb-0">
+                                     <thead>
+                                         <tr>
+                                             <th>List</th>
+                                             <th>Status</th>
+                                             <th class="text-end">Quoted</th>
+                                             <th class="text-end">Value</th>
+                                         </tr>
+                                     </thead>
+                                     <tbody>
+                                         {% for parts_list in commercial_insights.top_quoted_parts_lists %}
+                                         <tr>
+                                             <td>
+                                                 <a href="{{ url_for('parts_list.view_parts_list', list_id=parts_list.id) }}">{{ parts_list.name }}</a>
+                                                 <div class="text-muted small">Updated {{ parts_list.date_modified or '-' }}</div>
+                                                 {% if commercial_insights.includes_subsidiaries %}
+                                                 <div class="text-muted small">{{ parts_list.customer_name }}</div>
+                                                 {% endif %}
+                                             </td>
+                                             <td>{{ parts_list.status_name or '-' }}</td>
+                                             <td class="text-end">{{ parts_list.quoted_line_count or 0 }}/{{ parts_list.line_count or 0 }}</td>
+                                             <td class="text-end">GBP {{ "{:,.2f}".format(parts_list.quoted_value_gbp or 0) }}</td>
+                                         </tr>
+                                         {% else %}
+                                         <tr><td colspan="4" class="text-muted text-center py-3">No customer parts lists yet.</td></tr>
+                                         {% endfor %}
+                                     </tbody>
+                                 </table>
+                             </div>
+                         </div>
+                     </div>
+
+                     <div class="col-xl-6">
+                         <div class="card h-100 border">
+                             <div class="card-header d-flex justify-content-between align-items-center">
+                                 <h6 class="mb-0">Highest Value Customer Quote Lines</h6>
+                                 <span class="badge text-bg-light">{{ commercial_insights.highest_value_quote_lines|length }}</span>
+                             </div>
+                             <div class="table-responsive">
+                                 <table class="table table-sm table-hover align-middle mb-0">
+                                     <thead>
+                                         <tr>
+                                             <th>Part</th>
+                                             <th>Parts List</th>
+                                             <th class="text-end">Qty</th>
+                                             <th class="text-end">Quoted</th>
+                                         </tr>
+                                     </thead>
+                                     <tbody>
+                                         {% for line in commercial_insights.highest_value_quote_lines %}
+                                         <tr>
+                                             <td>
+                                                 <div class="fw-semibold">{{ line.part_number or '-' }}</div>
+                                                 <div class="text-muted small">{{ line.manufacturer or 'Manufacturer not set' }}</div>
+                                             </td>
+                                             <td>
+                                                 <a href="{{ url_for('parts_list.view_parts_list', list_id=line.parts_list_id) }}">{{ line.parts_list_name }}</a>
+                                                 <div class="text-muted small">Line {{ line.line_number }}</div>
+                                                 {% if commercial_insights.includes_subsidiaries %}
+                                                 <div class="text-muted small">{{ line.customer_name }}</div>
+                                                 {% endif %}
+                                             </td>
+                                             <td class="text-end">{{ line.quoted_quantity or 0 }}</td>
+                                             <td class="text-end">
+                                                 <div>GBP {{ "{:,.2f}".format(line.quoted_value_gbp or 0) }}</div>
+                                                 <div class="text-muted small">GBP {{ "{:,.2f}".format(line.quote_price_gbp or 0) }} each</div>
+                                             </td>
+                                         </tr>
+                                         {% else %}
+                                         <tr><td colspan="4" class="text-muted text-center py-3">No quoted customer quote lines yet.</td></tr>
+                                         {% endfor %}
+                                     </tbody>
+                                 </table>
+                             </div>
+                         </div>
+                     </div>
+
+                     <div class="col-xl-6">
+                         <div class="card h-100 border">
+                             <div class="card-header d-flex justify-content-between align-items-center">
+                                 <h6 class="mb-0">Most Requested Quote Parts</h6>
+                                 <span class="badge text-bg-light">{{ commercial_insights.most_requested_quote_parts|length }}</span>
+                             </div>
+                             <div class="table-responsive">
+                                 <table class="table table-sm table-hover align-middle mb-0">
+                                     <thead>
+                                         <tr>
+                                             <th>Part</th>
+                                             <th class="text-end">Lists</th>
+                                             <th class="text-end">Requested</th>
+                                             <th class="text-end">Quoted</th>
+                                         </tr>
+                                     </thead>
+                                     <tbody>
+                                         {% for part in commercial_insights.most_requested_quote_parts %}
+                                         <tr>
+                                             <td>
+                                                 <div class="fw-semibold">{{ part.part_number or '-' }}</div>
+                                                 <div class="text-muted small">{{ part.line_count or 0 }} lines, last {{ part.last_seen or '-' }}</div>
+                                             </td>
+                                             <td class="text-end">{{ part.parts_list_count or 0 }}</td>
+                                             <td class="text-end">{{ part.requested_quantity or 0 }}</td>
+                                             <td class="text-end">{{ part.quoted_line_count or 0 }}</td>
+                                         </tr>
+                                         {% else %}
+                                         <tr><td colspan="4" class="text-muted text-center py-3">No requested quote parts yet.</td></tr>
+                                         {% endfor %}
+                                     </tbody>
+                                 </table>
                              </div>
                          </div>
                      </div>

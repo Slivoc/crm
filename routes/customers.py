@@ -122,6 +122,325 @@ def _replace_customer_supplier_relationships(customer_id, supplier_ids):
             )
 
 
+def _get_customer_commercial_insights(customer_id):
+    """Return commercial rollups for the customer detail reporting tab."""
+    scoped_customers = db_execute(
+        """
+        SELECT c.id, c.name, c.id = ? AS is_current_customer
+        FROM customers c
+        WHERE c.id = ?
+           OR c.id IN (
+                SELECT ca.associated_customer_id
+                FROM customer_associations ca
+                WHERE ca.main_customer_id = ?
+           )
+        ORDER BY CASE WHEN c.id = ? THEN 0 ELSE 1 END, c.name
+        """,
+        (customer_id, customer_id, customer_id, customer_id),
+        fetch='all',
+    ) or []
+    scope_params = (customer_id, customer_id)
+    insight_scope_cte = """
+        insight_customers AS (
+            SELECT ? AS customer_id
+            UNION
+            SELECT ca.associated_customer_id
+            FROM customer_associations ca
+            WHERE ca.main_customer_id = ?
+        )
+    """
+
+    sales_summary = db_execute(
+        f"""
+        WITH {insight_scope_cte},
+        customer_orders AS (
+            SELECT so.*
+            FROM sales_orders so
+            JOIN insight_customers scope ON scope.customer_id = so.customer_id
+        ),
+        order_line_totals AS (
+            SELECT
+                sol.sales_order_id,
+                COUNT(*) AS line_count,
+                COALESCE(SUM(sol.price * sol.quantity), 0) AS line_total
+            FROM sales_order_lines sol
+            JOIN customer_orders so ON so.id = sol.sales_order_id
+            GROUP BY sol.sales_order_id
+        )
+        SELECT
+            COUNT(so.id) AS order_count,
+            COALESCE(SUM(COALESCE(olt.line_count, 0)), 0) AS order_line_count,
+            COALESCE(
+                SUM(
+                    COALESCE(NULLIF(so.total_value, 0), olt.line_total, 0)
+                    / COALESCE(NULLIF(cur.exchange_rate_to_base, 0), 1)
+                ),
+                0
+            ) AS total_order_value_gbp,
+            COALESCE(
+                AVG(
+                    COALESCE(NULLIF(so.total_value, 0), olt.line_total, 0)
+                    / COALESCE(NULLIF(cur.exchange_rate_to_base, 0), 1)
+                ),
+                0
+            ) AS average_order_value_gbp,
+            MAX(so.date_entered) AS last_order_date
+        FROM customer_orders so
+        LEFT JOIN order_line_totals olt ON olt.sales_order_id = so.id
+        LEFT JOIN currencies cur ON cur.id = so.currency_id
+        """,
+        scope_params,
+        fetch='one',
+    ) or {}
+
+    quote_summary = db_execute(
+        f"""
+        WITH {insight_scope_cte}
+        SELECT
+            COUNT(DISTINCT pl.id) AS parts_list_count,
+            COUNT(DISTINCT pll.id) AS parts_list_line_count,
+            COUNT(DISTINCT CASE
+                WHEN cql.quoted_status = 'quoted'
+                     AND COALESCE(cql.is_no_bid::int, 0) = 0
+                     AND cql.quote_price_gbp > 0
+                THEN pll.id
+            END) AS quoted_line_count,
+            COUNT(DISTINCT CASE
+                WHEN COALESCE(cql.is_no_bid::int, 0) = 1
+                     OR cql.quoted_status = 'no_bid'
+                THEN pll.id
+            END) AS no_bid_line_count,
+            COALESCE(SUM(CASE
+                WHEN cql.quoted_status = 'quoted'
+                     AND COALESCE(cql.is_no_bid::int, 0) = 0
+                     AND cql.quote_price_gbp > 0
+                THEN cql.quote_price_gbp * COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0)
+                ELSE 0
+            END), 0) AS quoted_value_gbp,
+            MAX(pl.date_modified) AS last_parts_list_activity
+        FROM parts_lists pl
+        JOIN insight_customers scope ON scope.customer_id = pl.customer_id
+        LEFT JOIN parts_list_lines pll ON pll.parts_list_id = pl.id
+        LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
+        """,
+        scope_params,
+        fetch='one',
+    ) or {}
+
+    return {
+        'scoped_customers': [dict(row) for row in scoped_customers],
+        'includes_subsidiaries': len(scoped_customers) > 1,
+        'sales_summary': dict(sales_summary),
+        'quote_summary': dict(quote_summary),
+        'biggest_orders': [
+            dict(row) for row in db_execute(
+                f"""
+                WITH {insight_scope_cte},
+                customer_orders AS (
+                    SELECT so.*
+                    FROM sales_orders so
+                    JOIN insight_customers scope ON scope.customer_id = so.customer_id
+                ),
+                order_line_totals AS (
+                    SELECT
+                        sol.sales_order_id,
+                        COUNT(*) AS line_count,
+                        COALESCE(SUM(sol.price * sol.quantity), 0) AS line_total
+                    FROM sales_order_lines sol
+                    JOIN customer_orders so ON so.id = sol.sales_order_id
+                    GROUP BY sol.sales_order_id
+                )
+                SELECT
+                    so.id,
+                    so.customer_id,
+                    customer.name AS customer_name,
+                    so.sales_order_ref,
+                    so.customer_po_ref,
+                    so.date_entered,
+                    ss.status_name,
+                    COALESCE(olt.line_count, 0) AS line_count,
+                    COALESCE(NULLIF(so.total_value, 0), olt.line_total, 0) AS order_value,
+                    COALESCE(cur.currency_code, 'GBP') AS currency_code,
+                    COALESCE(NULLIF(so.total_value, 0), olt.line_total, 0)
+                        / COALESCE(NULLIF(cur.exchange_rate_to_base, 0), 1) AS order_value_gbp
+                FROM customer_orders so
+                JOIN customers customer ON customer.id = so.customer_id
+                LEFT JOIN order_line_totals olt ON olt.sales_order_id = so.id
+                LEFT JOIN sales_statuses ss ON ss.id = so.sales_status_id
+                LEFT JOIN currencies cur ON cur.id = so.currency_id
+                ORDER BY order_value_gbp DESC, so.date_entered DESC
+                LIMIT 8
+                """,
+                scope_params,
+                fetch='all',
+            ) or []
+        ],
+        'highest_value_order_lines': [
+            dict(row) for row in db_execute(
+                f"""
+                WITH {insight_scope_cte}
+                SELECT
+                    sol.id,
+                    sol.line_number,
+                    sol.base_part_number,
+                    sol.quantity,
+                    sol.price,
+                    so.id AS sales_order_id,
+                    so.customer_id,
+                    customer.name AS customer_name,
+                    so.sales_order_ref,
+                    so.date_entered,
+                    COALESCE(cur.currency_code, 'GBP') AS currency_code,
+                    sol.price * sol.quantity AS line_value,
+                    (sol.price * sol.quantity)
+                        / COALESCE(NULLIF(cur.exchange_rate_to_base, 0), 1) AS line_value_gbp
+                FROM sales_order_lines sol
+                JOIN sales_orders so ON so.id = sol.sales_order_id
+                JOIN insight_customers scope ON scope.customer_id = so.customer_id
+                JOIN customers customer ON customer.id = so.customer_id
+                LEFT JOIN currencies cur ON cur.id = so.currency_id
+                ORDER BY line_value_gbp DESC, so.date_entered DESC
+                LIMIT 10
+                """,
+                scope_params,
+                fetch='all',
+            ) or []
+        ],
+        'most_ordered_parts': [
+            dict(row) for row in db_execute(
+                f"""
+                WITH {insight_scope_cte}
+                SELECT
+                    COALESCE(NULLIF(sol.base_part_number, ''), 'Unknown part') AS base_part_number,
+                    COUNT(*) AS line_count,
+                    COUNT(DISTINCT so.id) AS order_count,
+                    COALESCE(SUM(sol.quantity), 0) AS total_quantity,
+                    COALESCE(
+                        SUM(
+                            (sol.price * sol.quantity)
+                            / COALESCE(NULLIF(cur.exchange_rate_to_base, 0), 1)
+                        ),
+                        0
+                    ) AS sales_value_gbp,
+                    MAX(so.date_entered) AS last_order_date
+                FROM sales_order_lines sol
+                JOIN sales_orders so ON so.id = sol.sales_order_id
+                JOIN insight_customers scope ON scope.customer_id = so.customer_id
+                LEFT JOIN currencies cur ON cur.id = so.currency_id
+                GROUP BY COALESCE(NULLIF(sol.base_part_number, ''), 'Unknown part')
+                ORDER BY order_count DESC, total_quantity DESC, sales_value_gbp DESC
+                LIMIT 10
+                """,
+                scope_params,
+                fetch='all',
+            ) or []
+        ],
+        'top_quoted_parts_lists': [
+            dict(row) for row in db_execute(
+                f"""
+                WITH {insight_scope_cte}
+                SELECT
+                    pl.id,
+                    pl.name,
+                    pl.customer_id,
+                    customer.name AS customer_name,
+                    pls.name AS status_name,
+                    pl.date_modified,
+                    COUNT(DISTINCT pll.id) AS line_count,
+                    COUNT(DISTINCT CASE
+                        WHEN cql.quoted_status = 'quoted'
+                             AND COALESCE(cql.is_no_bid::int, 0) = 0
+                             AND cql.quote_price_gbp > 0
+                        THEN pll.id
+                    END) AS quoted_line_count,
+                    COALESCE(SUM(CASE
+                        WHEN cql.quoted_status = 'quoted'
+                             AND COALESCE(cql.is_no_bid::int, 0) = 0
+                             AND cql.quote_price_gbp > 0
+                        THEN cql.quote_price_gbp * COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0)
+                        ELSE 0
+                    END), 0) AS quoted_value_gbp
+                FROM parts_lists pl
+                JOIN insight_customers scope ON scope.customer_id = pl.customer_id
+                JOIN customers customer ON customer.id = pl.customer_id
+                LEFT JOIN parts_list_statuses pls ON pls.id = pl.status_id
+                LEFT JOIN parts_list_lines pll ON pll.parts_list_id = pl.id
+                LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
+                GROUP BY pl.id, pl.name, pl.customer_id, customer.name, pls.name, pl.date_modified
+                ORDER BY quoted_value_gbp DESC, pl.date_modified DESC
+                LIMIT 8
+                """,
+                scope_params,
+                fetch='all',
+            ) or []
+        ],
+        'highest_value_quote_lines': [
+            dict(row) for row in db_execute(
+                f"""
+                WITH {insight_scope_cte}
+                SELECT
+                    pl.id AS parts_list_id,
+                    pl.name AS parts_list_name,
+                    pl.customer_id,
+                    customer.name AS customer_name,
+                    pll.line_number,
+                    COALESCE(
+                        NULLIF(cql.quoted_part_number, ''),
+                        NULLIF(cql.display_part_number, ''),
+                        NULLIF(pll.base_part_number, ''),
+                        pll.customer_part_number
+                    ) AS part_number,
+                    COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0) AS quoted_quantity,
+                    cql.quote_price_gbp,
+                    cql.quote_price_gbp
+                        * COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0) AS quoted_value_gbp,
+                    cql.manufacturer,
+                    cql.date_modified
+                FROM customer_quote_lines cql
+                JOIN parts_list_lines pll ON pll.id = cql.parts_list_line_id
+                JOIN parts_lists pl ON pl.id = pll.parts_list_id
+                JOIN insight_customers scope ON scope.customer_id = pl.customer_id
+                JOIN customers customer ON customer.id = pl.customer_id
+                WHERE cql.quoted_status = 'quoted'
+                  AND COALESCE(cql.is_no_bid::int, 0) = 0
+                  AND cql.quote_price_gbp > 0
+                ORDER BY quoted_value_gbp DESC, cql.date_modified DESC
+                LIMIT 10
+                """,
+                scope_params,
+                fetch='all',
+            ) or []
+        ],
+        'most_requested_quote_parts': [
+            dict(row) for row in db_execute(
+                f"""
+                WITH {insight_scope_cte}
+                SELECT
+                    COALESCE(NULLIF(pll.base_part_number, ''), pll.customer_part_number) AS part_number,
+                    COUNT(*) AS line_count,
+                    COUNT(DISTINCT pl.id) AS parts_list_count,
+                    COALESCE(SUM(pll.quantity), 0) AS requested_quantity,
+                    COUNT(CASE
+                        WHEN cql.quoted_status = 'quoted'
+                             AND COALESCE(cql.is_no_bid::int, 0) = 0
+                        THEN 1
+                    END) AS quoted_line_count,
+                    MAX(pl.date_modified) AS last_seen
+                FROM parts_list_lines pll
+                JOIN parts_lists pl ON pl.id = pll.parts_list_id
+                JOIN insight_customers scope ON scope.customer_id = pl.customer_id
+                LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
+                GROUP BY COALESCE(NULLIF(pll.base_part_number, ''), pll.customer_part_number)
+                ORDER BY parts_list_count DESC, line_count DESC, requested_quantity DESC
+                LIMIT 10
+                """,
+                scope_params,
+                fetch='all',
+            ) or []
+        ],
+    }
+
+
 def _call_list_has_snoozed_until():
     try:
         with db_cursor() as cur:
@@ -481,6 +800,7 @@ def edit_customer(customer_id):
     selected_supplier_ids = _get_customer_supplier_ids(customer_id)
 
     development_plan = get_customer_development_plan(customer_id)
+    commercial_insights = _get_customer_commercial_insights(customer_id)
 
     return render_template('customer_edit.html',
                            customer=customer_dict,
@@ -502,6 +822,7 @@ def edit_customer(customer_id):
                            customer_statuses=customer_statuses,
                            suppliers=suppliers,
                            selected_supplier_ids=selected_supplier_ids,
+                           commercial_insights=commercial_insights,
                            page=page,
                            per_page=per_page,
                            breadcrumbs=breadcrumbs,
