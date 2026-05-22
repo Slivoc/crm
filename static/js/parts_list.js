@@ -3757,9 +3757,13 @@ document.addEventListener('DOMContentLoaded', function() {
     const emailNoPartsPreviewHead = document.getElementById('email-no-parts-preview-head');
     const emailNoPartsPreviewBody = document.getElementById('email-no-parts-preview-body');
     const emailNoPartsApplyBtn = document.getElementById('email-no-parts-apply-btn');
+    const emailNoPartsPartPreview = document.getElementById('email-no-parts-part-preview');
+    const emailNoPartsQtyPreview = document.getElementById('email-no-parts-qty-preview');
     const emailNoPartsHasHeader = document.getElementById('email-no-parts-has-header');
     let emailNoPartsPreviewRows = [];
     let emailNoPartsAttachments = [];
+    let emailNoPartsPreviewColumns = [];
+    let emailNoPartsColumnPickTarget = 'part';
 
     console.log('Email dropzone element:', emailDropzone);
 
@@ -3938,7 +3942,42 @@ document.addEventListener('DOMContentLoaded', function() {
         renderEmailNoPartsPreview(selected.columns || [], emailNoPartsPreviewRows);
     }
 
+    function summarizeColumnValues(rows, colIdx, limit = 3) {
+        const seen = [];
+        for (const row of rows) {
+            const val = (row?.[colIdx] ?? '').toString().trim();
+            if (!val || seen.includes(val)) continue;
+            seen.push(val);
+            if (seen.length >= limit) break;
+        }
+        return seen;
+    }
+
+    function updateEmailNoPartsColumnPreviewText() {
+        if (!emailNoPartsPreviewColumns.length) return;
+        const partIdx = Number(emailNoPartsPartCol?.value);
+        const qtyIdx = Number(emailNoPartsQtyCol?.value);
+
+        const partCol = emailNoPartsPreviewColumns.find(c => c.index === partIdx);
+        const qtyCol = emailNoPartsPreviewColumns.find(c => c.index === qtyIdx);
+
+        const partExamples = summarizeColumnValues(emailNoPartsPreviewRows, partIdx).join(' • ');
+        const qtyExamples = summarizeColumnValues(emailNoPartsPreviewRows, qtyIdx).join(' • ');
+
+        if (emailNoPartsPartPreview) {
+            emailNoPartsPartPreview.textContent = partCol
+                ? `Preview: ${partExamples || 'No sample values'}`
+                : 'Select a part number column.';
+        }
+        if (emailNoPartsQtyPreview) {
+            emailNoPartsQtyPreview.textContent = qtyCol
+                ? `Preview: ${qtyExamples || 'No sample values'}`
+                : 'Select a quantity column.';
+        }
+    }
+
     function renderEmailNoPartsPreview(columns, rows) {
+        emailNoPartsPreviewColumns = Array.isArray(columns) ? columns : [];
         emailNoPartsPartCol.innerHTML = '';
         emailNoPartsQtyCol.innerHTML = '';
         emailNoPartsPreviewHead.innerHTML = '';
@@ -3946,19 +3985,41 @@ document.addEventListener('DOMContentLoaded', function() {
 
         if (!columns.length) return;
         const headerRow = document.createElement('tr');
-        columns.forEach(col => {
+        columns.forEach((col, colPos) => {
+            const sampleValues = summarizeColumnValues(rows, col.index);
+            const sampleText = sampleValues.join(' • ');
+
             const opt1 = document.createElement('option');
             opt1.value = String(col.index);
-            opt1.textContent = `${col.label}${col.sample ? ` (${col.sample})` : ''}`;
+            opt1.textContent = `${col.label}${sampleText ? ` — ${sampleText}` : ''}`;
             emailNoPartsPartCol.appendChild(opt1);
 
             const opt2 = document.createElement('option');
             opt2.value = String(col.index);
-            opt2.textContent = `${col.label}${col.sample ? ` (${col.sample})` : ''}`;
+            opt2.textContent = `${col.label}${sampleText ? ` — ${sampleText}` : ''}`;
             emailNoPartsQtyCol.appendChild(opt2);
 
             const th = document.createElement('th');
             th.textContent = col.label;
+            th.classList.add('cursor-pointer');
+            th.style.cursor = 'pointer';
+            th.title = sampleText ? `Sample: ${sampleText}` : 'Click to map this column';
+            th.addEventListener('click', () => {
+                if (emailNoPartsColumnPickTarget === 'part') {
+                    emailNoPartsPartCol.value = String(col.index);
+                    emailNoPartsColumnPickTarget = 'qty';
+                } else {
+                    emailNoPartsQtyCol.value = String(col.index);
+                    emailNoPartsColumnPickTarget = 'part';
+                }
+                updateEmailNoPartsColumnPreviewText();
+            });
+            if (colPos === 0) {
+                const badge = document.createElement('span');
+                badge.className = 'badge bg-light text-dark ms-1';
+                badge.textContent = 'Click to map';
+                th.appendChild(badge);
+            }
             headerRow.appendChild(th);
         });
         emailNoPartsPreviewHead.appendChild(headerRow);
@@ -3976,10 +4037,18 @@ document.addEventListener('DOMContentLoaded', function() {
             });
             emailNoPartsPreviewBody.appendChild(tr);
         });
+
+        updateEmailNoPartsColumnPreviewText();
     }
 
     if (emailNoPartsAttachmentSelect) {
         emailNoPartsAttachmentSelect.addEventListener('change', applySelectedEmailNoPartsAttachment);
+    }
+    if (emailNoPartsPartCol) {
+        emailNoPartsPartCol.addEventListener('change', updateEmailNoPartsColumnPreviewText);
+    }
+    if (emailNoPartsQtyCol) {
+        emailNoPartsQtyCol.addEventListener('change', updateEmailNoPartsColumnPreviewText);
     }
 
     if (emailNoPartsApplyBtn) {

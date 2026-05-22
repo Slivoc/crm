@@ -587,10 +587,12 @@ AN960-416L"></textarea>
                     <div class="col-md-6">
                         <label for="email-no-parts-part-col" class="form-label">Part number column</label>
                         <select id="email-no-parts-part-col" class="form-select"></select>
+                        <div id="email-no-parts-part-preview" class="form-text">Click a column in the preview table to set this quickly.</div>
                     </div>
                     <div class="col-md-6">
                         <label for="email-no-parts-qty-col" class="form-label">Quantity column</label>
                         <select id="email-no-parts-qty-col" class="form-select"></select>
+                        <div id="email-no-parts-qty-preview" class="form-text">Then click another column for quantity.</div>
                     </div>
                 </div>
                 <div class="form-check mb-2">
@@ -600,7 +602,7 @@ AN960-416L"></textarea>
                     </label>
                 </div>
                 <div class="table-responsive" style="max-height: 320px;">
-                    <table class="table table-sm table-bordered mb-0">
+                    <table class="table table-sm table-bordered mb-0" id="email-no-parts-preview-table">
                         <thead id="email-no-parts-preview-head"></thead>
                         <tbody id="email-no-parts-preview-body"></tbody>
                     </table>
