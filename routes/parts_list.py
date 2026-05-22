@@ -9487,6 +9487,9 @@ def extract_quote_from_xlsx():
         base_qty = target_qty if target_qty is not None else 1
         if moq is not None:
             base_qty = max(base_qty, moq)
+        if qty_available is not None and qty_available > 0:
+            # If supplier cannot cover target quantity, still keep the line and quote what is in stock.
+            base_qty = min(base_qty, qty_available)
 
         def _round_up_increment(quantity):
             if purchase_increment and purchase_increment > 1:
