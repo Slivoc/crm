@@ -823,10 +823,10 @@ document.addEventListener('DOMContentLoaded', function() {
             if (effectiveQty !== requestedQty) qtyDiff = true;
 
             const revisionVal = (lineData.revision || '').toString().trim();
-            const conditionVal = (elements.standardCondition && elements.standardCondition.value.trim()) || (lineData.supplier_condition_code || '').toString().trim();
-            const certsVal = (elements.standardCerts && elements.standardCerts.value.trim()) || (lineData.supplier_certifications || '').toString().trim();
+            const conditionVal = elements.standardCondition ? elements.standardCondition.value.trim() : '';
+            const certsVal = elements.standardCerts ? elements.standardCerts.value.trim() : '';
             const notesVal = elements.lineNotes ? elements.lineNotes.value.trim() : '';
-            const manufacturerVal = (elements.manufacturer && elements.manufacturer.value.trim()) || (lineData.manufacturer || '').toString().trim();
+            const manufacturerVal = elements.manufacturer ? elements.manufacturer.value.trim() : '';
 
             if (revisionVal) revisionFilled = true;
             if (conditionVal) conditionFilled = true;
@@ -1123,8 +1123,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
             const isPNDifferent = !lastIsNoBid && (quotedPN !== requestedPN && quotedPN !== '');
             const isQtyDifferent = !lastIsNoBid && (effectiveQty !== requestedQty);
-            const conditionValue = (elements.standardCondition && elements.standardCondition.value.trim()) || (lineData.supplier_condition_code || '');
-            const certsValue = (elements.standardCerts && elements.standardCerts.value.trim()) || (lineData.supplier_certifications || '');
+            const conditionValue = elements.standardCondition ? elements.standardCondition.value.trim() : '';
+            const certsValue = elements.standardCerts ? elements.standardCerts.value.trim() : '';
 
             const highlightStyle = isPNDifferent ? `${rowStyle}background-color:#fff3cd;font-weight:600;` : rowStyle;
             const qtyHighlightStyle = isQtyDifferent ? `${rowStyle}background-color:#e3f2fd;font-weight:600;` : rowStyle;
@@ -1141,7 +1141,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (selectedCols.line_total) html += `<td align="right" style="${rowStyle}">${lineTotalDisplay}</td>`;
             if (selectedCols.lead_days) html += `<td align="left" style="${rowStyle}">${elements.leadDays.value || ''}</td>`;
             if (selectedCols.quoted_on) html += `<td align="left" style="${rowStyle}">${status === 'in_progress' ? 'In Progress' : formatQuotedOn(lineData.quoted_on)}</td>`;
-            const manufacturerVal = (elements.manufacturer && elements.manufacturer.value.trim()) || lineData.manufacturer || '';
+            const manufacturerVal = elements.manufacturer ? elements.manufacturer.value.trim() : '';
 
             if (selectedCols.manufacturer) html += `<td align="left" style="${rowStyle}">${manufacturerVal}</td>`;
             if (selectedCols.condition) html += `<td align="left" style="${rowStyle}">${conditionValue || ''}</td>`;
