@@ -23,6 +23,7 @@ import os
 import html
 import io
 from io import StringIO
+from calendar import monthrange
 from routes.emails import send_graph_email, build_graph_inline_attachments
 from routes.email_signatures import get_user_default_signature
 from routes.parts_list_ai import trigger_monroe_auto_check
@@ -5014,6 +5015,295 @@ def top_parts_list_quotes():
     except Exception as e:
         logging.exception(e)
         return jsonify(success=False, message=str(e)), 500
+
+
+def _parse_quote_report_month(month_value):
+    today = date.today()
+    default_year = today.year
+    default_month = today.month - 1
+    if default_month == 0:
+        default_month = 12
+        default_year -= 1
+
+    if month_value:
+        try:
+            parsed = datetime.strptime(month_value, '%Y-%m')
+            default_year = parsed.year
+            default_month = parsed.month
+        except ValueError:
+            pass
+
+    start_date = date(default_year, default_month, 1)
+    _, days_in_month = monthrange(default_year, default_month)
+    end_date = date(default_year, default_month, days_in_month) + timedelta(days=1)
+    return start_date, end_date, f"{default_year:04d}-{default_month:02d}"
+
+
+def _format_quote_report_date(value):
+    if isinstance(value, datetime):
+        return value.strftime('%Y-%m-%d')
+    if isinstance(value, date):
+        return value.strftime('%Y-%m-%d')
+    return str(value)[:10] if value else ''
+
+
+def _quote_report_number(value):
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _get_quote_report_rows(start_date, end_date, salesperson_id=None):
+    params = [start_date.isoformat(), end_date.isoformat()]
+    salesperson_clause = ""
+    if salesperson_id:
+        salesperson_clause = "AND pl.salesperson_id = ?"
+        params.append(salesperson_id)
+
+    rows = db_execute(
+        f"""
+        SELECT
+            cql.id AS quote_line_id,
+            cql.quoted_on,
+            cql.display_part_number,
+            cql.quoted_part_number,
+            cql.base_cost_gbp,
+            cql.delivery_per_unit,
+            cql.delivery_per_line,
+            cql.margin_percent,
+            cql.quote_price_gbp,
+            cql.lead_days,
+            cql.standard_condition,
+            cql.standard_certs,
+            cql.manufacturer AS quote_manufacturer,
+            pll.id AS parts_list_line_id,
+            pll.line_number,
+            pll.customer_part_number,
+            pll.base_part_number,
+            pll.description,
+            pll.quantity,
+            pll.chosen_qty,
+            COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0) AS effective_quantity,
+            pll.chosen_cost,
+            pll.chosen_source_type,
+            pll.chosen_source_reference,
+            chosen_currency.currency_code AS chosen_currency_code,
+            chosen_supplier.name AS chosen_supplier_name,
+            source_sql.quoted_part_number AS supplier_quoted_part_number,
+            source_sql.unit_price AS supplier_unit_price,
+            source_sql.quantity_quoted AS supplier_quantity_quoted,
+            source_sql.condition_code AS supplier_condition_code,
+            source_sql.certifications AS supplier_certifications,
+            source_sq.quote_reference AS supplier_quote_reference,
+            source_sq.quote_date AS supplier_quote_date,
+            source_supplier.name AS supplier_quote_supplier_name,
+            pl.id AS parts_list_id,
+            pl.name AS parts_list_name,
+            customer.id AS customer_id,
+            customer.name AS customer_name,
+            salesperson.id AS salesperson_id,
+            salesperson.name AS salesperson_name
+        FROM customer_quote_lines cql
+        JOIN parts_list_lines pll ON pll.id = cql.parts_list_line_id
+        JOIN parts_lists pl ON pl.id = pll.parts_list_id
+        LEFT JOIN customers customer ON customer.id = pl.customer_id
+        LEFT JOIN salespeople salesperson ON salesperson.id = pl.salesperson_id
+        LEFT JOIN suppliers chosen_supplier ON chosen_supplier.id = pll.chosen_supplier_id
+        LEFT JOIN currencies chosen_currency ON chosen_currency.id = pll.chosen_currency_id
+        LEFT JOIN parts_list_supplier_quote_lines source_sql
+            ON pll.chosen_source_type = 'quote'
+           AND CAST(source_sql.id AS TEXT) = pll.chosen_source_reference
+        LEFT JOIN parts_list_supplier_quotes source_sq ON source_sq.id = source_sql.supplier_quote_id
+        LEFT JOIN suppliers source_supplier ON source_supplier.id = source_sq.supplier_id
+        WHERE cql.quoted_status = 'quoted'
+          AND cql.quoted_on IS NOT NULL
+          AND cql.quoted_on >= ?::date
+          AND cql.quoted_on < ?::date
+          AND COALESCE(cql.is_no_bid::int, 0) = 0
+          AND COALESCE(cql.quote_price_gbp, 0) > 0
+          {salesperson_clause}
+        ORDER BY customer.name NULLS LAST, pl.name, cql.quoted_on DESC, pll.line_number ASC, pll.id ASC
+        """,
+        params,
+        fetch='all',
+    ) or []
+
+    report_rows = []
+    for row in [dict(r) for r in rows]:
+        quantity = _quote_report_number(row.get('effective_quantity'))
+        base_cost = _quote_report_number(row.get('base_cost_gbp'))
+        delivery_unit = _quote_report_number(row.get('delivery_per_unit'))
+        quote_price = _quote_report_number(row.get('quote_price_gbp'))
+        cost_total = base_cost * quantity
+        delivery_total = delivery_unit * quantity
+        quote_total = quote_price * quantity
+        gp_total = quote_total - cost_total - delivery_total
+        gp_percent = (gp_total / quote_total * 100) if quote_total else 0.0
+        source_supplier = row.get('supplier_quote_supplier_name') or row.get('chosen_supplier_name') or ''
+        source_reference = row.get('supplier_quote_reference') or row.get('chosen_source_reference') or ''
+
+        row.update({
+            'quoted_on_display': _format_quote_report_date(row.get('quoted_on')),
+            'display_part': row.get('quoted_part_number') or row.get('display_part_number') or row.get('customer_part_number') or row.get('base_part_number') or '',
+            'quantity': quantity,
+            'base_cost_gbp': base_cost,
+            'delivery_per_unit': delivery_unit,
+            'quote_price_gbp': quote_price,
+            'margin_percent': _quote_report_number(row.get('margin_percent')),
+            'cost_total_gbp': cost_total,
+            'delivery_total_gbp': delivery_total,
+            'quote_total_gbp': quote_total,
+            'gross_profit_gbp': gp_total,
+            'gross_profit_percent': gp_percent,
+            'source_supplier_name': source_supplier,
+            'source_reference': source_reference,
+            'source_label': 'Supplier quote' if row.get('chosen_source_type') == 'quote' else (row.get('chosen_source_type') or 'Manual'),
+        })
+        report_rows.append(row)
+
+    return report_rows
+
+
+def _build_quote_report_summary(rows):
+    summary = {
+        'customer_count': len({row.get('customer_id') for row in rows if row.get('customer_id')}),
+        'list_count': len({row.get('parts_list_id') for row in rows if row.get('parts_list_id')}),
+        'line_count': len(rows),
+        'quote_total_gbp': sum(row['quote_total_gbp'] for row in rows),
+        'cost_total_gbp': sum(row['cost_total_gbp'] for row in rows),
+        'gross_profit_gbp': sum(row['gross_profit_gbp'] for row in rows),
+    }
+    summary['gross_profit_percent'] = (
+        summary['gross_profit_gbp'] / summary['quote_total_gbp'] * 100
+        if summary['quote_total_gbp'] else 0.0
+    )
+
+    grouped = {}
+    for row in rows:
+        key = row.get('parts_list_id') or f"line-{row.get('quote_line_id')}"
+        entry = grouped.setdefault(key, {
+            'parts_list_id': row.get('parts_list_id'),
+            'parts_list_name': row.get('parts_list_name') or 'Unassigned list',
+            'customer_name': row.get('customer_name') or 'Unknown customer',
+            'salesperson_name': row.get('salesperson_name') or '',
+            'line_count': 0,
+            'quote_total_gbp': 0.0,
+            'cost_total_gbp': 0.0,
+            'gross_profit_gbp': 0.0,
+            'first_quoted_on': row.get('quoted_on_display'),
+            'last_quoted_on': row.get('quoted_on_display'),
+            'lines': [],
+        })
+        entry['line_count'] += 1
+        entry['quote_total_gbp'] += row['quote_total_gbp']
+        entry['cost_total_gbp'] += row['cost_total_gbp']
+        entry['gross_profit_gbp'] += row['gross_profit_gbp']
+        entry['lines'].append(row)
+        quote_date = row.get('quoted_on_display')
+        if quote_date:
+            dates = [d for d in (entry.get('first_quoted_on'), entry.get('last_quoted_on'), quote_date) if d]
+            entry['first_quoted_on'] = min(dates)
+            entry['last_quoted_on'] = max(dates)
+
+    for entry in grouped.values():
+        entry['gross_profit_percent'] = (
+            entry['gross_profit_gbp'] / entry['quote_total_gbp'] * 100
+            if entry['quote_total_gbp'] else 0.0
+        )
+
+    return summary, sorted(
+        grouped.values(),
+        key=lambda item: (item['customer_name'].lower(), -item['quote_total_gbp'], item['parts_list_name'].lower()),
+    )
+
+
+@parts_list_bp.route('/parts-lists/quote-report', methods=['GET'])
+def quote_report():
+    selected_month = request.args.get('month')
+    salesperson_id = request.args.get('salesperson_id', type=int)
+    start_date, end_date, selected_month = _parse_quote_report_month(selected_month)
+    rows = _get_quote_report_rows(start_date, end_date, salesperson_id=salesperson_id)
+    summary, grouped_lists = _build_quote_report_summary(rows)
+    salespeople = db_execute(
+        """
+        SELECT id, name
+        FROM salespeople
+        ORDER BY name
+        """,
+        fetch='all',
+    ) or []
+
+    return render_template(
+        'parts_list_quote_report.html',
+        selected_month=selected_month,
+        start_date=start_date,
+        end_date=end_date - timedelta(days=1),
+        selected_salesperson_id=salesperson_id,
+        salespeople=[dict(row) for row in salespeople],
+        summary=summary,
+        grouped_lists=grouped_lists,
+    )
+
+
+@parts_list_bp.route('/parts-lists/quote-report/export', methods=['GET'])
+def quote_report_export():
+    selected_month = request.args.get('month')
+    salesperson_id = request.args.get('salesperson_id', type=int)
+    start_date, end_date, selected_month = _parse_quote_report_month(selected_month)
+    rows = _get_quote_report_rows(start_date, end_date, salesperson_id=salesperson_id)
+
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        'Quoted Date', 'Customer', 'Salesperson', 'Parts List ID', 'Parts List',
+        'Line Number', 'Customer Part Number', 'Quoted Part Number', 'Base Part Number',
+        'Manufacturer', 'Quantity', 'Cost Base GBP', 'Delivery Per Unit GBP',
+        'Quote Price GBP', 'Quote Total GBP', 'Cost Total GBP', 'Gross Profit GBP',
+        'Gross Profit %', 'Margin % Used', 'Source', 'Supplier', 'Supplier Quote Ref',
+        'Supplier Unit Price', 'Supplier Quote Date', 'Condition', 'Certs', 'Lead Days',
+        'Description'
+    ])
+    for row in rows:
+        writer.writerow([
+            row.get('quoted_on_display'),
+            row.get('customer_name') or '',
+            row.get('salesperson_name') or '',
+            row.get('parts_list_id') or '',
+            row.get('parts_list_name') or '',
+            row.get('line_number') or '',
+            row.get('customer_part_number') or '',
+            row.get('display_part') or '',
+            row.get('base_part_number') or '',
+            row.get('quote_manufacturer') or '',
+            row.get('quantity') or 0,
+            f"{row.get('base_cost_gbp') or 0:.2f}",
+            f"{row.get('delivery_per_unit') or 0:.2f}",
+            f"{row.get('quote_price_gbp') or 0:.2f}",
+            f"{row.get('quote_total_gbp') or 0:.2f}",
+            f"{row.get('cost_total_gbp') or 0:.2f}",
+            f"{row.get('gross_profit_gbp') or 0:.2f}",
+            f"{row.get('gross_profit_percent') or 0:.2f}",
+            f"{row.get('margin_percent') or 0:.2f}",
+            row.get('source_label') or '',
+            row.get('source_supplier_name') or '',
+            row.get('source_reference') or '',
+            row.get('supplier_unit_price') or '',
+            _format_quote_report_date(row.get('supplier_quote_date')),
+            row.get('standard_condition') or row.get('supplier_condition_code') or '',
+            row.get('standard_certs') or row.get('supplier_certifications') or '',
+            row.get('lead_days') or '',
+            row.get('description') or '',
+        ])
+
+    csv_data = output.getvalue()
+    output.close()
+    filename = f"sproutt_quote_report_{selected_month}.csv"
+    return Response(
+        csv_data,
+        mimetype='text/csv',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )
 
 @parts_list_bp.route('/parts-lists', methods=['GET'])
 def view_parts_lists():

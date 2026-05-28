@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+
+{% block title %}Quote Report{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-3 mb-3">
+        <div>
+            <h2 class="fw-bold mb-1">Quote Report</h2>
+            <p class="text-muted mb-0">Quoted customer lines for {{ start_date.strftime('%d %b %Y') }} to {{ end_date.strftime('%d %b %Y') }}.</p>
+        </div>
+        <div class="d-flex gap-2">
+            <a class="btn btn-success"
+               href="{{ url_for('parts_list.quote_report_export', month=selected_month, salesperson_id=selected_salesperson_id or '') }}">
+                <i class="bi bi-file-earmark-excel me-1"></i>Export CSV
+            </a>
+            <a class="btn btn-outline-secondary" href="{{ url_for('parts_list.view_parts_lists') }}">
+                <i class="bi bi-arrow-left me-1"></i>Back to Parts Lists
+            </a>
+        </div>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <form class="row g-3 align-items-end" method="get">
+                <div class="col-md-3">
+                    <label for="month" class="form-label fw-semibold">Month</label>
+                    <input id="month" name="month" type="month" class="form-control" value="{{ selected_month }}">
+                </div>
+                <div class="col-md-4">
+                    <label for="salesperson_id" class="form-label fw-semibold">Salesperson</label>
+                    <select id="salesperson_id" name="salesperson_id" class="form-select">
+                        <option value="">All salespeople</option>
+                        {% for salesperson in salespeople %}
+                        <option value="{{ salesperson.id }}" {% if selected_salesperson_id == salesperson.id %}selected{% endif %}>
+                            {{ salesperson.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-funnel me-1"></i>Apply
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="row g-3 mb-3">
+        <div class="col-md-2">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="text-muted small">Customers</div>
+                    <div class="fs-4 fw-semibold">{{ summary.customer_count }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="text-muted small">Parts Lists</div>
+                    <div class="fs-4 fw-semibold">{{ summary.list_count }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="text-muted small">Quoted Lines</div>
+                    <div class="fs-4 fw-semibold">{{ summary.line_count }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="text-muted small">Quoted Value</div>
+                    <div class="fs-5 fw-semibold">{{ format_currency(summary.quote_total_gbp, '£') }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="text-muted small">Cost Base</div>
+                    <div class="fs-5 fw-semibold">{{ format_currency(summary.cost_total_gbp, '£') }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="text-muted small">Gross Profit</div>
+                    <div class="fs-5 fw-semibold">{{ format_currency(summary.gross_profit_gbp, '£') }}</div>
+                    <div class="small text-muted">{{ "%.1f"|format(summary.gross_profit_percent or 0) }}%</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span class="fw-semibold">Quoted lists</span>
+            <span class="badge bg-secondary">{{ grouped_lists|length }} lists</span>
+        </div>
+        <div class="card-body p-0">
+            {% if grouped_lists %}
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th style="width: 44px;"></th>
+                            <th>Customer</th>
+                            <th>Parts List</th>
+                            <th>Salesperson</th>
+                            <th class="text-center">Lines</th>
+                            <th class="text-end">Quoted Value</th>
+                            <th class="text-end">Cost Base</th>
+                            <th class="text-end">GP</th>
+                            <th class="text-end">GP %</th>
+                            <th>Quoted</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in grouped_lists %}
+                        {% set collapse_id = 'quote-lines-' ~ loop.index %}
+                        <tr>
+                            <td>
+                                <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#{{ collapse_id }}" aria-expanded="false" aria-controls="{{ collapse_id }}">
+                                    <i class="bi bi-chevron-down"></i>
+                                </button>
+                            </td>
+                            <td class="fw-semibold">{{ item.customer_name }}</td>
+                            <td>
+                                <a href="{{ url_for('customer_quoting.customer_quote_simple', list_id=item.parts_list_id) }}">{{ item.parts_list_name }}</a>
+                                <div class="small text-muted">ID {{ item.parts_list_id }}</div>
+                            </td>
+                            <td>{{ item.salesperson_name or '-' }}</td>
+                            <td class="text-center">{{ item.line_count }}</td>
+                            <td class="text-end fw-semibold">{{ format_currency(item.quote_total_gbp, '£') }}</td>
+                            <td class="text-end">{{ format_currency(item.cost_total_gbp, '£') }}</td>
+                            <td class="text-end">{{ format_currency(item.gross_profit_gbp, '£') }}</td>
+                            <td class="text-end">{{ "%.1f"|format(item.gross_profit_percent or 0) }}%</td>
+                            <td>
+                                {% if item.first_quoted_on == item.last_quoted_on %}
+                                    {{ item.first_quoted_on }}
+                                {% else %}
+                                    {{ item.first_quoted_on }} to {{ item.last_quoted_on }}
+                                {% endif %}
+                            </td>
+                        </tr>
+                        <tr class="collapse" id="{{ collapse_id }}">
+                            <td colspan="10" class="p-0 bg-light">
+                                <div class="table-responsive">
+                                    <table class="table table-sm mb-0">
+                                        <thead>
+                                            <tr>
+                                                <th>Line</th>
+                                                <th>Part Number</th>
+                                                <th class="text-end">Qty</th>
+                                                <th class="text-end">Cost Base</th>
+                                                <th class="text-end">Delivery</th>
+                                                <th class="text-end">Sell</th>
+                                                <th class="text-end">Line Value</th>
+                                                <th class="text-end">GP</th>
+                                                <th class="text-end">Margin Used</th>
+                                                <th>Source</th>
+                                                <th>Quoted</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for line in item.lines %}
+                                            <tr>
+                                                <td>{{ line.line_number }}</td>
+                                                <td>
+                                                    <div class="font-monospace fw-semibold">{{ line.display_part }}</div>
+                                                    {% if line.customer_part_number and line.customer_part_number != line.display_part %}
+                                                    <div class="small text-muted">Customer: {{ line.customer_part_number }}</div>
+                                                    {% endif %}
+                                                    {% if line.description %}
+                                                    <div class="small text-muted">{{ line.description }}</div>
+                                                    {% endif %}
+                                                </td>
+                                                <td class="text-end">{{ "%.0f"|format(line.quantity or 0) }}</td>
+                                                <td class="text-end">{{ format_currency(line.base_cost_gbp, '£') }}</td>
+                                                <td class="text-end">{{ format_currency(line.delivery_per_unit, '£') }}</td>
+                                                <td class="text-end">{{ format_currency(line.quote_price_gbp, '£') }}</td>
+                                                <td class="text-end">{{ format_currency(line.quote_total_gbp, '£') }}</td>
+                                                <td class="text-end">{{ format_currency(line.gross_profit_gbp, '£') }}</td>
+                                                <td class="text-end">{{ "%.1f"|format(line.margin_percent or 0) }}%</td>
+                                                <td>
+                                                    <div>{{ line.source_label }}</div>
+                                                    {% if line.source_supplier_name %}
+                                                    <div class="small text-muted">{{ line.source_supplier_name }}</div>
+                                                    {% endif %}
+                                                    {% if line.source_reference %}
+                                                    <div class="small text-muted">Ref {{ line.source_reference }}</div>
+                                                    {% endif %}
+                                                </td>
+                                                <td>{{ line.quoted_on_display }}</td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center text-muted py-5">
+                No quoted customer lines found for this month.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
