@@ -4,11 +4,43 @@ let quoteLinesTable = null;
 let quoteLinesData = [];
 let currentSupplierId = window.PRESELECTED_SUPPLIER_ID || null;
 let showSentOnly = false;
+let showIlsOnly = false;
 let partNumberFilterValue = '';
 let emailedSuppliersCache = null;
 let activePdfPreviewUrl = null;
 let latestExtractionMatchDebug = null;
 let supplierMetaById = {};
+
+function getPreselectedIlsLineIds() {
+    return new Set(
+        (Array.isArray(window.PRESELECTED_SUPPLIER_ILS_LINE_IDS) ? window.PRESELECTED_SUPPLIER_ILS_LINE_IDS : [])
+            .map(id => parseInt(id, 10))
+            .filter(Number.isFinite)
+    );
+}
+
+function getPreselectedIlsPartNumbers() {
+    return new Set(
+        (Array.isArray(window.PRESELECTED_SUPPLIER_ILS_PART_NUMBERS) ? window.PRESELECTED_SUPPLIER_ILS_PART_NUMBERS : [])
+            .map(partNumber => normalizePN(partNumber))
+            .filter(Boolean)
+    );
+}
+
+function lineIsListedForPreselectedIlsSupplier(line) {
+    const preselectedSupplierId = parseInt(window.PRESELECTED_SUPPLIER_ID, 10);
+    const activeSupplierId = parseInt(currentSupplierId, 10);
+    if (!Number.isFinite(preselectedSupplierId) || preselectedSupplierId !== activeSupplierId) {
+        return false;
+    }
+
+    const lineIds = getPreselectedIlsLineIds();
+    const partNumbers = getPreselectedIlsPartNumbers();
+    const lineId = parseInt(line.parts_list_line_id || line.id, 10);
+
+    if (Number.isFinite(lineId) && lineIds.has(lineId)) return true;
+    return partNumbers.has(normalizePN(line.customer_part_number || line.quoted_part_number || ''));
+}
 
 function renderSupplierMovWarning(meta) {
     const warningEl = document.getElementById('supplier-mov-warning');
@@ -376,6 +408,9 @@ function ensureQuoteLinesToolbar(container) {
                 <button type="button" class="btn btn-sm btn-outline-info" id="toggle-sent-filter-btn">
                     <i class="bi bi-envelope-check me-1"></i>Sent to Supplier
                 </button>
+                <button type="button" class="btn btn-sm btn-outline-warning" id="toggle-ils-filter-btn">
+                    <i class="bi bi-broadcast-pin me-1"></i>Listed on ILS
+                </button>
                 <button type="button" class="btn btn-sm btn-outline-secondary" id="clear-part-filter-btn">
                     <i class="bi bi-eraser me-1"></i>Clear Part Filter
                 </button>
@@ -383,7 +418,12 @@ function ensureQuoteLinesToolbar(container) {
                     <i class="bi bi-bug me-1"></i>Match Debug
                 </button>
             </div>
-            <small class="text-muted" id="quote-filter-indicator" style="display:none;">Filters active</small>
+            <div class="d-flex align-items-center gap-2">
+                <span class="quote-ils-context-badge" id="quote-ils-context-badge" style="display:none;">
+                    <i class="bi bi-broadcast-pin"></i><span></span>
+                </span>
+                <small class="text-muted" id="quote-filter-indicator" style="display:none;">Filters active</small>
+            </div>
         `;
         parent.insertBefore(toolbar, target);
         const debugPanel = document.createElement('div');
@@ -403,6 +443,13 @@ function ensureQuoteLinesToolbar(container) {
             showSentOnly = !showSentOnly;
             this.classList.toggle('btn-outline-info', !showSentOnly);
             this.classList.toggle('btn-info', showSentOnly);
+            applyVisibilityFilters();
+        });
+
+        document.getElementById('toggle-ils-filter-btn').addEventListener('click', function() {
+            showIlsOnly = !showIlsOnly;
+            this.classList.toggle('btn-outline-warning', !showIlsOnly);
+            this.classList.toggle('btn-warning', showIlsOnly);
             applyVisibilityFilters();
         });
 
@@ -432,6 +479,12 @@ function ensureQuoteLinesToolbar(container) {
     if (toggleBtn) {
         toggleBtn.classList.toggle('btn-info', showSentOnly);
         toggleBtn.classList.toggle('btn-outline-info', !showSentOnly);
+    }
+
+    const ilsToggleBtn = document.getElementById('toggle-ils-filter-btn');
+    if (ilsToggleBtn) {
+        ilsToggleBtn.classList.toggle('btn-warning', showIlsOnly);
+        ilsToggleBtn.classList.toggle('btn-outline-warning', !showIlsOnly);
     }
 
     renderExtractionMatchDebug();
@@ -479,8 +532,9 @@ function applyVisibilityFilters() {
               (line.quoted_part_number || '').toLowerCase().includes(filterValue)
             : true;
         const matchesSent = showSentOnly ? !!line.quote_requested : true;
+        const matchesIls = showIlsOnly ? !!line.ils_listed_for_supplier : true;
 
-        if (!(matchesPart && matchesSent)) {
+        if (!(matchesPart && matchesSent && matchesIls)) {
             rowsToHide.push(idx);
         }
     });
@@ -500,7 +554,19 @@ function applyVisibilityFilters() {
 
     const indicator = document.getElementById('quote-filter-indicator');
     if (indicator) {
-        indicator.style.display = (showSentOnly || filterValue) ? 'block' : 'none';
+        indicator.style.display = (showSentOnly || showIlsOnly || filterValue) ? 'block' : 'none';
+    }
+
+    const ilsBadge = document.getElementById('quote-ils-context-badge');
+    if (ilsBadge) {
+        const count = quoteLinesData.filter(line => line.ils_listed_for_supplier).length;
+        const label = ilsBadge.querySelector('span');
+        if (count > 0 && label) {
+            label.textContent = `${count} line${count === 1 ? '' : 's'} listed on ILS`;
+            ilsBadge.style.display = '';
+        } else {
+            ilsBadge.style.display = 'none';
+        }
     }
 }
 
@@ -667,6 +733,7 @@ function showQuoteInputView(quoteId = null) {
     currentQuoteId = quoteId;
     currentSupplierId = window.PRESELECTED_SUPPLIER_ID || null;
     showSentOnly = false;
+    showIlsOnly = false;
     partNumberFilterValue = '';
     latestExtractionMatchDebug = null;
 
@@ -683,7 +750,9 @@ function showQuoteInputView(quoteId = null) {
         const deleteBtn = document.getElementById('delete-quote-btn');
         if (deleteBtn) deleteBtn.style.display = 'block';
     } else {
-        document.getElementById('quote-supplier-select').value = '';
+        if (!currentSupplierId) {
+            document.getElementById('quote-supplier-select').value = '';
+        }
         document.getElementById('quote-reference-input').value = '';
         document.getElementById('quote-currency-select').value = 3;
 
@@ -715,7 +784,9 @@ function showQuotesListView() {
 }
 
 function loadSuppliersForQuote() {
-    $('#quote-supplier-select').select2({
+    const $supplierSelect = $('#quote-supplier-select');
+
+    $supplierSelect.select2({
         ajax: {
             url: '/ils/suppliers/search',
             dataType: 'json',
@@ -773,8 +844,52 @@ function loadSuppliersForQuote() {
 
     initializeEmailedSupplierSelect();
 
+    if (currentSupplierId) {
+        preselectSupplierForQuote(currentSupplierId);
+    }
+
     ensureQuoteLinesToolbar();
     applyVisibilityFilters();
+}
+
+function preselectSupplierForQuote(supplierId) {
+    const parsedSupplierId = parseInt(supplierId, 10);
+    if (!Number.isFinite(parsedSupplierId)) return;
+
+    const $supplierSelect = $('#quote-supplier-select');
+    const cachedName = window.PRESELECTED_SUPPLIER_NAME || '';
+    if (cachedName && $supplierSelect.find(`option[value="${parsedSupplierId}"]`).length === 0) {
+        $supplierSelect.append(new Option(cachedName, parsedSupplierId, true, true));
+        $supplierSelect.trigger('change');
+    } else {
+        $supplierSelect.val(String(parsedSupplierId)).trigger('change');
+    }
+
+    fetch(`/suppliers/api/${parsedSupplierId}`)
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success || !data.supplier) return;
+
+            const supplier = data.supplier;
+            supplierMetaById[String(supplier.id)] = { warning: supplier.warning || '', mov: supplier.mov };
+
+            if ($supplierSelect.find(`option[value="${supplier.id}"]`).length === 0) {
+                $supplierSelect.append(new Option(supplier.name, supplier.id, true, true));
+            } else {
+                const option = $supplierSelect.find(`option[value="${supplier.id}"]`)[0];
+                if (option) option.textContent = supplier.name;
+            }
+            $supplierSelect.val(String(supplier.id)).trigger('change');
+            currentSupplierId = supplier.id;
+            renderSupplierMovWarning(supplierMetaById[String(supplier.id)]);
+            updateQuoteDropZoneUI();
+
+            if (supplier.currency_id) {
+                const currencySelect = document.getElementById('quote-currency-select');
+                if (currencySelect) currencySelect.value = supplier.currency_id;
+            }
+        })
+        .catch(error => console.error('Error preselecting supplier:', error));
 }
 
 // For quick quote page (no modal)
@@ -952,6 +1067,7 @@ function fetchEmailedSuppliers() {
 
 function loadQuoteForEditing(quoteId) {
     showSentOnly = false;
+    showIlsOnly = false;
     partNumberFilterValue = '';
 
     document.getElementById('quotes-list-view').style.display = 'none';
@@ -1043,7 +1159,8 @@ function initializeEmptyQuoteLines(supplierId = null) {
                     is_no_bid: false,
                     line_notes: '',
                     other_quotes_count: 0,
-                    quote_requested: line.quote_requested || 0
+                    quote_requested: line.quote_requested || 0,
+                    ils_listed_for_supplier: lineIsListedForPreselectedIlsSupplier(line)
                 }));
 
                 initializeQuoteLinesTable(lines);
@@ -1056,6 +1173,9 @@ function initializeQuoteLinesTable(lines) {
     quoteLinesData = lines.map(line => ({
         ...line,
         quote_requested: line.quote_requested || 0,
+        ils_listed_for_supplier: line.ils_listed_for_supplier !== undefined
+            ? !!line.ils_listed_for_supplier
+            : lineIsListedForPreselectedIlsSupplier(line),
         split_line: false  // New field for split line checkbox
     }));
 
@@ -1193,6 +1313,11 @@ function initializeQuoteLinesTable(lines) {
             // Highlight rows that were sent to this supplier
             if (quoteLinesData[row].quote_requested) {
                 cellProperties.className = ((cellProperties.className || '') + ' bg-info bg-opacity-25').trim();
+            }
+
+            // Highlight rows where the clicked supplier is listed on ILS
+            if (quoteLinesData[row].ils_listed_for_supplier) {
+                cellProperties.className = ((cellProperties.className || '') + ' quote-ils-listed-cell').trim();
             }
 
             // Other quotes warning

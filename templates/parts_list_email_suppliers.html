@@ -156,6 +156,26 @@
     white-space: normal;
     line-height: 1.8;
 }
+.ils-listed-context-row td {
+    background: #fff3cd !important;
+    box-shadow: inset 4px 0 0 #ffc107;
+}
+.quote-ils-listed-cell {
+    background: #fff3cd !important;
+    box-shadow: inset 3px 0 0 #ffc107;
+}
+.quote-ils-context-badge {
+    background: #fff3cd;
+    border: 1px solid #ffc107;
+    color: #664d03;
+    border-radius: 0.25rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 0.2rem 0.45rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
 
 /* Mode selector tabs */
 .mode-tabs {
@@ -494,7 +514,8 @@
                             Email Supplier
                         </button>
                         <button class="btn btn-outline-info ms-2 supplier-quotes-btn"
-                                data-supplier-id="{{ supplier.supplier_id }}">
+                                data-supplier-id="{{ supplier.supplier_id }}"
+                                data-supplier-name="{{ supplier.supplier_name }}">
                             Supplier Quotes
                         </button>
                     {% endif %}
@@ -1340,7 +1361,24 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
 
+            const supplierCard = this.closest('.supplier-card');
+            const ilsLineIds = [];
+            const ilsPartNumbers = [];
+            if (supplierCard) {
+                supplierCard.querySelectorAll('.part-checkbox').forEach(cb => {
+                    if (cb.dataset.lineId) {
+                        ilsLineIds.push(parseInt(cb.dataset.lineId, 10));
+                    }
+                    if (cb.dataset.partNumber) {
+                        ilsPartNumbers.push(cb.dataset.partNumber);
+                    }
+                });
+            }
+
             window.PRESELECTED_SUPPLIER_ID = supplierId;
+            window.PRESELECTED_SUPPLIER_NAME = this.dataset.supplierName || '';
+            window.PRESELECTED_SUPPLIER_ILS_LINE_IDS = ilsLineIds.filter(Number.isFinite);
+            window.PRESELECTED_SUPPLIER_ILS_PART_NUMBERS = ilsPartNumbers;
             openSupplierQuotesModal();
             setTimeout(() => showQuoteInputView(null), 150);
         });
