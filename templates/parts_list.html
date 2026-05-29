@@ -337,6 +337,70 @@
 .project-import-summary {
     font-size: 0.9rem;
 }
+.email-import-attachment-grid,
+.email-import-column-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.75rem;
+}
+.email-import-card {
+    width: 100%;
+    border: 1px solid #dee2e6;
+    border-radius: 0.5rem;
+    background: #ffffff;
+    padding: 0.75rem;
+    text-align: left;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+.email-import-card:hover {
+    border-color: #0d6efd;
+    background: #f8fbff;
+}
+.email-import-card.active {
+    border-color: #0d6efd;
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.12);
+}
+.email-import-card.selected-part {
+    border-color: #198754;
+    background: #f6fdf9;
+}
+.email-import-card.selected-qty {
+    border-color: #0dcaf0;
+    background: #f5fcff;
+}
+.email-import-card-title {
+    font-weight: 600;
+    color: #212529;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.email-import-card-meta,
+.email-import-card-samples {
+    color: #6c757d;
+    font-size: 0.8rem;
+}
+.email-import-card-samples {
+    margin-top: 0.35rem;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.email-import-selection-panel {
+    border: 1px solid #e9ecef;
+    border-radius: 0.5rem;
+    background: #f8f9fa;
+    padding: 0.75rem;
+}
+#email-no-parts-preview-table th.email-import-selected-part,
+#email-no-parts-preview-table td.email-import-selected-part {
+    background: #e9f7ef;
+}
+#email-no-parts-preview-table th.email-import-selected-qty,
+#email-no-parts-preview-table td.email-import-selected-qty {
+    background: #e7f8fb;
+}
 /* ILS Cell Clickable */
 .ils-cell-clickable:hover {
     background: #e7f5ff !important;
@@ -568,38 +632,63 @@ AN960-416L"></textarea>
 
 <!-- Excel import helper modal (shown when email parsing finds no parts) -->
 <div class="modal fade" id="emailNoPartsExcelModal" tabindex="-1" aria-labelledby="emailNoPartsExcelModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="emailNoPartsExcelModalLabel">
                     <i class="bi bi-file-earmark-excel me-2 text-success"></i>
-                    No parts found in email body — import from Excel
+                    Import parts from spreadsheet attachment
                 </h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
+                <div id="email-no-parts-status" class="alert alert-info py-2 mb-3">
+                    Choose the attachment, then click the part number and quantity columns.
+                </div>
                 <div class="mb-3">
-                    <label for="email-no-parts-attachment-select" class="form-label">Spreadsheet attachment</label>
-                    <select id="email-no-parts-attachment-select" class="form-select"></select>
-                    <div class="form-text">Choose from spreadsheet attachments on the uploaded email.</div>
-                </div>
-                <div class="row g-2 mb-3">
-                    <div class="col-md-6">
-                        <label for="email-no-parts-part-col" class="form-label">Part number column</label>
-                        <select id="email-no-parts-part-col" class="form-select"></select>
-                        <div id="email-no-parts-part-preview" class="form-text">Click a column in the preview table to set this quickly.</div>
+                    <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+                        <label for="email-no-parts-attachment-select" class="form-label mb-0">Spreadsheet attachment</label>
+                        <span class="text-muted small">CSV, XLS and XLSX attachments found on the email</span>
                     </div>
-                    <div class="col-md-6">
-                        <label for="email-no-parts-qty-col" class="form-label">Quantity column</label>
-                        <select id="email-no-parts-qty-col" class="form-select"></select>
-                        <div id="email-no-parts-qty-preview" class="form-text">Then click another column for quantity.</div>
+                    <select id="email-no-parts-attachment-select" class="form-select d-none"></select>
+                    <div id="email-no-parts-attachment-cards" class="email-import-attachment-grid"></div>
+                </div>
+                <div class="email-import-selection-panel mb-3">
+                    <div class="row g-3 align-items-end">
+                        <div class="col-md-5">
+                            <label for="email-no-parts-part-col" class="form-label">Part number column</label>
+                            <select id="email-no-parts-part-col" class="form-select"></select>
+                            <div id="email-no-parts-part-preview" class="form-text">No part column selected.</div>
+                        </div>
+                        <div class="col-md-5">
+                            <label for="email-no-parts-qty-col" class="form-label">Quantity column</label>
+                            <select id="email-no-parts-qty-col" class="form-select"></select>
+                            <div id="email-no-parts-qty-preview" class="form-text">No quantity column selected.</div>
+                        </div>
+                        <div class="col-md-2">
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="checkbox" id="email-no-parts-has-header" checked>
+                                <label class="form-check-label" for="email-no-parts-has-header">Skip first row</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2 mt-3">
+                        <button type="button" class="btn btn-sm btn-success" id="email-no-parts-pick-part-btn">
+                            <i class="bi bi-upc-scan me-1"></i>Pick part column
+                        </button>
+                        <button type="button" class="btn btn-sm btn-info text-dark" id="email-no-parts-pick-qty-btn">
+                            <i class="bi bi-123 me-1"></i>Pick quantity column
+                        </button>
+                        <span class="badge bg-success align-self-center" id="email-no-parts-selected-part">Part: not set</span>
+                        <span class="badge bg-info text-dark align-self-center" id="email-no-parts-selected-qty">Qty: not set</span>
                     </div>
                 </div>
-                <div class="form-check mb-2">
-                    <input class="form-check-input" type="checkbox" id="email-no-parts-has-header" checked>
-                    <label class="form-check-label" for="email-no-parts-has-header">
-                        First row is a header row
-                    </label>
+                <div class="mb-3">
+                    <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+                        <div class="fw-semibold">Columns</div>
+                        <div class="text-muted small">Cards show example values from the file. Click a card to assign it.</div>
+                    </div>
+                    <div id="email-no-parts-column-cards" class="email-import-column-grid"></div>
                 </div>
                 <div class="table-responsive" style="max-height: 320px;">
                     <table class="table table-sm table-bordered mb-0" id="email-no-parts-preview-table">

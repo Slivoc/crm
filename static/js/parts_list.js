@@ -3760,6 +3760,13 @@ document.addEventListener('DOMContentLoaded', function() {
     const emailNoPartsPartPreview = document.getElementById('email-no-parts-part-preview');
     const emailNoPartsQtyPreview = document.getElementById('email-no-parts-qty-preview');
     const emailNoPartsHasHeader = document.getElementById('email-no-parts-has-header');
+    const emailNoPartsAttachmentCards = document.getElementById('email-no-parts-attachment-cards');
+    const emailNoPartsColumnCards = document.getElementById('email-no-parts-column-cards');
+    const emailNoPartsStatus = document.getElementById('email-no-parts-status');
+    const emailNoPartsPickPartBtn = document.getElementById('email-no-parts-pick-part-btn');
+    const emailNoPartsPickQtyBtn = document.getElementById('email-no-parts-pick-qty-btn');
+    const emailNoPartsSelectedPart = document.getElementById('email-no-parts-selected-part');
+    const emailNoPartsSelectedQty = document.getElementById('email-no-parts-selected-qty');
     let emailNoPartsPreviewRows = [];
     let emailNoPartsAttachments = [];
     let emailNoPartsPreviewColumns = [];
@@ -3797,7 +3804,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 handleEmailFiles(files);
             } else {
                 console.log('No files in drop');
-                alert('No file detected. Please save the email as .eml or .msg first.');
+                showToast('No file detected. Please save the email as .eml or .msg first.', 'warning');
             }
         }, false);
 
@@ -3828,7 +3835,7 @@ document.addEventListener('DOMContentLoaded', function() {
         console.log('Processing file:', file.name);
 
         if (!file.name.endsWith('.eml') && !file.name.endsWith('.msg')) {
-            alert('Please upload a .eml or .msg file.');
+            showToast('Please upload a .eml or .msg file.', 'warning');
             return;
         }
 
@@ -3904,24 +3911,35 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             } else {
                 console.error('Parse failed:', data.message);
-                alert('Error: ' + data.message);
+                showToast('Error: ' + data.message, 'danger');
             }
         })
         .catch(error => {
             loadingSpinner.style.display = 'none';
             console.error('Upload error:', error);
-            alert('Upload failed: ' + error);
+            showToast('Upload failed: ' + error, 'danger');
         });
     }
 
     function renderEmailNoPartsAttachmentOptions() {
         if (!emailNoPartsAttachmentSelect) return;
         emailNoPartsAttachmentSelect.innerHTML = '';
+        if (emailNoPartsAttachmentCards) {
+            emailNoPartsAttachmentCards.innerHTML = '';
+        }
         if (!emailNoPartsAttachments.length) {
             const opt = document.createElement('option');
             opt.value = '';
             opt.textContent = 'No spreadsheet attachments found';
             emailNoPartsAttachmentSelect.appendChild(opt);
+            if (emailNoPartsAttachmentCards) {
+                emailNoPartsAttachmentCards.innerHTML = `
+                    <div class="alert alert-warning mb-0">
+                        No spreadsheet attachments were found on this email.
+                    </div>
+                `;
+            }
+            setEmailNoPartsStatus('No spreadsheet attachment was found. Add parts manually or upload another email.', 'warning');
             renderEmailNoPartsPreview([], []);
             return;
         }
@@ -3930,6 +3948,27 @@ document.addEventListener('DOMContentLoaded', function() {
             opt.value = String(idx);
             opt.textContent = `${att.filename || `Attachment ${idx + 1}`} (${att.rows_count || 0} rows)`;
             emailNoPartsAttachmentSelect.appendChild(opt);
+
+            if (emailNoPartsAttachmentCards) {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = `email-import-card${idx === 0 ? ' active' : ''}`;
+                button.dataset.attachmentIndex = String(idx);
+                button.innerHTML = `
+                    <div class="d-flex align-items-start gap-2">
+                        <i class="bi bi-file-earmark-spreadsheet text-success fs-5"></i>
+                        <div class="min-w-0 flex-grow-1">
+                            <div class="email-import-card-title">${escapeHtml(att.filename || `Attachment ${idx + 1}`)}</div>
+                            <div class="email-import-card-meta">${att.rows_count || 0} preview rows | ${(att.columns || []).length} columns</div>
+                        </div>
+                    </div>
+                `;
+                button.addEventListener('click', () => {
+                    emailNoPartsAttachmentSelect.value = String(idx);
+                    applySelectedEmailNoPartsAttachment();
+                });
+                emailNoPartsAttachmentCards.appendChild(button);
+            }
         });
         applySelectedEmailNoPartsAttachment();
     }
@@ -3939,7 +3978,33 @@ document.addEventListener('DOMContentLoaded', function() {
         const idx = Number(emailNoPartsAttachmentSelect?.value || 0);
         const selected = emailNoPartsAttachments[idx] || emailNoPartsAttachments[0];
         emailNoPartsPreviewRows = Array.isArray(selected.rows) ? selected.rows : [];
+        if (emailNoPartsAttachmentCards) {
+            emailNoPartsAttachmentCards.querySelectorAll('[data-attachment-index]').forEach(card => {
+                card.classList.toggle('active', Number(card.dataset.attachmentIndex) === idx);
+            });
+        }
+        emailNoPartsColumnPickTarget = 'part';
+        setEmailNoPartsStatus('Click a column card to use it as the part number column.', 'info');
         renderEmailNoPartsPreview(selected.columns || [], emailNoPartsPreviewRows);
+    }
+
+    function setEmailNoPartsStatus(message, type = 'info') {
+        if (!emailNoPartsStatus) return;
+        emailNoPartsStatus.className = `alert alert-${type} py-2 mb-3`;
+        emailNoPartsStatus.textContent = message;
+    }
+
+    function escapeHtml(value) {
+        return (value ?? '').toString()
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function getEmailNoPartsSampleRows() {
+        return emailNoPartsHasHeader?.checked ? emailNoPartsPreviewRows.slice(1) : emailNoPartsPreviewRows;
     }
 
     function summarizeColumnValues(rows, colIdx, limit = 3) {
@@ -3953,6 +4018,71 @@ document.addEventListener('DOMContentLoaded', function() {
         return seen;
     }
 
+    function getEmailNoPartsColumnLabel(col) {
+        if (!col) return 'not set';
+        const header = emailNoPartsHasHeader?.checked ? (emailNoPartsPreviewRows[0]?.[col.index] || '').toString().trim() : '';
+        return header || col.label || `Column ${col.index + 1}`;
+    }
+
+    function scoreEmailNoPartsColumn(col, kind) {
+        const label = `${col.label || ''} ${emailNoPartsPreviewRows[0]?.[col.index] || ''}`.toLowerCase();
+        const samples = summarizeColumnValues(getEmailNoPartsSampleRows(), col.index, 8);
+        if (kind === 'part') {
+            let score = /(part|pn|p\/n|mpn|sku|item|material)/.test(label) ? 8 : 0;
+            score += samples.filter(value => /[a-z]/i.test(value) && /\d/.test(value)).length;
+            return score;
+        }
+        let score = /(qty|quantity|order qty|required)/i.test(label) ? 8 : 0;
+        score += samples.filter(value => /^\s*\d+(\.\d+)?\s*$/.test(value)).length;
+        return score;
+    }
+
+    function chooseEmailNoPartsDefaultColumn(columns, kind, fallbackIndex) {
+        if (!columns.length) return null;
+        return [...columns]
+            .sort((a, b) => scoreEmailNoPartsColumn(b, kind) - scoreEmailNoPartsColumn(a, kind))[0]?.index ?? columns[fallbackIndex]?.index ?? columns[0].index;
+    }
+
+    function updateEmailNoPartsPickButtons() {
+        if (emailNoPartsPickPartBtn) {
+            emailNoPartsPickPartBtn.classList.toggle('active', emailNoPartsColumnPickTarget === 'part');
+        }
+        if (emailNoPartsPickQtyBtn) {
+            emailNoPartsPickQtyBtn.classList.toggle('active', emailNoPartsColumnPickTarget === 'qty');
+        }
+    }
+
+    function updateEmailNoPartsSelectionClasses() {
+        const partIdx = Number(emailNoPartsPartCol?.value);
+        const qtyIdx = Number(emailNoPartsQtyCol?.value);
+        document.querySelectorAll('#email-no-parts-preview-table th, #email-no-parts-preview-table td').forEach(cell => {
+            const idx = Number(cell.dataset.columnIndex);
+            cell.classList.toggle('email-import-selected-part', idx === partIdx);
+            cell.classList.toggle('email-import-selected-qty', idx === qtyIdx);
+        });
+        if (emailNoPartsColumnCards) {
+            emailNoPartsColumnCards.querySelectorAll('[data-column-index]').forEach(card => {
+                const idx = Number(card.dataset.columnIndex);
+                card.classList.toggle('selected-part', idx === partIdx);
+                card.classList.toggle('selected-qty', idx === qtyIdx);
+            });
+        }
+    }
+
+    function assignEmailNoPartsColumn(colIdx, target = emailNoPartsColumnPickTarget) {
+        if (target === 'part') {
+            emailNoPartsPartCol.value = String(colIdx);
+            emailNoPartsColumnPickTarget = 'qty';
+            setEmailNoPartsStatus('Part column selected. Click the quantity column next.', 'info');
+        } else {
+            emailNoPartsQtyCol.value = String(colIdx);
+            emailNoPartsColumnPickTarget = 'part';
+            setEmailNoPartsStatus('Quantity column selected. Review the highlighted columns, then use these columns.', 'success');
+        }
+        updateEmailNoPartsPickButtons();
+        updateEmailNoPartsColumnPreviewText();
+    }
+
     function updateEmailNoPartsColumnPreviewText() {
         if (!emailNoPartsPreviewColumns.length) return;
         const partIdx = Number(emailNoPartsPartCol?.value);
@@ -3961,8 +4091,9 @@ document.addEventListener('DOMContentLoaded', function() {
         const partCol = emailNoPartsPreviewColumns.find(c => c.index === partIdx);
         const qtyCol = emailNoPartsPreviewColumns.find(c => c.index === qtyIdx);
 
-        const partExamples = summarizeColumnValues(emailNoPartsPreviewRows, partIdx).join(' • ');
-        const qtyExamples = summarizeColumnValues(emailNoPartsPreviewRows, qtyIdx).join(' • ');
+        const sampleRows = getEmailNoPartsSampleRows();
+        const partExamples = summarizeColumnValues(sampleRows, partIdx).join(' | ');
+        const qtyExamples = summarizeColumnValues(sampleRows, qtyIdx).join(' | ');
 
         if (emailNoPartsPartPreview) {
             emailNoPartsPartPreview.textContent = partCol
@@ -3974,6 +4105,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 ? `Preview: ${qtyExamples || 'No sample values'}`
                 : 'Select a quantity column.';
         }
+        if (emailNoPartsSelectedPart) {
+            emailNoPartsSelectedPart.textContent = `Part: ${getEmailNoPartsColumnLabel(partCol)}`;
+        }
+        if (emailNoPartsSelectedQty) {
+            emailNoPartsSelectedQty.textContent = `Qty: ${getEmailNoPartsColumnLabel(qtyCol)}`;
+        }
+        updateEmailNoPartsSelectionClasses();
     }
 
     function renderEmailNoPartsPreview(columns, rows) {
@@ -3982,62 +4120,84 @@ document.addEventListener('DOMContentLoaded', function() {
         emailNoPartsQtyCol.innerHTML = '';
         emailNoPartsPreviewHead.innerHTML = '';
         emailNoPartsPreviewBody.innerHTML = '';
+        if (emailNoPartsColumnCards) {
+            emailNoPartsColumnCards.innerHTML = '';
+        }
 
-        if (!columns.length) return;
+        if (!columns.length) {
+            if (emailNoPartsAttachments.length) {
+                setEmailNoPartsStatus('No usable columns were found in this spreadsheet.', 'warning');
+            }
+            return;
+        }
         const headerRow = document.createElement('tr');
         columns.forEach((col, colPos) => {
-            const sampleValues = summarizeColumnValues(rows, col.index);
-            const sampleText = sampleValues.join(' • ');
+            const sampleValues = summarizeColumnValues(getEmailNoPartsSampleRows(), col.index);
+            const sampleText = sampleValues.join(' | ');
+            const label = getEmailNoPartsColumnLabel(col);
 
             const opt1 = document.createElement('option');
             opt1.value = String(col.index);
-            opt1.textContent = `${col.label}${sampleText ? ` — ${sampleText}` : ''}`;
+            opt1.textContent = `${label}${sampleText ? ` - ${sampleText}` : ''}`;
             emailNoPartsPartCol.appendChild(opt1);
 
             const opt2 = document.createElement('option');
             opt2.value = String(col.index);
-            opt2.textContent = `${col.label}${sampleText ? ` — ${sampleText}` : ''}`;
+            opt2.textContent = `${label}${sampleText ? ` - ${sampleText}` : ''}`;
             emailNoPartsQtyCol.appendChild(opt2);
 
+            if (emailNoPartsColumnCards) {
+                const card = document.createElement('button');
+                card.type = 'button';
+                card.className = 'email-import-card';
+                card.dataset.columnIndex = String(col.index);
+                card.innerHTML = `
+                    <div class="d-flex justify-content-between align-items-start gap-2">
+                        <div class="email-import-card-title">${escapeHtml(label)}</div>
+                        <span class="badge bg-light text-dark">Col ${col.index + 1}</span>
+                    </div>
+                    <div class="email-import-card-samples">${escapeHtml(sampleText || 'No sample values')}</div>
+                `;
+                card.addEventListener('click', () => assignEmailNoPartsColumn(col.index));
+                emailNoPartsColumnCards.appendChild(card);
+            }
+
             const th = document.createElement('th');
-            th.textContent = col.label;
+            th.textContent = label;
+            th.dataset.columnIndex = String(col.index);
             th.classList.add('cursor-pointer');
             th.style.cursor = 'pointer';
             th.title = sampleText ? `Sample: ${sampleText}` : 'Click to map this column';
-            th.addEventListener('click', () => {
-                if (emailNoPartsColumnPickTarget === 'part') {
-                    emailNoPartsPartCol.value = String(col.index);
-                    emailNoPartsColumnPickTarget = 'qty';
-                } else {
-                    emailNoPartsQtyCol.value = String(col.index);
-                    emailNoPartsColumnPickTarget = 'part';
-                }
-                updateEmailNoPartsColumnPreviewText();
-            });
+            th.addEventListener('click', () => assignEmailNoPartsColumn(col.index));
             if (colPos === 0) {
                 const badge = document.createElement('span');
                 badge.className = 'badge bg-light text-dark ms-1';
-                badge.textContent = 'Click to map';
+                badge.textContent = 'click';
                 th.appendChild(badge);
             }
             headerRow.appendChild(th);
         });
         emailNoPartsPreviewHead.appendChild(headerRow);
 
-        if (columns.length > 1) {
-            emailNoPartsQtyCol.value = String(columns[1].index);
-        }
+        const partDefault = chooseEmailNoPartsDefaultColumn(columns, 'part', 0);
+        emailNoPartsPartCol.value = String(partDefault ?? columns[0].index);
+        const qtyDefault = chooseEmailNoPartsDefaultColumn(columns.filter(col => col.index !== partDefault), 'qty', 0);
+        emailNoPartsQtyCol.value = String(qtyDefault ?? columns[Math.min(1, columns.length - 1)].index);
 
         rows.slice(0, 25).forEach(row => {
             const tr = document.createElement('tr');
             columns.forEach(col => {
                 const td = document.createElement('td');
+                td.dataset.columnIndex = String(col.index);
                 td.textContent = row[col.index] ?? '';
+                td.addEventListener('click', () => assignEmailNoPartsColumn(col.index));
+                td.style.cursor = 'pointer';
                 tr.appendChild(td);
             });
             emailNoPartsPreviewBody.appendChild(tr);
         });
 
+        updateEmailNoPartsPickButtons();
         updateEmailNoPartsColumnPreviewText();
     }
 
@@ -4050,6 +4210,23 @@ document.addEventListener('DOMContentLoaded', function() {
     if (emailNoPartsQtyCol) {
         emailNoPartsQtyCol.addEventListener('change', updateEmailNoPartsColumnPreviewText);
     }
+    if (emailNoPartsHasHeader) {
+        emailNoPartsHasHeader.addEventListener('change', () => renderEmailNoPartsPreview(emailNoPartsPreviewColumns, emailNoPartsPreviewRows));
+    }
+    if (emailNoPartsPickPartBtn) {
+        emailNoPartsPickPartBtn.addEventListener('click', () => {
+            emailNoPartsColumnPickTarget = 'part';
+            updateEmailNoPartsPickButtons();
+            setEmailNoPartsStatus('Click a column card or preview column to use it as the part number column.', 'info');
+        });
+    }
+    if (emailNoPartsPickQtyBtn) {
+        emailNoPartsPickQtyBtn.addEventListener('click', () => {
+            emailNoPartsColumnPickTarget = 'qty';
+            updateEmailNoPartsPickButtons();
+            setEmailNoPartsStatus('Click a column card or preview column to use it as the quantity column.', 'info');
+        });
+    }
 
     if (emailNoPartsApplyBtn) {
         emailNoPartsApplyBtn.addEventListener('click', () => {
@@ -4057,7 +4234,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const qtyIdx = Number(emailNoPartsQtyCol.value);
             const skipFirst = Boolean(emailNoPartsHasHeader?.checked);
             if (Number.isNaN(partIdx) || Number.isNaN(qtyIdx)) {
-                alert('Choose both part number and quantity columns.');
+                setEmailNoPartsStatus('Choose both part number and quantity columns before importing.', 'warning');
                 return;
             }
             const start = skipFirst ? 1 : 0;
@@ -4072,7 +4249,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 lines.push(qty && qty !== 1 ? `${part}, ${qty}` : part);
             }
             if (!lines.length) {
-                alert('No usable rows found from selected columns.');
+                setEmailNoPartsStatus('No usable rows were found from the selected columns.', 'warning');
                 return;
             }
             partsInput.value = lines.join('\n');
