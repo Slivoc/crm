@@ -73,7 +73,7 @@
                                     <button class="btn btn-sm btn-outline-danger" onclick="updateAccessRequest({{ req.id }}, 'rejected')">Reject</button>
                                     <button class="btn btn-sm btn-outline-secondary" onclick="updateAccessRequest({{ req.id }}, 'pending')">Reopen</button>
                                     <button class="btn btn-sm btn-outline-primary" onclick="findMatches({{ req.id }})">Find matches</button>
-                                    <button class="btn btn-sm btn-primary" onclick="openCreateUserModal({{ req.id }})">Create user</button>
+                                    <button class="btn btn-sm btn-primary" onclick="openCreateUserModal({{ req.id }})">Create user and copy password</button>
                                 </div>
                             </td>
                         </tr>
@@ -139,7 +139,7 @@
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" type="button" data-bs-dismiss="modal">Cancel</button>
-                <button class="btn btn-primary" type="button" onclick="createUserFromAccessRequest()">Create user</button>
+                <button class="btn btn-primary" type="button" onclick="createUserFromAccessRequest()">Create user and copy password</button>
             </div>
         </div>
     </div>
@@ -317,6 +317,27 @@ function generateAccessRequestPassword() {
     document.getElementById('access-request-password').value = `Portal!${random}`;
 }
 
+async function copyTextToClipboard(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+
+    try {
+        return document.execCommand('copy');
+    } finally {
+        document.body.removeChild(textarea);
+    }
+}
+
 function openCreateUserModal(requestId) {
     const requestData = getRequestData(requestId);
     if (!requestData) return;
@@ -417,6 +438,20 @@ async function createUserFromAccessRequest() {
         const createResult = await createResp.json();
         if (!createResult.success) {
             alert(createResult.error || 'Failed to create user');
+            return;
+        }
+
+        let passwordCopied = false;
+        try {
+            passwordCopied = await copyTextToClipboard(payload.password);
+        } catch (copyError) {
+            passwordCopied = false;
+        }
+
+        if (!passwordCopied) {
+            alert('User created, but the browser blocked copying the password. Copy it from the password field before closing this window.');
+            document.getElementById('access-request-password').focus();
+            document.getElementById('access-request-password').select();
             return;
         }
 
