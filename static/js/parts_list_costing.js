@@ -1508,7 +1508,7 @@ function displayQPLInfo(approvals) {
 
         let text = approval.manufacturer_name;
         if (approval.approval_list_type) {
-            const typeLabel = approval.approval_list_type === 'airbus_fixed_wing' ? 'AQPL' : approval.approval_list_type === 'airbus_rotary' ? 'HQPL' : approval.approval_list_type;
+            const typeLabel = approval.approval_list_type === 'airbus_fixed_wing' ? 'AQPL' : approval.approval_list_type === 'airbus_rotary' ? 'HQPL' : approval.approval_list_type === 'airbus_canada_a220' ? 'A220 QPL' : approval.approval_list_type;
             text += ` · ${typeLabel}`;
         }
         if (approval.cage_code) {
@@ -1551,6 +1551,8 @@ function getQplBadgeLabelsForManufacturer(manufacturer, approvals) {
             labels.add('AQPL');
         } else if (approval.approval_list_type === 'airbus_rotary') {
             labels.add('HQPL');
+        } else if (approval.approval_list_type === 'airbus_canada_a220') {
+            labels.add('A220 QPL');
         } else {
             labels.add('QPL');
         }

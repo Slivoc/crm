@@ -1,6 +1,7 @@
 import logging
 import os
 import tempfile
+from urllib.parse import parse_qs, urlparse
 import psycopg2
 import requests
 from bs4 import BeautifulSoup
@@ -290,7 +291,13 @@ def _save_uploaded_files(files):
     return temp_paths
 
 
-def _extract_airbus_fixed_wing_downloads(html):
+def _remote_filename(url):
+    parsed_url = urlparse(url)
+    query_filename = parse_qs(parsed_url.query).get('fileName', [None])[0]
+    return secure_filename(query_filename or os.path.basename(parsed_url.path))
+
+
+def _extract_airbus_downloads(html, *, suffix, filename_prefix=None):
     soup = BeautifulSoup(html, 'html.parser')
     downloads = []
     seen = set()
@@ -299,16 +306,24 @@ def _extract_airbus_fixed_wing_downloads(html):
         href = (link.get('href') or '').strip()
         if not href or AIRBUS_DOWNLOAD_HOST not in href.lower():
             continue
-        if not href.lower().endswith('.csv'):
+        filename = _remote_filename(href)
+        if not filename.lower().endswith(suffix):
+            continue
+        if filename_prefix and not filename.lower().startswith(filename_prefix):
             continue
         if href in seen:
             continue
         seen.add(href)
         downloads.append({
             'url': href,
-            'label': link.get_text(' ', strip=True) or os.path.basename(href),
+            'label': link.get_text(' ', strip=True) or filename,
         })
 
+    return downloads
+
+
+def _extract_airbus_fixed_wing_downloads(html):
+    downloads = _extract_airbus_downloads(html, suffix='.csv')
     if len(downloads) != 2:
         raise RuntimeError(
             f'Expected exactly 2 Airbus fixed-wing CSV downloads on {AIRBUS_AQPL_PAGE_URL}, found {len(downloads)}.'
@@ -317,17 +332,31 @@ def _extract_airbus_fixed_wing_downloads(html):
     return downloads
 
 
+def _extract_airbus_canada_a220_download(html):
+    downloads = _extract_airbus_downloads(
+        html,
+        suffix='.xlsx',
+        filename_prefix='airbus-canada-qpl-for-standard-parts-',
+    )
+    if len(downloads) != 1:
+        raise RuntimeError(
+            f'Expected exactly 1 Airbus Canada A220 QPL workbook on {AIRBUS_AQPL_PAGE_URL}, found {len(downloads)}.'
+        )
+    return downloads[0]
+
+
 def _download_remote_file(url, *, prefix):
     response = requests.get(url, stream=True, timeout=(20, 300))
     response.raise_for_status()
 
-    filename = secure_filename(os.path.basename(url.split('?', 1)[0]) or f'{prefix}.csv')
-    if not filename.lower().endswith('.csv'):
-        filename = f'{filename}.csv'
+    filename = _remote_filename(url) or f'{prefix}.csv'
+    suffix = os.path.splitext(filename)[1].lower()
+    if suffix not in ALLOWED_EXTENSIONS:
+        raise ValueError(f'{filename} is not a supported Airbus source file.')
 
     with tempfile.NamedTemporaryFile(
         prefix=f'{prefix}-{os.path.splitext(filename)[0]}-',
-        suffix='.csv',
+        suffix=suffix,
         delete=False,
     ) as tmp:
         for chunk in response.iter_content(chunk_size=1024 * 1024):
@@ -345,6 +374,14 @@ def _fetch_airbus_fixed_wing_temp_files():
     for index, spec in enumerate(download_specs, start=1):
         temp_paths.append(_download_remote_file(spec['url'], prefix=f'airbus-fixed-wing-{index}'))
     return temp_paths
+
+
+def _fetch_airbus_canada_a220_temp_files():
+    response = requests.get(AIRBUS_AQPL_PAGE_URL, timeout=(20, 60))
+    response.raise_for_status()
+
+    download_spec = _extract_airbus_canada_a220_download(response.text)
+    return [_download_remote_file(download_spec['url'], prefix='airbus-canada-a220')]
 
 
 def _reassign_import_list_type(import_id, target_list_type):
@@ -567,6 +604,58 @@ def import_airbus_fixed_wing_from_airbus():
     except Exception as exc:
         logging.exception('Error importing Airbus fixed wing approvals from Airbus')
         flash(f'Airbus fetch/import failed: {exc}', 'danger')
+    finally:
+        for temp_path in temp_paths:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                current_app.logger.warning('Could not remove temp file %s', temp_path)
+
+    return redirect(url_for('manufacturer_approvals.manufacturer_approvals_dashboard', approval_list_type=approval_list_type))
+
+
+@manufacturer_approvals_bp.route('/manufacturer-approvals/import-airbus-canada-a220', methods=['POST'])
+def import_airbus_canada_a220_from_airbus():
+    temp_paths = []
+    approval_list_type = 'airbus_canada_a220'
+    batch_size = request.form.get('batch_size', 5000, type=int)
+    batch_size = max(250, min(batch_size, 10000))
+
+    try:
+        temp_paths = _fetch_airbus_canada_a220_temp_files()
+        database_url = os.getenv('DATABASE_URL')
+        if not database_url:
+            raise RuntimeError('DATABASE_URL is required to import manufacturer approvals.')
+
+        imported_by = None
+        if getattr(current_user, 'is_authenticated', False):
+            imported_by = getattr(current_user, 'username', None) or getattr(current_user, 'email', None)
+        imported_by = imported_by or os.getenv('USER') or 'web'
+
+        connection = psycopg2.connect(database_url)
+        try:
+            stats = process_workbooks(
+                connection,
+                workbook_paths=temp_paths,
+                approval_list_type=approval_list_type,
+                batch_size=batch_size,
+                overwrite_existing=True,
+                imported_by=imported_by,
+            )
+        finally:
+            connection.close()
+
+        flash(
+            (
+                f"Fetched and imported {stats['rows_written']:,} Airbus approvals into {LIST_TYPES[approval_list_type]} "
+                f"from the Airbus Canada workbook. "
+                f"Skipped {stats['rows_skipped']:,} invalid row(s) and removed {stats['deleted_previous_rows']:,} previous row(s)."
+            ),
+            'success',
+        )
+    except Exception as exc:
+        logging.exception('Error importing Airbus Canada A220 approvals from Airbus')
+        flash(f'Airbus Canada fetch/import failed: {exc}', 'danger')
     finally:
         for temp_path in temp_paths:
             try:

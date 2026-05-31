@@ -381,6 +381,7 @@ def _get_portal_badge_map(base_part_numbers):
             label = (
                 'AQPL' if approval_list_type == 'airbus_fixed_wing'
                 else 'HQPL' if approval_list_type == 'airbus_rotary'
+                else 'A220 QPL' if approval_list_type == 'airbus_canada_a220'
                 else 'QPL'
             )
             for base_part_number in (

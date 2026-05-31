@@ -4,6 +4,7 @@ Import Airbus manufacturer/location approvals from one or more large XLSX files.
 Examples:
     python import_manufacturer_approvals.py fixed1.xlsx fixed2.xlsx --list-type airbus_fixed_wing
     python import_manufacturer_approvals.py rotary.xlsx --list-type airbus_rotary
+    python import_manufacturer_approvals.py a220.xlsx --list-type airbus_canada_a220
 """
 import argparse
 import logging

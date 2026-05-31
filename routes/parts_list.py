@@ -4619,6 +4619,7 @@ def table_view(list_id):
             type_label = (
                 'AQPL' if approval_list_type == 'airbus_fixed_wing'
                 else 'HQPL' if approval_list_type == 'airbus_rotary'
+                else 'A220 QPL' if approval_list_type == 'airbus_canada_a220'
                 else None
             )
             parts = [p for p in [type_label, name, f"CAGE {cage}" if cage else None, status, location] if p]

@@ -9,6 +9,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 LIST_TYPES = {
     'airbus_fixed_wing': 'Airbus Fixed Wing',
     'airbus_rotary': 'Airbus Rotary',
+    'airbus_canada_a220': 'Airbus Canada A220',
 }
 
 RAW_COLUMN_MAP = {
@@ -34,6 +35,16 @@ RAW_COLUMN_MAP = {
     'Manufacturer Part Number (MPN)': 'manufacturer_part_number',
     'Manufacturer name': 'manufacturer_name',
     'AH Manufacturer code': 'manufacturer_code',
+    'Manufacturer SAP Code': 'manufacturer_code',
+    'Vendor Name': 'manufacturer_name',
+    'Address': 'location',
+    'Country Region': 'country',
+    'Supplier Cage Code': 'cage_code',
+    'Approval Status': 'approval_status',
+    'Type': 'data_type',
+    'Description': 'airbus_material_text',
+    'Usage Restriction': 'usage_restriction',
+    'Technical Qualification': 'p_status_text',
 }
 
 UPSERT_COLUMNS: Sequence[str] = (
@@ -75,7 +86,7 @@ def clean_text(value: Any) -> Optional[str]:
 
 
 def normalize_header(value: Any) -> str:
-    return str(value).replace('\n', ' ').strip()
+    return re.sub(r'\s+', ' ', str(value)).strip()
 
 
 def normalize_part_number(value: Any) -> Optional[str]:
@@ -132,6 +143,10 @@ def _normalize_row_map(row_map: Dict[str, Any]) -> Dict[str, Any]:
         normalized_row_map[normalized_key] = value
         if normalized_key.startswith('Counter of QIR'):
             normalized_row_map['Counter of QIR'] = value
+        if normalized_key.startswith('Interchangeability'):
+            normalized_row_map['Interchangeability Flag'] = value
+        if normalized_key.startswith('Technical Approval Change Date'):
+            normalized_row_map['Change date Status P'] = value
 
     for raw_key, normalized_key in RAW_COLUMN_MAP.items():
         value = normalized_row_map.get(raw_key)
@@ -146,12 +161,33 @@ def iter_excel_records(workbook_path: str, limit: Optional[int] = None) -> Itera
 
     workbook = load_workbook(workbook_path, read_only=True, data_only=True)
     try:
-        sheet = workbook.active
-        header_row = next(sheet.iter_rows(min_row=1, max_row=1, values_only=True))
+        sheet = None
+        header_row_number = None
+        header_row = None
+        for candidate_sheet in workbook.worksheets:
+            for row_number, candidate_row in enumerate(
+                candidate_sheet.iter_rows(min_row=1, max_row=30, values_only=True),
+                start=1,
+            ):
+                normalized_headers = {normalize_header(col) for col in candidate_row if col is not None}
+                if (
+                    normalized_headers.intersection({'Airbus Material', 'Manufacturer PN', 'Manufacturer Part Number (MPN)'})
+                    and normalized_headers.intersection({'Manufacturer Text', 'Vendor Name', 'Manufacturer name'})
+                ):
+                    sheet = candidate_sheet
+                    header_row_number = row_number
+                    header_row = candidate_row
+                    break
+            if sheet is not None:
+                break
+
+        if sheet is None or header_row_number is None or header_row is None:
+            raise ValueError(f'Could not find an Airbus approvals data sheet in {os.path.basename(workbook_path)}.')
+
         headers = [normalize_header(col) for col in header_row]
 
         yielded = 0
-        for row in sheet.iter_rows(min_row=2, values_only=True):
+        for row in sheet.iter_rows(min_row=header_row_number + 1, values_only=True):
             row_map = dict(zip(headers, row))
             yield _normalize_row_map(row_map)
             yielded += 1

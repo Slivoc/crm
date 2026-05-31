@@ -423,7 +423,7 @@ def _build_project_qpl_mapped_ctes():
             LEFT JOIN suppliers s ON s.id = map.supplier_id
             WHERE TRIM(COALESCE(ma.manufacturer_name, '')) <> ''
               AND TRIM(COALESCE(NULLIF(ma.airbus_material_base, ''), NULLIF(ma.manufacturer_part_number_base, ''))) <> ''
-              AND COALESCE(ma.approval_list_type, '') IN ('airbus_fixed_wing', 'airbus_rotary')
+              AND COALESCE(ma.approval_list_type, '') IN ('airbus_fixed_wing', 'airbus_rotary', 'airbus_canada_a220')
         ),
         matched_rows AS (
             SELECT DISTINCT

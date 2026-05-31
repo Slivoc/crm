@@ -123,6 +123,25 @@ document.addEventListener('DOMContentLoaded', function() {
         return (lineData.requested_part_number || lineData.customer_part_number || '').toString().trim();
     }
 
+    function getActualQuotedPartNumber(lineData, elements) {
+        const requestedPartNumber = getRequestedPartNumber(lineData);
+        const candidates = [
+            lineData?.quoted_part_number,
+            elements?.displayPartNumber?.value,
+            lineData?.display_part_number,
+            lineData?.suggested_display_pn,
+            lineData?.supplier_quoted_part_number,
+            lineData?.customer_part_number,
+            requestedPartNumber
+        ];
+
+        for (const candidate of candidates) {
+            const value = (candidate || '').toString().trim();
+            if (value) return value;
+        }
+        return '';
+    }
+
     function getSupplierDisplay(lineData) {
         const supplierName = (lineData.chosen_supplier_name || '').toString().trim();
         if (supplierName) return supplierName;
@@ -1780,7 +1799,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             const effectiveQty = parseFloat(elements.chosenQty.value) || lineData.quantity || 0;
             const requestedPartNumber = getRequestedPartNumber(lineData);
-            const quotedPartNumber = (elements.displayPartNumber?.value || lineData.display_part_number || requestedPartNumber || '').toString().trim();
+            const quotedPartNumber = getActualQuotedPartNumber(lineData, elements);
             const supplierDisplay = getSupplierDisplay(lineData) || '-';
             const unitCost = parseFloat(lineData.chosen_cost || 0);
             const lineInsight = purchasingInsightsByLineId.get(lineData.id);

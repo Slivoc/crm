@@ -16,12 +16,16 @@ function getQplListBadge(type) {
     if (type === 'airbus_rotary') {
         return '<span class="badge bg-success-subtle text-success border ms-1">HQPL</span>';
     }
+    if (type === 'airbus_canada_a220') {
+        return '<span class="badge bg-info-subtle text-info-emphasis border ms-1">A220 QPL</span>';
+    }
     return '';
 }
 
 function getQplListLabel(type) {
     if (type === 'airbus_fixed_wing') return 'AQPL';
     if (type === 'airbus_rotary') return 'HQPL';
+    if (type === 'airbus_canada_a220') return 'A220 QPL';
     return type ? type.replace(/_/g, ' ') : '-';
 }
 

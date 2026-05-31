@@ -518,7 +518,7 @@ def update_settings():
             'from_email': 'From email address for portal/admin outbound email',
             'from_name': 'From display name for portal/admin outbound email',
             'notification_email': 'Notification recipient for portal/admin alerts',
-            'show_qpl_badges': 'Whether portal quote results should lazy-load AQPL or HQPL badges.',
+            'show_qpl_badges': 'Whether portal quote results should lazy-load Airbus QPL badges.',
             'show_bom_badges': 'Whether portal quote results should lazy-load saved BOM membership badges.',
             'portal_badge_bom_ids': 'Saved BOM IDs allowed to surface as badges in portal quote results.',
         }

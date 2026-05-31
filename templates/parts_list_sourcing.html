@@ -747,6 +747,8 @@
                             <span class="badge bg-primary-subtle text-primary border ms-1">AQPL</span>
                             {% elif qpl.approval_list_type == 'airbus_rotary' %}
                             <span class="badge bg-success-subtle text-success border ms-1">HQPL</span>
+                            {% elif qpl.approval_list_type == 'airbus_canada_a220' %}
+                            <span class="badge bg-info-subtle text-info-emphasis border ms-1">A220 QPL</span>
                             {% endif %}
                         </small>
                         {% if qpl.matched_supplier_name %}

@@ -116,12 +116,12 @@
                         </div>
 
                         <div class="mb-3">
-                            <label class="form-label">Show AQPL and HQPL Badges</label>
+                            <label class="form-label">Show Airbus QPL Badges</label>
                             <select class="form-control" name="show_qpl_badges">
                                 <option value="1" {% if settings.show_qpl_badges and settings.show_qpl_badges.setting_value == '1' %}selected{% endif %}>Yes - Lazy-load Airbus QPL badges</option>
                                 <option value="0" {% if not settings.show_qpl_badges or settings.show_qpl_badges.setting_value == '0' %}selected{% endif %}>No - Hide QPL badges</option>
                             </select>
-                            <small class="form-text text-muted">Adds `AQPL` or `HQPL` badges to portal quote results when the part appears on the Airbus lists.</small>
+                            <small class="form-text text-muted">Adds `AQPL`, `HQPL`, or `A220 QPL` badges to portal quote results when the part appears on the Airbus lists.</small>
                         </div>
 
                         <div class="mb-3">
