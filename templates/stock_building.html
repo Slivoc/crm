@@ -25,51 +25,91 @@
                 <input type="hidden" name="sort_dir" value="{{ sort_dir }}">
 
                 <div class="col-lg-4">
-                    <label for="customerFilter" class="form-label fw-semibold">Customers (overall filter)</label>
-                    <input type="text" class="form-control mb-2 filter-search-input" data-target-select="customerFilter" placeholder="Filter customers...">
-                    <select class="form-select" id="customerFilter" name="customer_ids" multiple size="6">
+                    <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+                        <label for="customerFilterSearch" class="form-label fw-semibold mb-0">Customers (overall filter)</label>
+                        <span class="badge {% if selected_customer_ids %}text-bg-primary{% else %}text-bg-secondary{% endif %} filter-selected-count" data-count-for="customerFilter">{{ selected_customer_ids|length }} selected</span>
+                    </div>
+                    <input type="text" class="form-control mb-2 filter-search-input" id="customerFilterSearch" data-target-panel="customerFilter" placeholder="Filter customers...">
+                    <div class="filter-checkbox-panel" id="customerFilter">
                         {% for customer in customers %}
-                        <option value="{{ customer.id }}" {% if customer.id in selected_customer_ids %}selected{% endif %}>
-                            {{ customer.name }}
-                        </option>
+                        <label class="filter-checkbox-option">
+                            <input class="form-check-input" type="checkbox" name="customer_ids" value="{{ customer.id }}" {% if customer.id in selected_customer_ids %}checked{% endif %}>
+                            <span>{{ customer.name }}</span>
+                        </label>
+                        {% else %}
+                        <span class="text-muted small">No customers available.</span>
                         {% endfor %}
-                    </select>
+                    </div>
+                    <div class="d-flex gap-2 mt-2">
+                        <button type="button" class="btn btn-link btn-sm p-0 filter-select-visible" data-panel="customerFilter">Select visible</button>
+                        <button type="button" class="btn btn-link btn-sm p-0 text-secondary filter-clear" data-panel="customerFilter">Clear</button>
+                    </div>
                 </div>
 
                 <div class="col-lg-4">
-                    <label for="bomFilter" class="form-label fw-semibold">BOMs (overall filter)</label>
-                    <input type="text" class="form-control mb-2 filter-search-input" data-target-select="bomFilter" placeholder="Filter BOMs...">
-                    <select class="form-select" id="bomFilter" name="bom_ids" multiple size="6">
+                    <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+                        <label for="bomFilterSearch" class="form-label fw-semibold mb-0">BOMs (overall filter)</label>
+                        <span class="badge {% if selected_bom_ids %}text-bg-primary{% else %}text-bg-secondary{% endif %} filter-selected-count" data-count-for="bomFilter">{{ selected_bom_ids|length }} selected</span>
+                    </div>
+                    <input type="text" class="form-control mb-2 filter-search-input" id="bomFilterSearch" data-target-panel="bomFilter" placeholder="Filter BOMs...">
+                    <div class="filter-checkbox-panel" id="bomFilter">
                         {% for bom in boms %}
-                        <option value="{{ bom.id }}" {% if bom.id in selected_bom_ids %}selected{% endif %}>
-                            {{ bom.name }}
-                        </option>
+                        <label class="filter-checkbox-option">
+                            <input class="form-check-input" type="checkbox" name="bom_ids" value="{{ bom.id }}" {% if bom.id in selected_bom_ids %}checked{% endif %}>
+                            <span>{{ bom.name }}</span>
+                        </label>
+                        {% else %}
+                        <span class="text-muted small">No BOMs available.</span>
                         {% endfor %}
-                    </select>
+                    </div>
+                    <div class="d-flex gap-2 mt-2">
+                        <button type="button" class="btn btn-link btn-sm p-0 filter-select-visible" data-panel="bomFilter">Select visible</button>
+                        <button type="button" class="btn btn-link btn-sm p-0 text-secondary filter-clear" data-panel="bomFilter">Clear</button>
+                    </div>
                 </div>
 
                 <div class="col-lg-4">
-                    <label for="projectFilter" class="form-label fw-semibold">Projects</label>
-                    <input type="text" class="form-control mb-2 filter-search-input" data-target-select="projectFilter" placeholder="Filter projects...">
-                    <select class="form-select" id="projectFilter" name="project_ids" multiple size="6">
+                    <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+                        <label for="projectFilterSearch" class="form-label fw-semibold mb-0">Projects</label>
+                        <span class="badge {% if selected_project_ids %}text-bg-primary{% else %}text-bg-secondary{% endif %} filter-selected-count" data-count-for="projectFilter">{{ selected_project_ids|length }} selected</span>
+                    </div>
+                    <input type="text" class="form-control mb-2 filter-search-input" id="projectFilterSearch" data-target-panel="projectFilter" placeholder="Filter projects...">
+                    <div class="filter-checkbox-panel" id="projectFilter">
                         {% for project in projects %}
-                        <option value="{{ project.id }}" {% if project.id in selected_project_ids %}selected{% endif %}>
-                            {{ project.name or ('Project #' ~ project.id) }}
-                        </option>
+                        <label class="filter-checkbox-option">
+                            <input class="form-check-input" type="checkbox" name="project_ids" value="{{ project.id }}" {% if project.id in selected_project_ids %}checked{% endif %}>
+                            <span>{{ project.name or ('Project #' ~ project.id) }}</span>
+                        </label>
+                        {% else %}
+                        <span class="text-muted small">No projects available.</span>
                         {% endfor %}
-                    </select>
+                    </div>
+                    <div class="d-flex gap-2 mt-2">
+                        <button type="button" class="btn btn-link btn-sm p-0 filter-select-visible" data-panel="projectFilter">Select visible</button>
+                        <button type="button" class="btn btn-link btn-sm p-0 text-secondary filter-clear" data-panel="projectFilter">Clear</button>
+                    </div>
                 </div>
 
                 <div class="col-lg-4">
-                    <label for="qplFilter" class="form-label fw-semibold">QPL manufacturers (mapped only)</label>
-                    <input type="text" class="form-control mb-2 filter-search-input" data-target-select="qplFilter" placeholder="Filter QPL manufacturers...">
-                    <select class="form-select" id="qplFilter" name="qpl_manufacturers" multiple size="6">
+                    <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+                        <label for="qplFilterSearch" class="form-label fw-semibold mb-0">QPL manufacturers (mapped only)</label>
+                        <span class="badge {% if selected_qpl_manufacturers %}text-bg-primary{% else %}text-bg-secondary{% endif %} filter-selected-count" data-count-for="qplFilter">{{ selected_qpl_manufacturers|length }} selected</span>
+                    </div>
+                    <input type="text" class="form-control mb-2 filter-search-input" id="qplFilterSearch" data-target-panel="qplFilter" placeholder="Filter QPL manufacturers...">
+                    <div class="filter-checkbox-panel" id="qplFilter">
                         {% for manufacturer in qpl_manufacturer_options %}
-                        <option value="{{ manufacturer }}" {% if manufacturer in selected_qpl_manufacturers %}selected{% endif %}>
-                            {{ manufacturer }}
-                        </option>
+                        <label class="filter-checkbox-option">
+                            <input class="form-check-input" type="checkbox" name="qpl_manufacturers" value="{{ manufacturer }}" {% if manufacturer in selected_qpl_manufacturers %}checked{% endif %}>
+                            <span>{{ manufacturer }}</span>
+                        </label>
+                        {% else %}
+                        <span class="text-muted small">No mapped QPL manufacturers available.</span>
                         {% endfor %}
-                    </select>
+                    </div>
+                    <div class="d-flex gap-2 mt-2">
+                        <button type="button" class="btn btn-link btn-sm p-0 filter-select-visible" data-panel="qplFilter">Select visible</button>
+                        <button type="button" class="btn btn-link btn-sm p-0 text-secondary filter-clear" data-panel="qplFilter">Clear</button>
+                    </div>
                 </div>
 
                 <div class="col-12">
@@ -326,6 +366,37 @@
     </div>
 </div>
 
+<style>
+.filter-checkbox-panel {
+    max-height: 11rem;
+    overflow-y: auto;
+    padding: 0.35rem;
+    border: 1px solid var(--bs-border-color);
+    border-radius: var(--bs-border-radius);
+    background: var(--bs-body-bg);
+}
+
+.filter-checkbox-option {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0;
+    padding: 0.35rem 0.45rem;
+    border-radius: calc(var(--bs-border-radius) * 0.75);
+    cursor: pointer;
+}
+
+.filter-checkbox-option:hover,
+.filter-checkbox-option.is-selected {
+    background: var(--bs-primary-bg-subtle);
+}
+
+.filter-checkbox-option .form-check-input {
+    flex: 0 0 auto;
+    margin-top: 0;
+}
+</style>
+
 <script>
 document.getElementById('toggleBomColumnsBtn')?.addEventListener('click', function () {
     document.querySelectorAll('.bom-col').forEach(function (cell) {
@@ -334,22 +405,66 @@ document.getElementById('toggleBomColumnsBtn')?.addEventListener('click', functi
     });
 });
 
-document.querySelectorAll('.filter-search-input').forEach(function (input) {
-    const selectId = input.dataset.targetSelect;
-    const select = selectId ? document.getElementById(selectId) : null;
-    if (!select) return;
+function updateFilterSelectedCount(panel) {
+    const count = panel.querySelectorAll('input[type="checkbox"]:checked').length;
+    const badge = document.querySelector(`[data-count-for="${panel.id}"]`);
+    if (badge) {
+        badge.textContent = `${count} selected`;
+        badge.classList.toggle('text-bg-primary', count > 0);
+        badge.classList.toggle('text-bg-secondary', count === 0);
+    }
 
-    Array.from(select.options).forEach(function (option) {
-        option.dataset.originalLabel = option.textContent || '';
+    panel.querySelectorAll('.filter-checkbox-option').forEach(function (option) {
+        const checkbox = option.querySelector('input[type="checkbox"]');
+        option.classList.toggle('is-selected', Boolean(checkbox?.checked));
     });
+}
+
+document.querySelectorAll('.filter-checkbox-panel').forEach(function (panel) {
+    panel.addEventListener('change', function (event) {
+        if (event.target.matches('input[type="checkbox"]')) {
+            updateFilterSelectedCount(panel);
+        }
+    });
+    updateFilterSelectedCount(panel);
+});
+
+document.querySelectorAll('.filter-search-input').forEach(function (input) {
+    const panelId = input.dataset.targetPanel;
+    const panel = panelId ? document.getElementById(panelId) : null;
+    if (!panel) return;
 
     input.addEventListener('input', function () {
         const query = (input.value || '').trim().toLowerCase();
 
-        Array.from(select.options).forEach(function (option) {
-            const label = (option.dataset.originalLabel || option.textContent || '').toLowerCase();
+        panel.querySelectorAll('.filter-checkbox-option').forEach(function (option) {
+            const label = (option.textContent || '').toLowerCase();
             option.hidden = Boolean(query) && !label.includes(query);
         });
+    });
+});
+
+document.querySelectorAll('.filter-select-visible').forEach(function (button) {
+    button.addEventListener('click', function () {
+        const panel = document.getElementById(button.dataset.panel);
+        if (!panel) return;
+
+        panel.querySelectorAll('.filter-checkbox-option:not([hidden]) input[type="checkbox"]').forEach(function (checkbox) {
+            checkbox.checked = true;
+        });
+        updateFilterSelectedCount(panel);
+    });
+});
+
+document.querySelectorAll('.filter-clear').forEach(function (button) {
+    button.addEventListener('click', function () {
+        const panel = document.getElementById(button.dataset.panel);
+        if (!panel) return;
+
+        panel.querySelectorAll('input[type="checkbox"]').forEach(function (checkbox) {
+            checkbox.checked = false;
+        });
+        updateFilterSelectedCount(panel);
     });
 });
 </script>
