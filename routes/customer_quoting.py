@@ -527,6 +527,67 @@ def calculate_base_costs(list_id):
         return jsonify(success=False, message=str(e)), 500
 
 
+@customer_quoting_bp.route('/parts-lists/<int:list_id>/customer-quote/pull-supplier-metadata', methods=['POST'])
+def pull_supplier_metadata(list_id):
+    """Refresh manufacturer and revision from each line's selected supplier quote."""
+    try:
+        matched_count = 0
+        manufacturer_updated_count = 0
+        revision_updated_count = 0
+        without_customer_quote_count = 0
+
+        with db_cursor(commit=True) as cur:
+            lines = _execute_with_cursor(cur, """
+                SELECT
+                    pll.id AS parts_list_line_id,
+                    sql.manufacturer,
+                    sql.revision
+                FROM parts_list_lines pll
+                JOIN parts_list_supplier_quote_lines sql
+                  ON CAST(sql.id AS TEXT) = pll.chosen_source_reference
+                 AND sql.is_no_bid = FALSE
+                WHERE pll.parts_list_id = ?
+                  AND pll.chosen_source_type = 'quote'
+                  AND pll.chosen_source_reference IS NOT NULL
+            """, (list_id,)).fetchall()
+
+            for line in lines:
+                matched_count += 1
+                manufacturer = (line['manufacturer'] or '').strip()
+                revision = (line['revision'] or '').strip() or None
+
+                _execute_with_cursor(cur, """
+                    UPDATE parts_list_lines
+                    SET revision = ?,
+                        date_modified = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (revision, line['parts_list_line_id']))
+                revision_updated_count += 1
+
+                _execute_with_cursor(cur, """
+                    UPDATE customer_quote_lines
+                    SET manufacturer = ?,
+                        date_modified = CURRENT_TIMESTAMP
+                    WHERE parts_list_line_id = ?
+                """, (manufacturer, line['parts_list_line_id']))
+                if cur.rowcount:
+                    manufacturer_updated_count += cur.rowcount
+                else:
+                    without_customer_quote_count += 1
+
+        return jsonify(
+            success=True,
+            matched=matched_count,
+            manufacturer_updated=manufacturer_updated_count,
+            revision_updated=revision_updated_count,
+            without_customer_quote=without_customer_quote_count,
+        )
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
+
 @customer_quoting_bp.route('/parts-lists/<int:list_id>/customer-quote/calculate-delivery-costs', methods=['POST'])
 def calculate_delivery_costs(list_id):
     """

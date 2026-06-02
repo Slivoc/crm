@@ -1235,6 +1235,31 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
+    document.getElementById('pull-supplier-metadata-btn')?.addEventListener('click', async function() {
+        if (quotePageBusy) return;
+        if (!confirm('Pull manufacturer and revision from the selected supplier offers for all matching lines? This will overwrite existing manufacturer and revision values, including on quoted lines.')) return;
+
+        const btn = this;
+        const originalHtml = btn.innerHTML;
+        setQuotePageBusyState(true);
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Pulling...';
+
+        try {
+            const response = await fetch(`/customer-quoting/parts-lists/${LIST_ID}/customer-quote/pull-supplier-metadata`, { method: 'POST' });
+            const result = await response.json();
+            if (!response.ok || !result.success) {
+                throw new Error(result.message || 'Failed to pull manufacturer and revision');
+            }
+
+            alert(`Pulled supplier metadata for ${result.matched || 0} line(s). Updated ${result.manufacturer_updated || 0} customer quote manufacturer value(s) and ${result.revision_updated || 0} revision value(s).`);
+            window.location.reload();
+        } catch (error) {
+            setQuotePageBusyState(false);
+            btn.innerHTML = originalHtml;
+            alert(error.message || 'Failed to pull manufacturer and revision');
+        }
+    });
+
     // Purchasing Instructions
     document.getElementById('purchasing-instructions-btn').addEventListener('click', function() {
         renderPurchasingInstructionsTable();
@@ -1958,6 +1983,7 @@ document.addEventListener('DOMContentLoaded', function() {
         '#bulk-apply-margin-btn',
         '#calculate-all-btn',
         '#save-all-btn',
+        '#pull-supplier-metadata-btn',
         '#toggle-target-price-btn',
         '#purchasing-instructions-btn',
         '#minimum-line-value-btn',
