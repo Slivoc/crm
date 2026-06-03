@@ -562,6 +562,7 @@
                     <thead>
                         <tr>
                             <th style="width:40px;"></th>
+                            <th class="text-center" style="width:70px;">Line #</th>
                             <th>Part Number</th>
                             <th class="text-center">Qty Needed</th>
                             {% if mode == 'ils' %}
@@ -583,6 +584,7 @@
                             data-has-cost="{{ part.has_chosen_cost|lower }}"
                             data-has-related-cost="{{ part.has_related_chosen_cost|lower }}"
                             data-sent-to-this="{{ part.sent_to_this_supplier|lower }}"
+                            data-line-number="{{ part.line_number or '' }}"
                             data-part-number="{{ part.part_number }}">
                             <td>
                                 <input type="checkbox"
@@ -593,7 +595,15 @@
                                        data-ils-quantity="{{ part.ils_quantity }}"
                                        data-condition="{{ part.condition or '' }}"
                                        data-line-id="{{ part.line_id or '' }}"
+                                       data-line-number="{{ part.line_number or '' }}"
                                        {% if mode != 'ils' or (part.ils_quantity is not none and (part.ils_quantity|float) >= (part.quantity|float)) %}checked{% endif %}>
+                            </td>
+                            <td class="text-center">
+                                {% if part.line_number %}
+                                    <span class="badge bg-light text-dark border">{{ part.line_number }}</span>
+                                {% else %}
+                                    <span class="text-muted">—</span>
+                                {% endif %}
                             </td>
                             <td><strong>{{ part.part_number }}</strong></td>
                             <td class="text-center"><span class="badge bg-primary">{{ part.quantity }}</span></td>
@@ -659,7 +669,7 @@
 
                         {% if recent_no_bid_parts %}
                         <tr>
-                            <td colspan="{% if mode == 'ils' %}7{% else %}6{% endif %}" class="bg-danger bg-opacity-10 text-danger fw-semibold">
+                            <td colspan="{% if mode == 'ils' %}8{% else %}7{% endif %}" class="bg-danger bg-opacity-10 text-danger fw-semibold">
                                 Recent No Bid (last 30 days)
                             </td>
                         </tr>
@@ -668,6 +678,7 @@
                             data-has-cost="{{ part.has_chosen_cost|lower }}"
                             data-has-related-cost="{{ part.has_related_chosen_cost|lower }}"
                             data-sent-to-this="{{ part.sent_to_this_supplier|lower }}"
+                            data-line-number="{{ part.line_number or '' }}"
                             data-part-number="{{ part.part_number }}">
                             <td>
                                 <input type="checkbox"
@@ -677,7 +688,15 @@
                                        data-quantity="{{ part.quantity }}"
                                        data-ils-quantity="{{ part.ils_quantity }}"
                                        data-condition="{{ part.condition or '' }}"
-                                       data-line-id="{{ part.line_id or '' }}">
+                                       data-line-id="{{ part.line_id or '' }}"
+                                       data-line-number="{{ part.line_number or '' }}">
+                            </td>
+                            <td class="text-center">
+                                {% if part.line_number %}
+                                    <span class="badge bg-light text-dark border">{{ part.line_number }}</span>
+                                {% else %}
+                                    <span class="text-muted">—</span>
+                                {% endif %}
                             </td>
                             <td><strong>{{ part.part_number }}</strong></td>
                             <td class="text-center"><span class="badge bg-primary">{{ part.quantity }}</span></td>
@@ -1898,7 +1917,8 @@ document.getElementById('ilsFileInput').addEventListener('change', async functio
                 part_number: cb.dataset.partNumber,
                 quantity: cb.dataset.quantity,
                 ils_quantity: cb.dataset.ilsQuantity,
-                condition: cb.dataset.condition || ''
+                condition: cb.dataset.condition || '',
+                line_number: cb.dataset.lineNumber || ''
             };
             const lineId = cb.dataset.lineId;
             if (lineId) part.line_id = parseInt(lineId);
@@ -2022,7 +2042,8 @@ document.getElementById('ilsFileInput').addEventListener('change', async functio
                     part_number: cb.dataset.partNumber,
                     quantity: cb.dataset.quantity,
                     ils_quantity: cb.dataset.ilsQuantity,
-                    condition: cb.dataset.condition || ''
+                    condition: cb.dataset.condition || '',
+                    line_number: cb.dataset.lineNumber || ''
                 };
                 const lineId = cb.dataset.lineId;
                 if (lineId) p.line_id = parseInt(lineId);
