@@ -1519,6 +1519,7 @@ if (emailSuppliersBtn) {
         const partsToAnalyze = [];
         lines.forEach(row => {
             const lineId = row.dataset.lineId;
+            const lineNumber = row.dataset.lineNumber || row.querySelector('td:first-child')?.textContent.trim() || '';
             const partNumber = row.querySelector('td:nth-child(2) strong').textContent.trim();
             const partText = partNumber.split('\n')[0].trim();
             const qtyBadge = row.querySelector('td:nth-child(3) .badge');
@@ -1527,7 +1528,8 @@ if (emailSuppliersBtn) {
             partsToAnalyze.push({
                 part_number: partText,
                 quantity: quantity,
-                line_id: parseInt(lineId)
+                line_id: parseInt(lineId),
+                line_number: lineNumber
             });
         });
 
@@ -1604,6 +1606,7 @@ if (emailSuggestedBtn) {
         const partsToSend = [];
         lines.forEach((row, index) => {
             const lineId = row.dataset.lineId;
+            const lineNumber = row.dataset.lineNumber || row.querySelector('td:first-child')?.textContent.trim() || '';
             const partNumberElement = row.querySelector('td:nth-child(2) strong');
 
             if (!partNumberElement) {
@@ -1624,7 +1627,8 @@ if (emailSuggestedBtn) {
             const partData = {
                 input_part_number: partText,
                 quantity: quantity,
-                line_id: parseInt(lineId)
+                line_id: parseInt(lineId),
+                line_number: lineNumber
             };
 
             console.log(`Adding part ${index}:`, partData);

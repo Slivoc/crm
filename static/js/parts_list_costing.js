@@ -21,6 +21,20 @@ function parseLineNumberParts(lineNumberRaw) {
     };
 }
 
+function compareLineNumbers(aRaw, bRaw) {
+    const aParts = parseLineNumberParts(aRaw);
+    const bParts = parseLineNumberParts(bRaw);
+
+    if (!aParts && !bParts) return String(aRaw || '').localeCompare(String(bRaw || ''));
+    if (!aParts) return 1;
+    if (!bParts) return -1;
+
+    const aGroup = parseInt(aParts.groupKey, 10);
+    const bGroup = parseInt(bParts.groupKey, 10);
+    if (aGroup !== bGroup) return aGroup - bGroup;
+    return aParts.subgroupValue - bParts.subgroupValue;
+}
+
 function applyLineGroupingVisuals() {
     const rows = Array.from(document.querySelectorAll('#costing-table-body tr[data-line-id]'));
     if (rows.length === 0) return;
@@ -29,6 +43,7 @@ function applyLineGroupingVisuals() {
     let toneIndex = 0;
 
     rows.forEach(row => {
+        row.classList.remove('grouped-line', 'group-tone-a', 'group-tone-b', 'group-line-parent', 'group-line-child');
         const firstCell = row.querySelector('td:first-child');
         const lineNumberRaw = row.dataset.lineNumber || firstCell?.textContent || '';
         const parts = parseLineNumberParts(lineNumberRaw);
@@ -189,6 +204,11 @@ document.addEventListener('DOMContentLoaded', function () {
 
     loadEmailedSuppliersForCosting();
 
+    const sortQuotesRecentBtn = document.getElementById('sort-quotes-recent-btn');
+    if (sortQuotesRecentBtn) {
+        sortQuotesRecentBtn.addEventListener('click', sortCostingRowsByLatestQuote);
+    }
+
     // Email ILS Suppliers functionality
     const emailSuppliersBtn = document.getElementById('email-suppliers-btn');
 
@@ -205,13 +225,15 @@ document.addEventListener('DOMContentLoaded', function () {
         const partsToAnalyze = [];
         lines.forEach(row => {
             const lineId = row.dataset.lineId;
+            const lineNumber = row.dataset.lineNumber || row.querySelector('td:first-child')?.textContent.trim() || '';
             const partNumber = row.querySelector('td:nth-child(2) strong').textContent.trim();
             const quantity = parseInt(row.querySelector('td:nth-child(3) .badge').textContent.trim());
 
             partsToAnalyze.push({
                 part_number: partNumber,
                 quantity: quantity,
-                line_id: lineId
+                line_id: lineId,
+                line_number: lineNumber
             });
         });
 
@@ -941,11 +963,13 @@ function loadQuoteAvailability() {
                 const stats = map.get(String(lineId)) || {};
                 const thisListCount = Number(stats.this_list_count || 0);
                 const otherOffersCount = Number(stats.other_offers_count || 0);
+                row.dataset.latestQuoteAt = stats.latest_quote_at || '';
                 updateQuoteIndicator(
                     quoteBtn,
                     thisListCount,
                     otherOffersCount > 0,
-                    recentLineIds.has(String(lineId))
+                    recentLineIds.has(String(lineId)),
+                    stats.latest_quote_at || ''
                 );
             });
 
@@ -956,12 +980,16 @@ function loadQuoteAvailability() {
         });
 }
 
-function updateQuoteIndicator(button, thisListCount, hasOtherOffers, isRecentLine) {
+function updateQuoteIndicator(button, thisListCount, hasOtherOffers, isRecentLine, latestQuoteAt) {
     // Remove any existing badges
     button.querySelectorAll('.quote-badge').forEach(el => el.remove());
     const recentBadgeSlot = button.parentElement?.querySelector('.recent-quote-badge-slot');
     if (recentBadgeSlot) {
         recentBadgeSlot.innerHTML = '';
+    }
+    const latestQuoteAgeSlot = button.parentElement?.querySelector('.latest-quote-age-slot');
+    if (latestQuoteAgeSlot) {
+        latestQuoteAgeSlot.innerHTML = '';
     }
 
     const icon = button.querySelector('i');
@@ -997,6 +1025,15 @@ function updateQuoteIndicator(button, thisListCount, hasOtherOffers, isRecentLin
         button.setAttribute('title', isRecentLine ? 'Newly added quote just now' : 'No quotes available');
     }
 
+    const formattedLatestQuote = formatQuoteDate(latestQuoteAt);
+    if (formattedLatestQuote && formattedLatestQuote.relative && latestQuoteAgeSlot) {
+        const latestBadge = document.createElement('span');
+        latestBadge.className = 'latest-quote-age-badge badge bg-light text-dark border';
+        latestBadge.textContent = formattedLatestQuote.relative;
+        latestBadge.title = `Most recent quote: ${formattedLatestQuote.fullText}`;
+        latestQuoteAgeSlot.appendChild(latestBadge);
+    }
+
     if (isRecentLine) {
         const recentBadge = document.createElement('span');
         recentBadge.className = 'recent-quote-badge badge bg-primary-subtle text-primary border border-primary-subtle';
@@ -1005,6 +1042,55 @@ function updateQuoteIndicator(button, thisListCount, hasOtherOffers, isRecentLin
             recentBadgeSlot.appendChild(recentBadge);
         }
     }
+}
+
+function getQuoteSortTimestamp(row) {
+    const value = row?.dataset?.latestQuoteAt;
+    if (!value) return null;
+    const normalized = normalizeQuoteDateInput(value);
+    if (!normalized) return null;
+    const parsed = new Date(normalized);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+}
+
+function sortCostingRowsByLatestQuote() {
+    const tbody = document.getElementById('costing-table-body');
+    if (!tbody) return;
+
+    const rows = Array.from(tbody.querySelectorAll('tr[data-line-id]'));
+    const currentDirection = tbody.dataset.quoteSortDirection === 'desc' ? 'asc' : 'desc';
+
+    rows.sort((a, b) => {
+        const aTime = getQuoteSortTimestamp(a);
+        const bTime = getQuoteSortTimestamp(b);
+
+        if (aTime === null && bTime === null) {
+            return compareLineNumbers(a.dataset.lineNumber, b.dataset.lineNumber);
+        }
+        if (aTime === null) return 1;
+        if (bTime === null) return -1;
+        if (aTime === bTime) {
+            return compareLineNumbers(a.dataset.lineNumber, b.dataset.lineNumber);
+        }
+        return currentDirection === 'desc' ? bTime - aTime : aTime - bTime;
+    });
+
+    rows.forEach(row => tbody.appendChild(row));
+    tbody.dataset.quoteSortDirection = currentDirection;
+    updateQuoteSortButton(currentDirection);
+    applyLineGroupingVisuals();
+}
+
+function updateQuoteSortButton(direction) {
+    const button = document.getElementById('sort-quotes-recent-btn');
+    if (!button) return;
+
+    const iconClass = direction === 'desc' ? 'bi-sort-down' : 'bi-sort-up';
+    const label = direction === 'desc' ? 'Quotes (Newest)' : 'Quotes (Oldest)';
+    button.innerHTML = `${label} <i class="bi ${iconClass} ms-1"></i>`;
+    button.title = direction === 'desc'
+        ? 'Sorted by newest supplier quote first. Click to sort oldest first.'
+        : 'Sorted by oldest supplier quote first. Click to sort newest first.';
 }
 
 function getRecentQuoteLinesPayload() {

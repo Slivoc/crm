@@ -3982,9 +3982,14 @@ def process_ils_suppliers(email_data, cursor, cutoff_date, request_cutoff, list_
             if ils_company_name and ils_company_name not in suppliers_map[supplier_id]['ils_company_names']:
                 suppliers_map[supplier_id]['ils_company_names'].append(ils_company_name)
 
-            # Add part if not already there
-            part_exists = any(p['part_number'] == part['input_part_number']
-                              for p in suppliers_map[supplier_id]['parts'])
+            # Add part-line if not already there. The same part number can appear on
+            # related decimal lines, so include the line identity in the de-dupe key.
+            part_line_key = (part.get('line_id'), str(part.get('line_number') or ''))
+            part_exists = any(
+                p['part_number'] == part['input_part_number']
+                and (p.get('line_id'), str(p.get('line_number') or '')) == part_line_key
+                for p in suppliers_map[supplier_id]['parts']
+            )
 
             if part_exists:
                 logging.info(f"  -> Skipped: Part already exists for this supplier")
@@ -4001,7 +4006,8 @@ def process_ils_suppliers(email_data, cursor, cutoff_date, request_cutoff, list_
                 'ils_quantity': ils.get('quantity', 'Unknown'),
                 'condition': ils.get('condition_code', ''),
                 'search_date': ils.get('search_date', ''),
-                'line_id': line_id
+                'line_id': line_id,
+                'line_number': part.get('line_number')
             }
 
             # Query status flags including supplier-specific email tracking
@@ -4131,9 +4137,14 @@ def process_suggested_suppliers(email_data, cursor, request_cutoff, list_id=None
                     'parts': []
                 }
 
-            # Check if part already exists for this supplier
-            part_exists = any(p['part_number'] == part['input_part_number']
-                              for p in suppliers_map[supplier_id]['parts'])
+            # Check if this exact part-line already exists for this supplier.
+            # The same part number can appear on related decimal lines.
+            part_line_key = (part.get('line_id'), str(part.get('line_number') or ''))
+            part_exists = any(
+                p['part_number'] == part['input_part_number']
+                and (p.get('line_id'), str(p.get('line_number') or '')) == part_line_key
+                for p in suppliers_map[supplier_id]['parts']
+            )
 
             if part_exists:
                 continue
@@ -4194,6 +4205,7 @@ def process_suggested_suppliers(email_data, cursor, request_cutoff, list_id=None
                 'condition': '',
                 'search_date': '',
                 'line_id': line_id,
+                'line_number': part.get('line_number'),
                 'source_type': sugg['source_type'],
                 'quote_count': status['quote_count'],
                 'has_quotes': bool(status['quote_count']),
@@ -8755,8 +8767,13 @@ def get_quote_availability_for_lines(list_id):
             this_list AS (
                 SELECT
                     sql.parts_list_line_id AS line_id,
-                    SUM(CASE WHEN sql.is_no_bid = FALSE AND sql.unit_price IS NOT NULL THEN 1 ELSE 0 END) AS this_list_count
+                    SUM(CASE WHEN sql.is_no_bid = FALSE AND sql.unit_price IS NOT NULL THEN 1 ELSE 0 END) AS this_list_count,
+                    MAX(CASE
+                        WHEN sql.is_no_bid = FALSE AND sql.unit_price IS NOT NULL
+                        THEN COALESCE(sq.quote_date, sql.date_modified, sql.date_created, sq.date_created)
+                    END) AS this_list_latest_quote_at
                 FROM parts_list_supplier_quote_lines sql
+                JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
                 JOIN lines l ON l.id = sql.parts_list_line_id
                 GROUP BY sql.parts_list_line_id
             ),
@@ -8768,8 +8785,13 @@ def get_quote_availability_for_lines(list_id):
             other_offers AS (
                 SELECT
                     pll.base_part_number,
-                    SUM(CASE WHEN sql.is_no_bid = FALSE AND sql.unit_price IS NOT NULL THEN 1 ELSE 0 END) AS other_offers_count
+                    SUM(CASE WHEN sql.is_no_bid = FALSE AND sql.unit_price IS NOT NULL THEN 1 ELSE 0 END) AS other_offers_count,
+                    MAX(CASE
+                        WHEN sql.is_no_bid = FALSE AND sql.unit_price IS NOT NULL
+                        THEN COALESCE(sq.quote_date, sql.date_modified, sql.date_created, sq.date_created)
+                    END) AS other_offers_latest_quote_at
                 FROM parts_list_supplier_quote_lines sql
+                JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
                 JOIN parts_list_lines pll ON pll.id = sql.parts_list_line_id
                 JOIN list_base_part_numbers lbpn ON lbpn.base_part_number = pll.base_part_number
                 WHERE pll.parts_list_id != ?
@@ -8778,7 +8800,13 @@ def get_quote_availability_for_lines(list_id):
             SELECT
                 l.id AS line_id,
                 COALESCE(t.this_list_count, 0) AS this_list_count,
-                COALESCE(o.other_offers_count, 0) AS other_offers_count
+                COALESCE(o.other_offers_count, 0) AS other_offers_count,
+                CASE
+                    WHEN t.this_list_latest_quote_at IS NULL THEN o.other_offers_latest_quote_at
+                    WHEN o.other_offers_latest_quote_at IS NULL THEN t.this_list_latest_quote_at
+                    WHEN t.this_list_latest_quote_at >= o.other_offers_latest_quote_at THEN t.this_list_latest_quote_at
+                    ELSE o.other_offers_latest_quote_at
+                END AS latest_quote_at
             FROM lines l
             LEFT JOIN this_list t ON t.line_id = l.id
             LEFT JOIN other_offers o ON o.base_part_number = l.base_part_number
