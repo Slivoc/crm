@@ -2606,49 +2606,12 @@ def add_stage_update(project_id, stage_id):
 @projects_bp.route('/sidebar-stages/<int:project_id>')
 def get_sidebar_stages(project_id):
     project = get_project_by_id(project_id)
-
-    # Debug: Check raw database data BEFORE processing
-    raw_stages = db_execute(
-        '''
-        SELECT id, name, description, status_id
-        FROM project_stages
-        WHERE project_id = ? AND status_id != 3
-        ORDER BY id
-        ''',
-        (project_id,),
-        fetch='all'
-    ) or []
-
-    print(f"\n=== RAW DATABASE DATA for project {project_id} ===")
-    for stage in raw_stages:
-        stage_dict = dict(stage)
-        desc = stage_dict['description']
-        print(f"Stage {stage_dict['id']}:")
-        print(f"  - description value: {repr(desc)}")
-        print(f"  - description type: {type(desc)}")
-        print(f"  - is None?: {desc is None}")
-        print(f"  - equals 'None'?: {desc == 'None'}")
-        print(f"  - length: {len(desc) if desc else 'N/A'}")
-
-    # Now get processed stages
     stages = get_project_stages(project_id)
 
-    print(f"\n=== PROCESSED DATA ===")
-    for stage in stages:
-        desc = stage.get('description')
-        print(f"Stage {stage.get('id')}:")
-        print(f"  - description value: {repr(desc)}")
-        print(f"  - description type: {type(desc)}")
-        print(f"  - is None?: {desc is None}")
-        print(f"  - equals 'None'?: {desc == 'None'}")
-        print(f"  - truthiness: {bool(desc)}")
-        print(f"  - length check would pass?: {bool(desc and len(str(desc)) > 0)}")
-
-    # Make sure get_project_stages is available in template context
     return render_template('components/project_stages_list.html',
                            project=project,
                            stages=stages,
-                           get_project_stages=get_project_stages)  # Add this line!
+                           get_project_stages=get_project_stages)
 
 @projects_bp.route('/set-active/<int:project_id>')
 def set_active_project(project_id):
