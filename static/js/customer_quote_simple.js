@@ -123,6 +123,11 @@ document.addEventListener('DOMContentLoaded', function() {
         return (lineData.requested_part_number || lineData.customer_part_number || '').toString().trim();
     }
 
+
+    function getSupplierQuotedPartNumber(lineData) {
+        return (lineData?.supplier_quoted_part_number || '').toString().trim();
+    }
+
     function getActualQuotedPartNumber(lineData, elements) {
         const requestedPartNumber = getRequestedPartNumber(lineData);
         const candidates = [
@@ -970,7 +975,8 @@ document.addEventListener('DOMContentLoaded', function() {
   <thead>
     <tr style="background:#f8f9fa;">
       <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Line</th>
-      <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Part Number</th>
+      <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Requested P/N</th>
+      <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Supplier Quoted P/N</th>
       <th align="right" style="padding:6px 8px;border:1px solid #dee2e6;">Quantity</th>
       <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Supplier</th>
       <th align="right" style="padding:6px 8px;border:1px solid #dee2e6;">Unit Cost</th>
@@ -994,6 +1000,7 @@ document.addEventListener('DOMContentLoaded', function() {
             html += `<tr>
               <td align="left" style="${cellStyle}">${lineData.line_number || ''}</td>
               <td align="left" style="${cellStyle}">${getRequestedPartNumber(lineData)}</td>
+              <td align="left" style="${cellStyle}">${getSupplierQuotedPartNumber(lineData) || '-'}</td>
               <td align="right" style="${cellStyle}">${effectiveQty || ''}</td>
                 <td align="left" style="${cellStyle}">${supplierDisplay}</td>
               <td align="right" style="${cellStyle}">${unitCost.toFixed(2)}</td>

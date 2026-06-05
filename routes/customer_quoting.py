@@ -2166,12 +2166,43 @@ def customer_quote_simple(list_id):
                         )
                         ELSE NULL
                     END AS supplier_manufacturer,
-                    (SELECT sql.quoted_part_number 
-                     FROM parts_list_supplier_quote_lines sql
-                     JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
-                     WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
-                       AND sq.supplier_id = pll.chosen_supplier_id
-                     LIMIT 1) as supplier_quoted_part_number,
+                    CASE
+                        WHEN pll.chosen_source_type = 'quote'
+                             AND pll.chosen_source_reference IS NOT NULL THEN (
+                            SELECT sql.revision
+                            FROM parts_list_supplier_quote_lines sql
+                            WHERE CAST(sql.id AS TEXT) = pll.chosen_source_reference
+                              AND sql.is_no_bid = FALSE
+                              AND sql.revision IS NOT NULL
+                              AND TRIM(sql.revision) != ''
+                            LIMIT 1
+                        )
+                        ELSE NULL
+                    END AS supplier_revision,
+                    CASE
+                        WHEN pll.chosen_source_type = 'quote'
+                             AND pll.chosen_source_reference IS NOT NULL THEN (
+                            SELECT sql.quoted_part_number
+                            FROM parts_list_supplier_quote_lines sql
+                            WHERE CAST(sql.id AS TEXT) = pll.chosen_source_reference
+                              AND sql.is_no_bid = FALSE
+                              AND sql.quoted_part_number IS NOT NULL
+                              AND TRIM(sql.quoted_part_number) != ''
+                            LIMIT 1
+                        )
+                        ELSE (
+                            SELECT sql.quoted_part_number
+                            FROM parts_list_supplier_quote_lines sql
+                            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                            WHERE sql.parts_list_line_id = COALESCE(pll.parent_line_id, pll.id)
+                              AND sq.supplier_id = pll.chosen_supplier_id
+                              AND sql.is_no_bid = FALSE
+                              AND sql.quoted_part_number IS NOT NULL
+                              AND TRIM(sql.quoted_part_number) != ''
+                            ORDER BY sql.id DESC
+                            LIMIT 1
+                        )
+                    END as supplier_quoted_part_number,
                     s.standard_condition AS supplier_standard_condition,
                     s.standard_certs AS supplier_standard_certs,
                     (SELECT COALESCE(SUM(sm.available_quantity), 0)
