@@ -128,6 +128,28 @@ document.addEventListener('DOMContentLoaded', function() {
         return (lineData?.supplier_quoted_part_number || '').toString().trim();
     }
 
+    function getPurchasingManufacturer(lineData, elements) {
+        return (
+            lineData?.supplier_manufacturer
+            || elements?.manufacturer?.value
+            || lineData?.manufacturer
+            || ''
+        ).toString().trim();
+    }
+
+    function getPurchasingRevision(lineData) {
+        return (lineData?.supplier_revision || lineData?.revision || '').toString().trim();
+    }
+
+    function escapeHtml(value) {
+        return (value ?? '').toString()
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     function getActualQuotedPartNumber(lineData, elements) {
         const requestedPartNumber = getRequestedPartNumber(lineData);
         const candidates = [
@@ -910,6 +932,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 effectiveQty,
                 unitCost,
                 supplierDisplay,
+                requestedPartNumber: getRequestedPartNumber(lineData),
+                quotedPartNumber: getActualQuotedPartNumber(lineData, elements),
+                supplierQuotedPartNumber: getSupplierQuotedPartNumber(lineData),
+                manufacturer: getPurchasingManufacturer(lineData, elements),
+                revision: getPurchasingRevision(lineData),
                 basePartNumber: lineData.base_part_number,
                 supplierId: lineData.chosen_supplier_id || null
             });
@@ -976,7 +1003,10 @@ document.addEventListener('DOMContentLoaded', function() {
     <tr style="background:#f8f9fa;">
       <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Line</th>
       <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Requested P/N</th>
+      <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Quoted P/N</th>
       <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Supplier Quoted P/N</th>
+      <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Manufacturer</th>
+      <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Revision</th>
       <th align="right" style="padding:6px 8px;border:1px solid #dee2e6;">Quantity</th>
       <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Supplier</th>
       <th align="right" style="padding:6px 8px;border:1px solid #dee2e6;">Unit Cost</th>
@@ -990,7 +1020,17 @@ document.addEventListener('DOMContentLoaded', function() {
   <tbody>`;
 
         rows.forEach(row => {
-            const { lineData, effectiveQty, unitCost, supplierDisplay } = row;
+            const {
+                lineData,
+                effectiveQty,
+                unitCost,
+                supplierDisplay,
+                requestedPartNumber,
+                quotedPartNumber,
+                supplierQuotedPartNumber,
+                manufacturer,
+                revision
+            } = row;
             const lineTotal = unitCost * effectiveQty;
             const currency = lineData.chosen_currency_code || 'GBP';
             const leadDays = lineData.chosen_lead_days || '';
@@ -998,17 +1038,20 @@ document.addEventListener('DOMContentLoaded', function() {
             const lineInsight = purchasingInsightsByLineId.get(row.rowKey);
 
             html += `<tr>
-              <td align="left" style="${cellStyle}">${lineData.line_number || ''}</td>
-              <td align="left" style="${cellStyle}">${getRequestedPartNumber(lineData)}</td>
-              <td align="left" style="${cellStyle}">${getSupplierQuotedPartNumber(lineData) || '-'}</td>
-              <td align="right" style="${cellStyle}">${effectiveQty || ''}</td>
-                <td align="left" style="${cellStyle}">${supplierDisplay}</td>
-              <td align="right" style="${cellStyle}">${unitCost.toFixed(2)}</td>
-              <td align="left" style="${cellStyle}">${currency}</td>
-              <td align="right" style="${cellStyle}">${lineTotal.toFixed(2)}</td>
-              <td align="right" style="${cellStyle}">${leadDays}</td>
-              <td align="left" style="${cellStyle}">${getSuggestedQtyLabel(row, lineInsight)}</td>
-              <td align="left" style="${cellStyle}">${getPriceInsightLabel(lineInsight)}</td>
+              <td align="left" style="${cellStyle}">${escapeHtml(lineData.line_number || '')}</td>
+              <td align="left" style="${cellStyle}">${escapeHtml(requestedPartNumber || '-')}</td>
+              <td align="left" style="${cellStyle}">${escapeHtml(quotedPartNumber || '-')}</td>
+              <td align="left" style="${cellStyle}">${escapeHtml(supplierQuotedPartNumber || '-')}</td>
+              <td align="left" style="${cellStyle}">${escapeHtml(manufacturer || '-')}</td>
+              <td align="left" style="${cellStyle}">${escapeHtml(revision || '-')}</td>
+              <td align="right" style="${cellStyle}">${escapeHtml(effectiveQty || '')}</td>
+              <td align="left" style="${cellStyle}">${escapeHtml(supplierDisplay)}</td>
+              <td align="right" style="${cellStyle}">${escapeHtml(unitCost.toFixed(2))}</td>
+              <td align="left" style="${cellStyle}">${escapeHtml(currency)}</td>
+              <td align="right" style="${cellStyle}">${escapeHtml(lineTotal.toFixed(2))}</td>
+              <td align="right" style="${cellStyle}">${escapeHtml(leadDays)}</td>
+              <td align="left" style="${cellStyle}">${escapeHtml(getSuggestedQtyLabel(row, lineInsight))}</td>
+              <td align="left" style="${cellStyle}">${escapeHtml(getPriceInsightLabel(lineInsight))}</td>
             </tr>`;
         });
         html += `</tbody></table>`;
