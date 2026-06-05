@@ -2071,11 +2071,15 @@ def customer_data(customer_id):
             years = []
             order_values = []
 
-            # Extract data from orders which are already grouped by year
+            # Extract data from orders which are already grouped by year.
+            # PostgreSQL returns DATE/TIMESTAMP columns as date/datetime objects,
+            # so normalize instead of assuming SQLite-style strings.
             for order in orders:
-                year = order['date_entered'].split('-')[0]
-                years.append(year)
-                order_values.append(float(order['total_value'] or 0))
+                date_obj = _parse_datetime_value(order.get('date_entered'))
+                if not date_obj:
+                    continue
+                years.append(str(date_obj.year))
+                order_values.append(float(order.get('total_value') or 0))
 
             chart_data = {
                 'labels': years,
@@ -2094,15 +2098,17 @@ def customer_data(customer_id):
                 labels.insert(0, month_label)
                 month_data[month_label] = {'orders': 0}
 
-            # Process Orders
+            # Process orders. PostgreSQL returns date_entered as date/datetime
+            # objects, while the old SQLite data path returned strings. Normalize
+            # both shapes so migrated rows still populate the sidecanvas chart.
             for order in orders:
-                try:
-                    date_obj = datetime.strptime(order['date_entered'], "%Y-%m-%d")
-                    month_label = date_obj.strftime('%b %Y')
-                    if month_label in month_data:
-                        month_data[month_label]['orders'] += float(order['total_value'] or 0)
-                except Exception as e:
-                    print(f"DEBUG: Error processing order date: {e}")
+                date_obj = _parse_datetime_value(order.get('date_entered'))
+                if not date_obj:
+                    print(f"DEBUG: Error processing order date: unsupported value {order.get('date_entered')!r}")
+                    continue
+                month_label = date_obj.strftime('%b %Y')
+                if month_label in month_data:
+                    month_data[month_label]['orders'] += float(order.get('total_value') or 0)
 
             # Create series data for chart
             orders_series = [month_data[label]['orders'] for label in labels]
@@ -2124,15 +2130,17 @@ def customer_data(customer_id):
                 labels.insert(0, day_label)
                 day_data[day_label] = {'orders': 0}
 
-            # Process Orders
+            # Process orders. PostgreSQL returns date_entered as date/datetime
+            # objects, while the old SQLite data path returned strings. Normalize
+            # both shapes so migrated rows still populate the sidecanvas chart.
             for order in orders:
-                try:
-                    date_obj = datetime.strptime(order['date_entered'], "%Y-%m-%d")
-                    day_label = date_obj.strftime('%d %b')
-                    if day_label in day_data:
-                        day_data[day_label]['orders'] += float(order['total_value'] or 0)
-                except Exception as e:
-                    print(f"DEBUG: Error processing order date: {e}")
+                date_obj = _parse_datetime_value(order.get('date_entered'))
+                if not date_obj:
+                    print(f"DEBUG: Error processing order date: unsupported value {order.get('date_entered')!r}")
+                    continue
+                day_label = date_obj.strftime('%d %b')
+                if day_label in day_data:
+                    day_data[day_label]['orders'] += float(order.get('total_value') or 0)
 
             # Create series data for chart
             orders_series = [day_data[label]['orders'] for label in labels]
