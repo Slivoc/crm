@@ -118,6 +118,27 @@
     margin-top: 2px;
 }
 
+.part-number-meta {
+    font-size: 0.75rem;
+    color: #6c757d;
+    line-height: 1.25;
+}
+
+.part-number-meta strong {
+    color: #495057;
+}
+
+.quoted-part-cell .form-control {
+    min-width: 155px;
+}
+
+.supplier-value-note {
+    font-size: 0.75rem;
+    color: #0d6efd;
+    margin-top: 0.25rem;
+    white-space: normal;
+}
+
 /* --- OPTIMIZED ROW STYLES --- */
 /* 1. Base State: Transparent border reserves the 3px space (Prevents Reflow) */
 .quote-row {
@@ -739,10 +760,10 @@
                     <thead>
                         <tr>
                             <th style="min-width: 50px;">#</th>
-                            <th style="min-width: 150px;">Part Number</th>
-                            <th style="min-width: 90px;">Rev</th>
-                            <th style="min-width: 150px;">Manufacturer</th>
-                            <th style="min-width: 150px;">Display P/N</th>
+                            <th style="min-width: 170px;">Requested P/N</th>
+                            <th style="min-width: 110px;">Rev</th>
+                            <th style="min-width: 170px;">Manufacturer</th>
+                            <th style="min-width: 190px;">Quoted P/N</th>
                             <th style="min-width: 70px;">Qty</th>
                             <th style="min-width: 90px;">Chosen Qty</th>
                             <th style="min-width: 70px;">Stock</th>
@@ -792,25 +813,16 @@
 
         <td>
             {% set requested_or_customer = line.requested_part_number or line.customer_part_number %}
-            {% set supplier_diff = line.supplier_quoted_part_number and line.supplier_quoted_part_number != requested_or_customer %}
             <div class="d-flex align-items-center gap-1">
                 <span>{{ requested_or_customer }}</span>
                 <button class="btn btn-sm icon-action-btn copy-part-number-btn"
                         data-part-number="{{ requested_or_customer }}"
-                        title="Copy part number">
+                        title="Copy requested part number">
                     <i class="bi bi-clipboard"></i>
                 </button>
             </div>
-            {% if supplier_diff %}
-            <div class="supplier-diff-note d-flex align-items-center gap-1">
-                <span>Supplier: {{ line.supplier_quoted_part_number | e }}</span>
-                <button type="button"
-                        class="btn btn-sm btn-outline-primary use-supplier-pn-btn"
-                        data-supplier-pn="{{ line.supplier_quoted_part_number | e }}"
-                        title="Use supplier quoted part number">
-                    Use supplier P/N
-                </button>
-            </div>
+            {% if line.customer_part_number and line.customer_part_number != requested_or_customer %}
+            <div class="part-number-meta">Corrected: {{ line.customer_part_number | e }}</div>
             {% endif %}
 
             <div class="mt-1">
@@ -828,7 +840,12 @@
             </div>
         </td>
 
-        <td class="read-only">{{ line.revision or '-' }}</td>
+        <td class="read-only">
+            {{ line.revision or '-' }}
+            {% if line.supplier_revision %}
+            <div class="supplier-value-note">Supplier rev: {{ line.supplier_revision | e }}</div>
+            {% endif %}
+        </td>
 
         <td>
             <input type="text"
@@ -837,15 +854,32 @@
                    spellcheck="false"
                    autocomplete="off"
                    value="{{ line.manufacturer or '' }}">
+            {% if line.supplier_manufacturer %}
+            <div class="supplier-value-note">Supplier mfr: {{ line.supplier_manufacturer | e }}</div>
+            {% endif %}
         </td>
 
-        <td>
+        <td class="quoted-part-cell">
+            {% set displayed_quoted_part = line.display_part_number or line.quoted_part_number or line.suggested_display_pn or line.customer_part_number %}
             <input type="text"
                    class="form-control form-control-sm editable-field"
                    data-field="display_part_number"
                    spellcheck="false"
                    autocomplete="off"
-                   value="{{ line.display_part_number or line.suggested_display_pn or line.customer_part_number }}">
+                   value="{{ displayed_quoted_part }}">
+            {% if line.supplier_quoted_part_number %}
+            <div class="supplier-diff-note d-flex align-items-center gap-1">
+                <span><strong>Supplier quoted:</strong> {{ line.supplier_quoted_part_number | e }}</span>
+                {% if line.supplier_quoted_part_number != displayed_quoted_part %}
+                <button type="button"
+                        class="btn btn-sm btn-outline-primary use-supplier-pn-btn"
+                        data-supplier-pn="{{ line.supplier_quoted_part_number | e }}"
+                        title="Use supplier quoted part number">
+                    Use supplier P/N
+                </button>
+                {% endif %}
+            </div>
+            {% endif %}
         </td>
 
         <td class="read-only">{{ line.quantity }}</td>
