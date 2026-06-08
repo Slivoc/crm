@@ -292,6 +292,29 @@
     color: #842029;
 }
 
+.customer-sale-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    width: fit-content;
+    max-width: 100%;
+    padding: 0.12rem 0.45rem;
+    border-radius: 999px;
+    border: 1px solid #9ec5fe;
+    background: #e7f1ff;
+    color: #084298;
+    font-size: 0.7rem;
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: normal;
+}
+
+.customer-sale-pill.customer-sale-associated {
+    border-color: #d7b9ff;
+    background: #f3e8ff;
+    color: #5a189a;
+}
+
 /* --- Quote Price Column - PROMINENT STYLING --- */
 .quote-table th.quote-price-header {
     background: linear-gradient(135deg, #198754 0%, #157347 100%);
@@ -968,6 +991,19 @@
                 <button type="button" class="calc-pill calc-pill-danger reset-line-btn" title="Reset this line quote values to zero">
                     <i class="bi bi-arrow-counterclockwise"></i>Reset
                 </button>
+                {% if line.sold_to_customer_group %}
+                    {% set sale_scope = 'customer' if line.sold_to_direct_customer else 'associated customer' %}
+                    {% set sale_customer_name = line.customer_group_last_sale_customer_name or customer_name %}
+                    <span class="customer-sale-pill {% if not line.sold_to_direct_customer %}customer-sale-associated{% endif %}"
+                          title="Sold {{ line.sold_to_customer_group_count }} time{% if line.sold_to_customer_group_count != 1 %}s{% endif %} to this customer group{% if sale_customer_name %}; latest matched {{ sale_scope }}: {{ sale_customer_name }}{% endif %}{% if line.customer_group_last_sale_price_gbp %}; price GBP {{ '%.2f'|format(line.customer_group_last_sale_price_gbp) }}{% endif %}{% if line.customer_group_last_sale_ref %}; SO {{ line.customer_group_last_sale_ref }}{% endif %}">
+                        <i class="bi bi-bag-check"></i>
+                        {% if line.sold_to_direct_customer %}
+                            Sold to customer
+                        {% else %}
+                            Sold to associated
+                        {% endif %}
+                    </span>
+                {% endif %}
             </div>
         </td>
 

@@ -2232,6 +2232,7 @@ def customer_quote_simple(list_id):
                 if line.get('base_part_number')
             })
             sales_history_by_part = {}
+            customer_sales_history_by_part = {}
             if base_part_numbers:
                 sales_cutoff = "CURRENT_DATE - INTERVAL '9 months'" if _using_postgres() else "date('now', '-9 months')"
                 placeholders = ', '.join(['?'] * len(base_part_numbers))
@@ -2266,6 +2267,88 @@ def customer_quote_simple(list_id):
                     for row in sales_history_rows
                     if row.get('base_part_number')
                 }
+
+                customer_id = header.get('customer_id')
+                related_customer_ids = []
+                if customer_id:
+                    relationship_rows = _execute_with_cursor(cur, """
+                        WITH direct_customer AS (
+                            SELECT ? AS customer_id
+                        ),
+                        parent_customers AS (
+                            SELECT ca.main_customer_id AS customer_id
+                            FROM customer_associations ca
+                            JOIN direct_customer dc ON dc.customer_id = ca.associated_customer_id
+                        ),
+                        customer_groups AS (
+                            SELECT customer_id FROM direct_customer
+                            UNION
+                            SELECT customer_id FROM parent_customers
+                            UNION
+                            SELECT ca.associated_customer_id AS customer_id
+                            FROM customer_associations ca
+                            JOIN direct_customer dc ON dc.customer_id = ca.main_customer_id
+                            UNION
+                            SELECT ca.associated_customer_id AS customer_id
+                            FROM customer_associations ca
+                            JOIN parent_customers pc ON pc.customer_id = ca.main_customer_id
+                        )
+                        SELECT DISTINCT customer_id
+                        FROM customer_groups
+                        WHERE customer_id IS NOT NULL
+                    """, (customer_id,)).fetchall()
+                    related_customer_ids = [row['customer_id'] for row in relationship_rows if row.get('customer_id')]
+
+                if related_customer_ids:
+                    part_placeholders = ', '.join(['?'] * len(base_part_numbers))
+                    customer_placeholders = ', '.join(['?'] * len(related_customer_ids))
+                    customer_sales_rows = _execute_with_cursor(cur, f"""
+                        WITH ranked_customer_sales AS (
+                            SELECT
+                                sol.base_part_number,
+                                sol.price,
+                                sol.quantity,
+                                so.date_entered,
+                                so.sales_order_ref,
+                                so.customer_id,
+                                c.name AS customer_name,
+                                CASE WHEN so.customer_id = ? THEN 1 ELSE 0 END AS is_direct_customer,
+                                ROW_NUMBER() OVER (
+                                    PARTITION BY sol.base_part_number
+                                    ORDER BY
+                                        CASE WHEN so.customer_id = ? THEN 0 ELSE 1 END,
+                                        so.date_entered DESC NULLS LAST,
+                                        sol.id DESC
+                                ) AS preferred_rn
+                            FROM sales_order_lines sol
+                            JOIN sales_orders so ON so.id = sol.sales_order_id
+                            LEFT JOIN customers c ON c.id = so.customer_id
+                            WHERE sol.base_part_number IN ({part_placeholders})
+                              AND so.customer_id IN ({customer_placeholders})
+                              AND sol.price IS NOT NULL
+                              AND sol.price > 0
+                        )
+                        SELECT
+                            base_part_number,
+                            COUNT(*) AS sold_to_customer_group_count,
+                            SUM(is_direct_customer) AS sold_to_direct_customer_count,
+                            COUNT(*) - SUM(is_direct_customer) AS sold_to_associated_customer_count,
+                            AVG(price) AS customer_group_avg_sale_price,
+                            MAX(CASE WHEN preferred_rn = 1 THEN price END) AS customer_group_last_sale_price,
+                            MAX(CASE WHEN preferred_rn = 1 THEN quantity END) AS customer_group_last_sale_quantity,
+                            MAX(CASE WHEN preferred_rn = 1 THEN date_entered END) AS customer_group_last_sale_date,
+                            MAX(CASE WHEN preferred_rn = 1 THEN sales_order_ref END) AS customer_group_last_sale_ref,
+                            MAX(CASE WHEN preferred_rn = 1 THEN customer_id END) AS customer_group_last_sale_customer_id,
+                            MAX(CASE WHEN preferred_rn = 1 THEN customer_name END) AS customer_group_last_sale_customer_name,
+                            MAX(CASE WHEN preferred_rn = 1 THEN is_direct_customer END) AS customer_group_last_sale_is_direct
+                        FROM ranked_customer_sales
+                        GROUP BY base_part_number
+                    """, (customer_id, customer_id, *base_part_numbers, *related_customer_ids)).fetchall()
+                    customer_sales_history_by_part = {
+                        row['base_part_number']: dict(row)
+                        for row in customer_sales_rows
+                        if row.get('base_part_number')
+                    }
 
             for line in lines:
                 line_dict = dict(line)
@@ -2332,6 +2415,31 @@ def customer_quote_simple(list_id):
                 line_dict['last_sale_price_gbp'] = last_sale_price
                 line_dict['sales_history_reference_gbp'] = sales_reference_gbp
                 line_dict['sales_history_reference_type'] = sales_reference_type
+
+                customer_sales_history = customer_sales_history_by_part.get(line_dict.get('base_part_number')) or {}
+                sold_to_customer_group_count = int(customer_sales_history.get('sold_to_customer_group_count') or 0)
+                sold_to_direct_customer_count = int(customer_sales_history.get('sold_to_direct_customer_count') or 0)
+                sold_to_associated_customer_count = int(customer_sales_history.get('sold_to_associated_customer_count') or 0)
+                line_dict['sold_to_customer_group_count'] = sold_to_customer_group_count
+                line_dict['sold_to_direct_customer_count'] = sold_to_direct_customer_count
+                line_dict['sold_to_associated_customer_count'] = sold_to_associated_customer_count
+                line_dict['sold_to_customer_group'] = sold_to_customer_group_count > 0
+                line_dict['sold_to_direct_customer'] = sold_to_direct_customer_count > 0
+                line_dict['sold_to_associated_customer'] = sold_to_associated_customer_count > 0
+                line_dict['customer_group_avg_sale_price_gbp'] = _to_float_or_none(
+                    customer_sales_history.get('customer_group_avg_sale_price')
+                )
+                line_dict['customer_group_last_sale_price_gbp'] = _to_float_or_none(
+                    customer_sales_history.get('customer_group_last_sale_price')
+                )
+                line_dict['customer_group_last_sale_quantity'] = customer_sales_history.get('customer_group_last_sale_quantity')
+                line_dict['customer_group_last_sale_date'] = customer_sales_history.get('customer_group_last_sale_date')
+                line_dict['customer_group_last_sale_ref'] = customer_sales_history.get('customer_group_last_sale_ref')
+                line_dict['customer_group_last_sale_customer_id'] = customer_sales_history.get('customer_group_last_sale_customer_id')
+                line_dict['customer_group_last_sale_customer_name'] = customer_sales_history.get('customer_group_last_sale_customer_name')
+                line_dict['customer_group_last_sale_is_direct'] = bool(
+                    customer_sales_history.get('customer_group_last_sale_is_direct')
+                )
 
                 if line_dict.get('quote_line_id'):
                     line_dict['standard_condition'] = (line_dict.get('standard_condition') or '').strip()
