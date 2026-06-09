@@ -204,7 +204,7 @@ def _load_unordered_customer_quote_report(cursor, period_days=30, max_rows=50):
         LEFT JOIN parts_list_supplier_quotes psq ON psq.id = psql.supplier_quote_id
         LEFT JOIN suppliers sqs ON sqs.id = psq.supplier_id
         LEFT JOIN currencies curr ON curr.id = psq.currency_id
-        WHERE COALESCE(cql.is_no_bid, FALSE) = FALSE
+        WHERE COALESCE(cql.is_no_bid::int, 0) = 0
           AND COALESCE(cql.quoted_status, '') = 'quoted'
           AND cql.quote_price_gbp IS NOT NULL
           AND cql.quote_price_gbp > 0
@@ -284,7 +284,7 @@ def _load_frequent_sales_source_cost_report(cursor, period_days=90, min_orders=3
             LEFT JOIN parts_list_supplier_quotes psq ON psq.id = psql.supplier_quote_id
             LEFT JOIN suppliers sqs ON sqs.id = psq.supplier_id
             LEFT JOIN currencies curr ON curr.id = psq.currency_id
-            WHERE COALESCE(cql.is_no_bid, FALSE) = FALSE
+            WHERE COALESCE(cql.is_no_bid::int, 0) = 0
               AND cql.quote_price_gbp IS NOT NULL
               AND cql.quote_price_gbp > 0
         ), stock AS (
