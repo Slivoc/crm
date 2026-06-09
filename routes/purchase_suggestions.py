@@ -514,7 +514,7 @@ def _build_purchase_reports_email(report):
             f"{item.get('quote_line_count') or 0} quotes / {item.get('customer_count') or 0} customers | "
             f"total qty {item.get('total_quoted_qty') or '-'} | stock {item.get('stock_quantity') or 0} | "
             f"latest {item.get('latest_quoted_on') or item.get('quoted_on') or item.get('date_created') or '-'} | "
-            f"latest cost {_money(item.get('base_cost_gbp'))} -> sell {_money(item.get('quote_price_gbp'))} | "
+            f"latest cost {_money(item.get('base_cost_gbp'))} -> quoted price {_money(item.get('quote_price_gbp'))} | "
             f"margin {_pct(item.get('margin_percent'))} | {item.get('source_detail') or '-'}"
         )
 
@@ -566,7 +566,7 @@ def _build_purchase_reports_email(report):
                 <th style="border:1px solid #ddd;padding:6px;">Stock</th>
                 <th style="border:1px solid #ddd;padding:6px;">Latest quote</th>
                 <th style="border:1px solid #ddd;padding:6px;">Latest cost</th>
-                <th style="border:1px solid #ddd;padding:6px;">Latest sell</th>
+                <th style="border:1px solid #ddd;padding:6px;">Latest quoted price</th>
                 <th style="border:1px solid #ddd;padding:6px;">Margin</th>
                 <th style="border:1px solid #ddd;padding:6px;">Cost source</th>
                 <th style="border:1px solid #ddd;padding:6px;">Latest customer</th>
