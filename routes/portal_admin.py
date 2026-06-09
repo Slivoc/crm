@@ -3427,8 +3427,8 @@ def get_email_config():
     }
 
 
-def send_email(to_email, subject, html_body, text_body=None):
-    """Send an email using configured SMTP settings"""
+def send_email(to_email, subject, html_body, text_body=None, from_email=None, from_name=None):
+    """Send an email using configured SMTP settings."""
     try:
         config = get_email_config()
 
@@ -3436,10 +3436,13 @@ def send_email(to_email, subject, html_body, text_body=None):
             logging.warning("Email password not configured in portal settings")
             return False
 
+        sender_email = (from_email or config['from_email'] or config['smtp_username']).strip()
+        sender_name = (from_name or config['from_name'] or 'Sproutt admin').strip()
+
         # Create message
         msg = MIMEMultipart('alternative')
         msg['Subject'] = subject
-        msg['From'] = formataddr((config['from_name'], config['from_email']))
+        msg['From'] = formataddr((sender_name, sender_email))
         msg['To'] = to_email
 
         # Add text and HTML parts

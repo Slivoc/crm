@@ -52,7 +52,7 @@ from routes.email_signatures import signatures_bp
 from markdown import markdown
 from routes.geo_deepdive import geo_deepdive_bp
 from routes.sales_suggestions import sales_suggestions_bp
-from routes.purchase_suggestions import purchase_suggestions_bp
+from routes.purchase_suggestions import purchase_suggestions_bp, send_due_purchase_suggestion_reports
 from flask_session import Session
 from routes.vqs import vqs_bp
 from routes.parts_list import parts_list_bp
@@ -504,6 +504,21 @@ def scheduled_news_scan():
                     salesperson_id,
                     exc
                 )
+
+
+@scheduler.task('cron', id='purchase_suggestion_email_reports', hour=2, minute=0)
+def scheduled_purchase_suggestion_email_reports():
+    with app.app_context():
+        try:
+            result = send_due_purchase_suggestion_reports()
+            current_app.logger.info(
+                "Scheduled Purchase Suggestions Email: sent=%s reason=%s summary=%s",
+                result.get('sent'),
+                result.get('reason'),
+                result.get('summary')
+            )
+        except Exception as exc:
+            current_app.logger.exception("Scheduled Purchase Suggestions Email failed: %s", exc)
 
 
 @scheduler.task('cron', id='graph_mailbox_sync', hour=1, minute=20)
