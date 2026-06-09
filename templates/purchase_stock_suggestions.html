@@ -268,7 +268,7 @@
         </div>
         <div class="card-body">
             <p class="text-muted mb-3">
-                Configure an email that runs overnight. It includes customer quote lines that were quoted but not ordered, plus frequent sales order parts with their latest source cost/margin details.
+                Configure an email that runs overnight. It highlights parts repeatedly quoted but not won, plus frequently ordered parts, with stock availability and latest source cost/margin details.
             </p>
             <form id="email-report-config-form">
                 <div class="row g-3 align-items-end">
@@ -336,6 +336,10 @@
                         <div class="form-check form-check-inline">
                             <input class="form-check-input" type="checkbox" id="email-report-include-sales" checked>
                             <label class="form-check-label" for="email-report-include-sales">Frequent sales</label>
+                        </div>
+                        <div class="form-check mt-2">
+                            <input class="form-check-input" type="checkbox" id="email-report-only-out-of-stock" checked>
+                            <label class="form-check-label" for="email-report-only-out-of-stock">Only show parts with no available stock</label>
                         </div>
                     </div>
                     <div class="col-md-6 text-md-end">
@@ -996,7 +1000,8 @@ document.addEventListener('DOMContentLoaded', function() {
         frequentMinOrders: document.getElementById('email-report-min-orders'),
         maxRows: document.getElementById('email-report-max-rows'),
         includeQuotes: document.getElementById('email-report-include-quotes'),
-        includeSales: document.getElementById('email-report-include-sales')
+        includeSales: document.getElementById('email-report-include-sales'),
+        onlyOutOfStock: document.getElementById('email-report-only-out-of-stock')
     };
 
     function escapeHtml(value) {
@@ -1049,7 +1054,8 @@ document.addEventListener('DOMContentLoaded', function() {
             frequent_min_orders: Number.parseInt(emailReportFields.frequentMinOrders?.value, 10) || 3,
             max_rows: Number.parseInt(emailReportFields.maxRows?.value, 10) || 50,
             include_unordered_quotes: Boolean(emailReportFields.includeQuotes?.checked),
-            include_frequent_sales: Boolean(emailReportFields.includeSales?.checked)
+            include_frequent_sales: Boolean(emailReportFields.includeSales?.checked),
+            only_out_of_stock: Boolean(emailReportFields.onlyOutOfStock?.checked)
         };
     }
 
@@ -1064,6 +1070,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (emailReportFields.maxRows) emailReportFields.maxRows.value = config.max_rows || 50;
         if (emailReportFields.includeQuotes) emailReportFields.includeQuotes.checked = config.include_unordered_quotes !== false;
         if (emailReportFields.includeSales) emailReportFields.includeSales.checked = config.include_frequent_sales !== false;
+        if (emailReportFields.onlyOutOfStock) emailReportFields.onlyOutOfStock.checked = config.only_out_of_stock !== false;
         if (emailReportLastSent) {
             emailReportLastSent.textContent = config.last_sent_at ? `Last sent ${formatDate(config.last_sent_at)}` : 'Not sent yet';
         }
@@ -1350,8 +1357,9 @@ document.addEventListener('DOMContentLoaded', function() {
             postJson('/purchase-suggestions/api/email-report-preview', getEmailReportPayload())
                 .then(({ ok, data }) => {
                     if (!ok || !data.success) throw new Error(data.error || 'Preview failed');
+                    const stockFilter = data.config?.only_out_of_stock !== false ? ' with no available stock' : '';
                     setEmailReportStatus(
-                        `Preview complete: ${data.summary.unordered_quote_count || 0} repeatedly quoted parts not yet ordered and ${data.summary.frequent_sales_count || 0} frequent sales candidates.`,
+                        `Preview complete: ${data.summary.unordered_quote_count || 0} repeatedly quoted parts${stockFilter} and ${data.summary.frequent_sales_count || 0} frequent sales candidates${stockFilter}.`,
                         'alert-success'
                     );
                 })
