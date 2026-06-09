@@ -341,6 +341,10 @@
                             <input class="form-check-input" type="checkbox" id="email-report-only-out-of-stock" checked>
                             <label class="form-check-label" for="email-report-only-out-of-stock">Only show parts with no available stock</label>
                         </div>
+                        <div class="form-check mt-2">
+                            <input class="form-check-input" type="checkbox" id="email-report-only-unsold-period" checked>
+                            <label class="form-check-label" for="email-report-only-unsold-period">Only show quoted parts with no sales in SO period</label>
+                        </div>
                     </div>
                     <div class="col-md-6 text-md-end">
                         <button type="button" class="btn btn-outline-secondary me-2" id="preview-email-report-btn">
@@ -1001,7 +1005,8 @@ document.addEventListener('DOMContentLoaded', function() {
         maxRows: document.getElementById('email-report-max-rows'),
         includeQuotes: document.getElementById('email-report-include-quotes'),
         includeSales: document.getElementById('email-report-include-sales'),
-        onlyOutOfStock: document.getElementById('email-report-only-out-of-stock')
+        onlyOutOfStock: document.getElementById('email-report-only-out-of-stock'),
+        onlyUnsoldPeriod: document.getElementById('email-report-only-unsold-period')
     };
 
     function escapeHtml(value) {
@@ -1055,7 +1060,8 @@ document.addEventListener('DOMContentLoaded', function() {
             max_rows: Number.parseInt(emailReportFields.maxRows?.value, 10) || 50,
             include_unordered_quotes: Boolean(emailReportFields.includeQuotes?.checked),
             include_frequent_sales: Boolean(emailReportFields.includeSales?.checked),
-            only_out_of_stock: Boolean(emailReportFields.onlyOutOfStock?.checked)
+            only_out_of_stock: Boolean(emailReportFields.onlyOutOfStock?.checked),
+            only_unsold_in_sales_period: Boolean(emailReportFields.onlyUnsoldPeriod?.checked)
         };
     }
 
@@ -1071,6 +1077,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (emailReportFields.includeQuotes) emailReportFields.includeQuotes.checked = config.include_unordered_quotes !== false;
         if (emailReportFields.includeSales) emailReportFields.includeSales.checked = config.include_frequent_sales !== false;
         if (emailReportFields.onlyOutOfStock) emailReportFields.onlyOutOfStock.checked = config.only_out_of_stock !== false;
+        if (emailReportFields.onlyUnsoldPeriod) emailReportFields.onlyUnsoldPeriod.checked = config.only_unsold_in_sales_period !== false;
         if (emailReportLastSent) {
             emailReportLastSent.textContent = config.last_sent_at ? `Last sent ${formatDate(config.last_sent_at)}` : 'Not sent yet';
         }
@@ -1358,8 +1365,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 .then(({ ok, data }) => {
                     if (!ok || !data.success) throw new Error(data.error || 'Preview failed');
                     const stockFilter = data.config?.only_out_of_stock !== false ? ' with no available stock' : '';
+                    const salesFilter = data.config?.only_unsold_in_sales_period !== false ? ' and no sales in the SO period' : '';
                     setEmailReportStatus(
-                        `Preview complete: ${data.summary.unordered_quote_count || 0} repeatedly quoted parts${stockFilter} and ${data.summary.frequent_sales_count || 0} frequent sales candidates${stockFilter}.`,
+                        `Preview complete: ${data.summary.unordered_quote_count || 0} repeatedly quoted parts${stockFilter}${salesFilter} and ${data.summary.frequent_sales_count || 0} frequent sales candidates${stockFilter}.`,
                         'alert-success'
                     );
                 })
