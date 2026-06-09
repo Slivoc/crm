@@ -4,9 +4,24 @@
 
 {% block extra_css %}
 <style>
+    body.purchase-report-review-page .main-content {
+        margin-left: 0 !important;
+        width: 100vw;
+        max-width: 100vw;
+        padding-left: 0;
+        padding-right: 0;
+    }
+
+    body.purchase-report-review-page .main-content > .container-fluid {
+        max-width: 100vw;
+        padding-left: 0.75rem;
+        padding-right: 0.75rem;
+    }
+
     .report-review-wrap {
-        max-width: 1600px;
-        margin: 0 auto;
+        width: 100%;
+        max-width: none;
+        margin: 0;
     }
 
     .report-table {
@@ -177,6 +192,8 @@
 {{ super() }}
 <script>
 document.addEventListener('DOMContentLoaded', function() {
+    document.body.classList.add('purchase-report-review-page');
+
     const runId = {{ run_id|tojson }};
     const statusBox = document.getElementById('report-action-status');
 
