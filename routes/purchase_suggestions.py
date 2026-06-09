@@ -1,5 +1,7 @@
 import os
 import json
+import logging
+from html import escape
 from datetime import datetime, timedelta, date
 from decimal import Decimal
 from math import ceil
@@ -8,6 +10,525 @@ from db import db_cursor, execute as db_execute
 from models import convert_currency
 
 purchase_suggestions_bp = Blueprint('purchase_suggestions', __name__, url_prefix='/purchase-suggestions')
+
+PURCHASE_REPORT_CONFIG_KEY = 'purchase_suggestions_email_config'
+SPROUTT_ADMIN_EMAIL = 'admin@sproutt.io'
+SPROUTT_ADMIN_NAME = 'Sproutt Admin'
+PURCHASE_REPORT_DEFAULT_CONFIG = {
+    'enabled': False,
+    'recipients': '',
+    'frequency_days': 1,
+    'quote_period_days': 30,
+    'sales_period_days': 90,
+    'frequent_min_orders': 3,
+    'max_rows': 50,
+    'include_unordered_quotes': True,
+    'include_frequent_sales': True,
+    'last_sent_at': None,
+}
+
+
+def _load_email_report_config():
+    row = db_execute(
+        'SELECT value FROM app_settings WHERE key = ?',
+        (PURCHASE_REPORT_CONFIG_KEY,),
+        fetch='one',
+    )
+    config = dict(PURCHASE_REPORT_DEFAULT_CONFIG)
+    raw_value = row.get('value') if row else None
+    if raw_value:
+        try:
+            saved = json.loads(raw_value)
+            if isinstance(saved, dict):
+                config.update(saved)
+        except (TypeError, ValueError):
+            logging.warning('Invalid purchase suggestions email config JSON in app_settings')
+
+    config['frequency_days'] = max(1, min(int(config.get('frequency_days') or 1), 30))
+    config['quote_period_days'] = max(1, min(int(config.get('quote_period_days') or 30), 365))
+    config['sales_period_days'] = max(1, min(int(config.get('sales_period_days') or 90), 730))
+    config['frequent_min_orders'] = max(1, min(int(config.get('frequent_min_orders') or 3), 100))
+    config['max_rows'] = max(1, min(int(config.get('max_rows') or 50), 500))
+    config['enabled'] = bool(config.get('enabled'))
+    config['include_unordered_quotes'] = bool(config.get('include_unordered_quotes'))
+    config['include_frequent_sales'] = bool(config.get('include_frequent_sales'))
+    config['recipients'] = str(config.get('recipients') or '').strip()
+    return config
+
+
+def _save_email_report_config(config):
+    stored = dict(PURCHASE_REPORT_DEFAULT_CONFIG)
+    stored.update(config or {})
+    db_execute(
+        """
+        INSERT INTO app_settings (key, value)
+        VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value
+        """,
+        (PURCHASE_REPORT_CONFIG_KEY, json.dumps(stored, default=str)),
+        commit=True,
+    )
+    return _load_email_report_config()
+
+
+def _split_email_recipients(value):
+    recipients = []
+    for chunk in str(value or '').replace(';', ',').split(','):
+        email = chunk.strip()
+        if email and '@' in email:
+            recipients.append(email)
+    return recipients
+
+
+def _parse_datetime(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(str(value).replace('Z', '+00:00')).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
+def _date_cutoff(days):
+    return datetime.utcnow().date() - timedelta(days=max(1, int(days or 1)))
+
+
+def _format_source_label(source_type):
+    source_type = (source_type or '').strip().lower()
+    labels = {
+        'quote': 'Supplier offer',
+        'stock': 'Stock',
+        'manual': 'Manual cost',
+        'manual_cost': 'Manual cost',
+        'customer_quote': 'Customer quote',
+    }
+    return labels.get(source_type, source_type.replace('_', ' ').title() if source_type else 'Unknown')
+
+
+def _money(value):
+    numeric = _safe_float(value)
+    return f'£{numeric:,.2f}' if numeric is not None else '-'
+
+
+def _pct(value):
+    numeric = _safe_float(value)
+    return f'{numeric:.1f}%' if numeric is not None else '-'
+
+
+def _source_detail(row):
+    source_label = _format_source_label(row.get('chosen_source_type'))
+    if (row.get('chosen_source_type') or '').lower() == 'quote':
+        supplier = row.get('source_supplier_name') or row.get('chosen_supplier_name') or 'Supplier'
+        ref = row.get('source_quote_reference') or row.get('chosen_source_reference') or ''
+        quoted_date = _stringify_date(row.get('source_quote_date'))
+        bits = [supplier]
+        if ref:
+            bits.append(f'ref {ref}')
+        if quoted_date:
+            bits.append(quoted_date)
+        return f"{source_label}: " + ' · '.join(bits)
+    if (row.get('chosen_source_type') or '').lower() == 'stock':
+        return 'Stock allocation'
+    return source_label
+
+
+def _normalize_report_row(row):
+    item = dict(row)
+    for key in (
+        'quoted_on', 'date_created', 'source_quote_date', 'last_sale_date',
+        'first_sale_date', 'latest_quote_date'
+    ):
+        if key in item:
+            item[key] = _stringify_date(item.get(key))
+    for key in (
+        'quantity', 'chosen_qty', 'base_cost_gbp', 'delivery_per_unit',
+        'delivery_per_line', 'margin_percent', 'quote_price_gbp', 'chosen_cost',
+        'source_unit_price', 'ordered_qty_after_quote', 'sales_order_count',
+        'total_sales_qty', 'avg_sale_price', 'latest_margin_percent',
+        'latest_base_cost_gbp', 'stock_quantity', 'latest_quote_price_gbp',
+        'customer_count'
+    ):
+        if key in item:
+            item[key] = _coerce_numeric(item.get(key))
+    item['source_label'] = _format_source_label(item.get('chosen_source_type'))
+    item['source_detail'] = _source_detail(item)
+    return item
+
+def _load_unordered_customer_quote_report(cursor, period_days=30, max_rows=50):
+    cutoff = _date_cutoff(period_days)
+    rows = _execute_with_cursor(
+        cursor,
+        """
+        SELECT
+            cql.id AS quote_line_id,
+            pll.id AS parts_list_line_id,
+            pl.id AS parts_list_id,
+            pl.name AS parts_list_name,
+            c.id AS customer_id,
+            c.name AS customer_name,
+            pll.base_part_number,
+            COALESCE(NULLIF(cql.quoted_part_number, ''), NULLIF(cql.display_part_number, ''), pll.customer_part_number, pll.base_part_number) AS part_number,
+            pn.system_part_number,
+            cql.manufacturer,
+            COALESCE(pll.chosen_qty, pll.quantity) AS quantity,
+            cql.quoted_on,
+            cql.date_created,
+            cql.base_cost_gbp,
+            cql.delivery_per_unit,
+            cql.delivery_per_line,
+            cql.margin_percent,
+            cql.quote_price_gbp,
+            cql.lead_days,
+            pll.chosen_source_type,
+            pll.chosen_source_reference,
+            pll.chosen_cost,
+            s.name AS chosen_supplier_name,
+            psq.quote_reference AS source_quote_reference,
+            psq.quote_date AS source_quote_date,
+            sqs.name AS source_supplier_name,
+            psql.unit_price AS source_unit_price,
+            curr.currency_code AS source_currency_code,
+            0 AS ordered_qty_after_quote,
+            NULL AS last_order_date
+        FROM customer_quote_lines cql
+        JOIN parts_list_lines pll ON pll.id = cql.parts_list_line_id
+        JOIN parts_lists pl ON pl.id = pll.parts_list_id
+        LEFT JOIN customers c ON c.id = pl.customer_id
+        LEFT JOIN part_numbers pn ON pn.base_part_number = pll.base_part_number
+        LEFT JOIN suppliers s ON s.id = pll.chosen_supplier_id
+        LEFT JOIN parts_list_supplier_quote_lines psql
+            ON pll.chosen_source_type = 'quote'
+           AND CAST(psql.id AS TEXT) = pll.chosen_source_reference
+        LEFT JOIN parts_list_supplier_quotes psq ON psq.id = psql.supplier_quote_id
+        LEFT JOIN suppliers sqs ON sqs.id = psq.supplier_id
+        LEFT JOIN currencies curr ON curr.id = psq.currency_id
+        WHERE COALESCE(cql.is_no_bid, FALSE) = FALSE
+          AND COALESCE(cql.quoted_status, '') = 'quoted'
+          AND cql.quote_price_gbp IS NOT NULL
+          AND cql.quote_price_gbp > 0
+          AND pll.base_part_number IS NOT NULL
+          AND TRIM(pll.base_part_number) <> ''
+          AND COALESCE(cql.quoted_on, cql.date_created) >= ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM sales_order_lines sol_ord
+              JOIN sales_orders so_ord ON so_ord.id = sol_ord.sales_order_id
+              WHERE sol_ord.base_part_number = pll.base_part_number
+                AND (pl.customer_id IS NULL OR so_ord.customer_id = pl.customer_id)
+                AND so_ord.date_entered >= COALESCE(cql.quoted_on, cql.date_created)
+          )
+        ORDER BY COALESCE(cql.quoted_on, cql.date_created) DESC, cql.quote_price_gbp DESC
+        LIMIT ?
+        """,
+        (cutoff, int(max_rows)),
+        fetch='all',
+    ) or []
+    return [_normalize_report_row(row) for row in rows]
+
+
+def _load_frequent_sales_source_cost_report(cursor, period_days=90, min_orders=3, max_rows=50):
+    cutoff = _date_cutoff(period_days)
+    rows = _execute_with_cursor(
+        cursor,
+        """
+        WITH sales AS (
+            SELECT
+                sol.base_part_number,
+                COUNT(*) AS sales_order_count,
+                SUM(COALESCE(sol.quantity, 0)) AS total_sales_qty,
+                AVG(CASE WHEN sol.price > 0 THEN sol.price END) AS avg_sale_price,
+                MIN(so.date_entered) AS first_sale_date,
+                MAX(so.date_entered) AS last_sale_date,
+                COUNT(DISTINCT so.customer_id) AS customer_count
+            FROM sales_order_lines sol
+            JOIN sales_orders so ON so.id = sol.sales_order_id
+            WHERE sol.base_part_number IS NOT NULL
+              AND TRIM(sol.base_part_number) <> ''
+              AND so.date_entered >= ?
+            GROUP BY sol.base_part_number
+            HAVING COUNT(*) >= ?
+        ), latest_quote AS (
+            SELECT
+                pll.base_part_number,
+                cql.id AS quote_line_id,
+                pl.id AS parts_list_id,
+                pl.name AS parts_list_name,
+                c.name AS customer_name,
+                cql.base_cost_gbp,
+                cql.margin_percent,
+                cql.quote_price_gbp,
+                COALESCE(cql.quoted_on, cql.date_created) AS latest_quote_date,
+                pll.chosen_source_type,
+                pll.chosen_source_reference,
+                pll.chosen_cost,
+                s.name AS chosen_supplier_name,
+                psq.quote_reference AS source_quote_reference,
+                psq.quote_date AS source_quote_date,
+                sqs.name AS source_supplier_name,
+                psql.unit_price AS source_unit_price,
+                curr.currency_code AS source_currency_code,
+                ROW_NUMBER() OVER (
+                    PARTITION BY pll.base_part_number
+                    ORDER BY COALESCE(cql.quoted_on, cql.date_created) DESC, cql.id DESC
+                ) AS rn
+            FROM customer_quote_lines cql
+            JOIN parts_list_lines pll ON pll.id = cql.parts_list_line_id
+            JOIN parts_lists pl ON pl.id = pll.parts_list_id
+            LEFT JOIN customers c ON c.id = pl.customer_id
+            LEFT JOIN suppliers s ON s.id = pll.chosen_supplier_id
+            LEFT JOIN parts_list_supplier_quote_lines psql
+                ON pll.chosen_source_type = 'quote'
+               AND CAST(psql.id AS TEXT) = pll.chosen_source_reference
+            LEFT JOIN parts_list_supplier_quotes psq ON psq.id = psql.supplier_quote_id
+            LEFT JOIN suppliers sqs ON sqs.id = psq.supplier_id
+            LEFT JOIN currencies curr ON curr.id = psq.currency_id
+            WHERE COALESCE(cql.is_no_bid, FALSE) = FALSE
+              AND cql.quote_price_gbp IS NOT NULL
+              AND cql.quote_price_gbp > 0
+        ), stock AS (
+            SELECT base_part_number, SUM(available_quantity) AS stock_quantity
+            FROM stock_movements
+            WHERE movement_type = 'IN'
+              AND available_quantity > 0
+              AND base_part_number IS NOT NULL
+              AND TRIM(base_part_number) <> ''
+            GROUP BY base_part_number
+        )
+        SELECT
+            sales.base_part_number,
+            COALESCE(pn.part_number, sales.base_part_number) AS part_number,
+            pn.system_part_number,
+            sales.sales_order_count,
+            sales.total_sales_qty,
+            sales.avg_sale_price,
+            sales.first_sale_date,
+            sales.last_sale_date,
+            sales.customer_count,
+            COALESCE(stock.stock_quantity, 0) AS stock_quantity,
+            latest_quote.quote_line_id,
+            latest_quote.parts_list_id,
+            latest_quote.parts_list_name,
+            latest_quote.customer_name,
+            latest_quote.base_cost_gbp AS latest_base_cost_gbp,
+            latest_quote.margin_percent AS latest_margin_percent,
+            latest_quote.quote_price_gbp AS latest_quote_price_gbp,
+            latest_quote.latest_quote_date,
+            latest_quote.chosen_source_type,
+            latest_quote.chosen_source_reference,
+            latest_quote.chosen_cost,
+            latest_quote.chosen_supplier_name,
+            latest_quote.source_quote_reference,
+            latest_quote.source_quote_date,
+            latest_quote.source_supplier_name,
+            latest_quote.source_unit_price,
+            latest_quote.source_currency_code
+        FROM sales
+        LEFT JOIN latest_quote ON latest_quote.base_part_number = sales.base_part_number AND latest_quote.rn = 1
+        LEFT JOIN stock ON stock.base_part_number = sales.base_part_number
+        LEFT JOIN part_numbers pn ON pn.base_part_number = sales.base_part_number
+        ORDER BY sales.sales_order_count DESC, sales.total_sales_qty DESC, sales.last_sale_date DESC
+        LIMIT ?
+        """,
+        (cutoff, int(min_orders), int(max_rows)),
+        fetch='all',
+    ) or []
+    items = [_normalize_report_row(row) for row in rows]
+    for item in items:
+        item['recommendation'] = 'Review for stock holding' if (_safe_float(item.get('stock_quantity')) or 0) <= 0 else 'Review reorder point'
+    return items
+
+
+def _load_email_reports(config):
+    with db_cursor() as cursor:
+        unordered_quotes = _load_unordered_customer_quote_report(
+            cursor,
+            period_days=config.get('quote_period_days', 30),
+            max_rows=config.get('max_rows', 50),
+        ) if config.get('include_unordered_quotes') else []
+        frequent_sales = _load_frequent_sales_source_cost_report(
+            cursor,
+            period_days=config.get('sales_period_days', 90),
+            min_orders=config.get('frequent_min_orders', 3),
+            max_rows=config.get('max_rows', 50),
+        ) if config.get('include_frequent_sales') else []
+    return {
+        'generated_at': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+        'unordered_quotes': unordered_quotes,
+        'frequent_sales': frequent_sales,
+        'summary': {
+            'unordered_quote_count': len(unordered_quotes),
+            'frequent_sales_count': len(frequent_sales),
+        },
+        'config': config,
+    }
+
+
+def _build_purchase_reports_email(report):
+    config = report['config']
+    generated_at = escape(report.get('generated_at') or '')
+
+    def table_cell(value):
+        return f'<td style="border:1px solid #ddd;padding:6px;vertical-align:top;">{escape(str(value if value is not None else "-"))}</td>'
+
+    quote_rows_html = []
+    quote_rows_text = []
+    for item in report.get('unordered_quotes', []):
+        quote_rows_html.append(
+            '<tr>'
+            + table_cell(item.get('customer_name'))
+            + table_cell(item.get('part_number') or item.get('base_part_number'))
+            + table_cell(item.get('quantity'))
+            + table_cell(item.get('quoted_on') or item.get('date_created'))
+            + table_cell(_money(item.get('base_cost_gbp')))
+            + table_cell(_money(item.get('quote_price_gbp')))
+            + table_cell(_pct(item.get('margin_percent')))
+            + table_cell(item.get('source_detail'))
+            + table_cell(item.get('parts_list_name'))
+            + '</tr>'
+        )
+        quote_rows_text.append(
+            f"- {item.get('customer_name') or '-'} | {item.get('part_number') or item.get('base_part_number')} | "
+            f"quoted {item.get('quoted_on') or item.get('date_created') or '-'} | "
+            f"cost {_money(item.get('base_cost_gbp'))} -> sell {_money(item.get('quote_price_gbp'))} | "
+            f"margin {_pct(item.get('margin_percent'))} | {item.get('source_detail') or '-'}"
+        )
+
+    sales_rows_html = []
+    sales_rows_text = []
+    for item in report.get('frequent_sales', []):
+        sales_rows_html.append(
+            '<tr>'
+            + table_cell(item.get('part_number') or item.get('base_part_number'))
+            + table_cell(item.get('sales_order_count'))
+            + table_cell(item.get('total_sales_qty'))
+            + table_cell(item.get('customer_count'))
+            + table_cell(item.get('last_sale_date'))
+            + table_cell(_money(item.get('avg_sale_price')))
+            + table_cell(item.get('stock_quantity'))
+            + table_cell(_money(item.get('latest_base_cost_gbp')))
+            + table_cell(_pct(item.get('latest_margin_percent')))
+            + table_cell(item.get('source_detail'))
+            + table_cell(item.get('recommendation'))
+            + '</tr>'
+        )
+        sales_rows_text.append(
+            f"- {item.get('part_number') or item.get('base_part_number')} | {item.get('sales_order_count')} orders / "
+            f"{item.get('total_sales_qty')} units | stock {item.get('stock_quantity')} | "
+            f"avg sell {_money(item.get('avg_sale_price'))} | latest cost {_money(item.get('latest_base_cost_gbp'))} | "
+            f"margin {_pct(item.get('latest_margin_percent'))} | {item.get('source_detail') or '-'}"
+        )
+
+    quote_table = ''.join(quote_rows_html) or '<tr><td colspan="9" style="padding:8px;color:#666;">No quoted-not-ordered lines found.</td></tr>'
+    sales_table = ''.join(sales_rows_html) or '<tr><td colspan="11" style="padding:8px;color:#666;">No frequent sales order candidates found.</td></tr>'
+
+    html_body = f"""
+    <html><body style="font-family:Arial,sans-serif;color:#333;line-height:1.4;">
+        <h2>Purchase Suggestions Report</h2>
+        <p><strong>Generated:</strong> {generated_at} UTC</p>
+        <p>
+            Quoted-not-ordered period: last {escape(str(config.get('quote_period_days')))} days.<br>
+            Frequent sales period: last {escape(str(config.get('sales_period_days')))} days, minimum {escape(str(config.get('frequent_min_orders')))} order lines.
+        </p>
+        <h3>Customer quote lines not yet ordered ({len(report.get('unordered_quotes', []))})</h3>
+        <table style="border-collapse:collapse;width:100%;font-size:13px;">
+            <thead><tr style="background:#f3f4f6;">
+                <th style="border:1px solid #ddd;padding:6px;">Customer</th>
+                <th style="border:1px solid #ddd;padding:6px;">Part</th>
+                <th style="border:1px solid #ddd;padding:6px;">Qty</th>
+                <th style="border:1px solid #ddd;padding:6px;">Quoted</th>
+                <th style="border:1px solid #ddd;padding:6px;">Cost</th>
+                <th style="border:1px solid #ddd;padding:6px;">Sell</th>
+                <th style="border:1px solid #ddd;padding:6px;">Margin</th>
+                <th style="border:1px solid #ddd;padding:6px;">Cost source</th>
+                <th style="border:1px solid #ddd;padding:6px;">Quote list</th>
+            </tr></thead><tbody>{quote_table}</tbody>
+        </table>
+        <h3 style="margin-top:24px;">Frequent sales order parts ({len(report.get('frequent_sales', []))})</h3>
+        <table style="border-collapse:collapse;width:100%;font-size:13px;">
+            <thead><tr style="background:#f3f4f6;">
+                <th style="border:1px solid #ddd;padding:6px;">Part</th>
+                <th style="border:1px solid #ddd;padding:6px;">Orders</th>
+                <th style="border:1px solid #ddd;padding:6px;">Qty sold</th>
+                <th style="border:1px solid #ddd;padding:6px;">Customers</th>
+                <th style="border:1px solid #ddd;padding:6px;">Last sale</th>
+                <th style="border:1px solid #ddd;padding:6px;">Avg sell</th>
+                <th style="border:1px solid #ddd;padding:6px;">Stock</th>
+                <th style="border:1px solid #ddd;padding:6px;">Latest quote cost</th>
+                <th style="border:1px solid #ddd;padding:6px;">Margin</th>
+                <th style="border:1px solid #ddd;padding:6px;">Cost source</th>
+                <th style="border:1px solid #ddd;padding:6px;">Action</th>
+            </tr></thead><tbody>{sales_table}</tbody>
+        </table>
+    </body></html>
+    """
+
+    text_body = (
+        'Purchase Suggestions Report\n\n'
+        f"Generated: {report.get('generated_at')} UTC\n"
+        f"Quoted-not-ordered: {len(report.get('unordered_quotes', []))}\n"
+        f"Frequent sales candidates: {len(report.get('frequent_sales', []))}\n\n"
+        'Customer quote lines not yet ordered:\n'
+        + ('\n'.join(quote_rows_text) if quote_rows_text else '- None')
+        + '\n\nFrequent sales order parts:\n'
+        + ('\n'.join(sales_rows_text) if sales_rows_text else '- None')
+    )
+
+    total = len(report.get('unordered_quotes', [])) + len(report.get('frequent_sales', []))
+    subject = f'Purchase suggestions report ({total} candidates)'
+    return subject, html_body, text_body
+
+
+def _send_purchase_report_email(config, recipients, update_last_sent=True, subject_prefix=''):
+    recipients = _split_email_recipients(','.join(recipients) if isinstance(recipients, list) else recipients)
+    if not recipients:
+        return {'success': False, 'sent': False, 'error': 'No recipients configured'}
+
+    report = _load_email_reports(config)
+    subject, html_body, text_body = _build_purchase_reports_email(report)
+    subject = f'{subject_prefix}{subject}' if subject_prefix else subject
+
+    from routes.portal_admin import send_email
+    failures = []
+    for recipient in recipients:
+        if not send_email(
+            recipient,
+            subject,
+            html_body,
+            text_body,
+            from_email=SPROUTT_ADMIN_EMAIL,
+            from_name=SPROUTT_ADMIN_NAME,
+        ):
+            failures.append(recipient)
+
+    if failures:
+        return {'success': False, 'sent': False, 'error': f"Failed to send to: {', '.join(failures)}"}
+
+    if update_last_sent:
+        config['last_sent_at'] = datetime.utcnow().isoformat(timespec='seconds')
+        _save_email_report_config(config)
+
+    return {
+        'success': True,
+        'sent': True,
+        'recipients': recipients,
+        'from_email': SPROUTT_ADMIN_EMAIL,
+        'summary': report.get('summary'),
+    }
+
+
+def send_due_purchase_suggestion_reports(force=False):
+    config = _load_email_report_config()
+    recipients = _split_email_recipients(config.get('recipients'))
+    if not force:
+        if not config.get('enabled') or not recipients:
+            return {'success': True, 'sent': False, 'reason': 'disabled_or_no_recipients'}
+        last_sent = _parse_datetime(config.get('last_sent_at'))
+        if last_sent and datetime.utcnow() < last_sent + timedelta(days=config.get('frequency_days', 1)):
+            return {'success': True, 'sent': False, 'reason': 'not_due'}
+
+    return _send_purchase_report_email(config, recipients, update_last_sent=True)
 
 
 def _using_postgres():
@@ -653,6 +1174,119 @@ def purchase_suggestions():
                                sort_column='purchase_priority_score',
                                sort_direction='desc',
                                error=str(e))
+
+
+@purchase_suggestions_bp.route('/api/email-report-config', methods=['GET'])
+def get_email_report_config():
+    """Return the saved nightly purchase report email configuration."""
+    try:
+        return jsonify({'success': True, 'config': _load_email_report_config()})
+    except Exception as e:
+        logging.exception('Error loading purchase report email config: %s', e)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@purchase_suggestions_bp.route('/api/email-report-config', methods=['POST'])
+def save_email_report_config():
+    """Save the nightly purchase report email configuration."""
+    try:
+        payload = request.get_json(silent=True) or {}
+        config = _load_email_report_config()
+        config.update({
+            'enabled': bool(payload.get('enabled')),
+            'recipients': str(payload.get('recipients') or '').strip(),
+            'frequency_days': max(1, min(int(payload.get('frequency_days') or 1), 30)),
+            'quote_period_days': max(1, min(int(payload.get('quote_period_days') or 30), 365)),
+            'sales_period_days': max(1, min(int(payload.get('sales_period_days') or 90), 730)),
+            'frequent_min_orders': max(1, min(int(payload.get('frequent_min_orders') or 3), 100)),
+            'max_rows': max(1, min(int(payload.get('max_rows') or 50), 500)),
+            'include_unordered_quotes': bool(payload.get('include_unordered_quotes', True)),
+            'include_frequent_sales': bool(payload.get('include_frequent_sales', True)),
+        })
+        saved = _save_email_report_config(config)
+        return jsonify({'success': True, 'config': saved})
+    except Exception as e:
+        logging.exception('Error saving purchase report email config: %s', e)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@purchase_suggestions_bp.route('/api/email-report-preview', methods=['POST'])
+def preview_email_report():
+    """Run both report datasets for the current/supplied configuration without sending email."""
+    try:
+        payload = request.get_json(silent=True) or {}
+        config = _load_email_report_config()
+        config.update({key: payload[key] for key in payload if key in PURCHASE_REPORT_DEFAULT_CONFIG})
+        config['quote_period_days'] = max(1, min(int(config.get('quote_period_days') or 30), 365))
+        config['sales_period_days'] = max(1, min(int(config.get('sales_period_days') or 90), 730))
+        config['frequent_min_orders'] = max(1, min(int(config.get('frequent_min_orders') or 3), 100))
+        config['max_rows'] = max(1, min(int(config.get('max_rows') or 50), 500))
+        report = _load_email_reports(config)
+        return jsonify({'success': True, **report})
+    except Exception as e:
+        logging.exception('Error previewing purchase report email: %s', e)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@purchase_suggestions_bp.route('/api/send-email-report', methods=['POST'])
+def send_email_report_now():
+    """Send the configured purchase reports immediately."""
+    try:
+        payload = request.get_json(silent=True) or {}
+        if payload:
+            config = _load_email_report_config()
+            config.update({
+                'enabled': bool(payload.get('enabled')),
+                'recipients': str(payload.get('recipients') or '').strip(),
+                'frequency_days': max(1, min(int(payload.get('frequency_days') or 1), 30)),
+                'quote_period_days': max(1, min(int(payload.get('quote_period_days') or 30), 365)),
+                'sales_period_days': max(1, min(int(payload.get('sales_period_days') or 90), 730)),
+                'frequent_min_orders': max(1, min(int(payload.get('frequent_min_orders') or 3), 100)),
+                'max_rows': max(1, min(int(payload.get('max_rows') or 50), 500)),
+                'include_unordered_quotes': bool(payload.get('include_unordered_quotes', True)),
+                'include_frequent_sales': bool(payload.get('include_frequent_sales', True)),
+            })
+            _save_email_report_config(config)
+        result = send_due_purchase_suggestion_reports(force=True)
+        status = 200 if result.get('success') else 400
+        return jsonify(result), status
+    except Exception as e:
+        logging.exception('Error sending purchase report email: %s', e)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@purchase_suggestions_bp.route('/api/send-test-email-report', methods=['POST'])
+def send_test_email_report():
+    """Send the current report to a one-off test recipient without changing the schedule."""
+    try:
+        payload = request.get_json(silent=True) or {}
+        test_recipient = str(payload.get('test_recipient') or '').strip()
+        if not test_recipient:
+            return jsonify({'success': False, 'error': 'Test recipient is required'}), 400
+
+        config = _load_email_report_config()
+        config.update({
+            'enabled': bool(payload.get('enabled')),
+            'recipients': str(payload.get('recipients') or '').strip(),
+            'frequency_days': max(1, min(int(payload.get('frequency_days') or 1), 30)),
+            'quote_period_days': max(1, min(int(payload.get('quote_period_days') or 30), 365)),
+            'sales_period_days': max(1, min(int(payload.get('sales_period_days') or 90), 730)),
+            'frequent_min_orders': max(1, min(int(payload.get('frequent_min_orders') or 3), 100)),
+            'max_rows': max(1, min(int(payload.get('max_rows') or 50), 500)),
+            'include_unordered_quotes': bool(payload.get('include_unordered_quotes', True)),
+            'include_frequent_sales': bool(payload.get('include_frequent_sales', True)),
+        })
+        result = _send_purchase_report_email(
+            config,
+            [test_recipient],
+            update_last_sent=False,
+            subject_prefix='[Test] ',
+        )
+        status = 200 if result.get('success') else 400
+        return jsonify(result), status
+    except Exception as e:
+        logging.exception('Error sending test purchase report email: %s', e)
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @purchase_suggestions_bp.route('/api/speculative-buy-report', methods=['POST'])
