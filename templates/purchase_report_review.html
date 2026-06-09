@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+
+{% block title %}Purchase Report Review{% endblock %}
+
+{% block extra_css %}
+<style>
+    .report-review-wrap {
+        max-width: 1600px;
+        margin: 0 auto;
+    }
+
+    .report-table {
+        font-size: 0.86rem;
+        white-space: nowrap;
+    }
+
+    .report-table td {
+        vertical-align: top;
+    }
+
+    .comment-cell {
+        min-width: 220px;
+        max-width: 320px;
+        white-space: normal;
+    }
+
+    .comment-textarea {
+        min-width: 260px;
+        min-height: 74px;
+        resize: vertical;
+    }
+
+    .existing-comment {
+        border-left: 3px solid #d0d7de;
+        padding-left: 0.5rem;
+        white-space: pre-wrap;
+    }
+
+    .status-line {
+        min-height: 1.5rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid report-review-wrap py-3">
+    {% if error %}
+        <div class="alert alert-danger">{{ error }}</div>
+    {% elif report %}
+        <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
+            <div>
+                <h1 class="h3 mb-1">Purchase Report Review #{{ run_id }}</h1>
+                <div class="text-muted">
+                    Generated {{ report.generated_at or '-' }} - Commenting as {{ current_user_name }}
+                </div>
+            </div>
+            <div class="d-flex gap-2 align-items-start">
+                <input type="text" class="form-control" id="resend-recipients" style="min-width: 360px;"
+                       value="{{ report.run.recipients or '' }}" placeholder="recipient@example.com, ops@example.com">
+                <button type="button" class="btn btn-primary" id="resend-report-btn">
+                    <i class="bi bi-send me-1"></i>Resend With Comments
+                </button>
+            </div>
+        </div>
+
+        <div class="alert alert-info py-2" id="report-action-status">
+            Comments are saved per section and part number, so they will appear on later matching reports.
+        </div>
+
+        {% for section in review_sections %}
+            <div class="card mb-4">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h2 class="h5 mb-0">{{ section.title }} ({{ section.rows|length }})</h2>
+                    <span class="text-muted small">Snapshot rows from this email report</span>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-sm table-striped table-hover report-table mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Part</th>
+                                    {% if section.section == 'quoted_not_won' %}
+                                        <th>Quotes</th>
+                                        <th>Customers</th>
+                                        <th>Total qty</th>
+                                        <th>Stock</th>
+                                        <th>Latest quote</th>
+                                        <th>Latest cost</th>
+                                        <th>Latest quoted price</th>
+                                        <th>Margin</th>
+                                        <th>Cost source</th>
+                                        <th>Latest customer</th>
+                                    {% else %}
+                                        <th>Orders</th>
+                                        <th>Qty sold</th>
+                                        <th>Customers</th>
+                                        <th>Last sale</th>
+                                        <th>Avg sell</th>
+                                        <th>Stock</th>
+                                        <th>Latest quote cost</th>
+                                        <th>Margin</th>
+                                        <th>Action</th>
+                                    {% endif %}
+                                    {% for name in section.comment_columns %}
+                                        <th class="comment-cell">{{ name }}</th>
+                                    {% endfor %}
+                                    <th class="comment-cell">Your comment</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in section.rows %}
+                                    <tr data-section="{{ section.section }}" data-base-part-number="{{ item.base_part_number or item.part_number }}">
+                                        <td>
+                                            <strong>{{ item.part_number or item.base_part_number }}</strong>
+                                            {% if item.system_part_number %}
+                                                <div class="text-muted small">{{ item.system_part_number }}</div>
+                                            {% endif %}
+                                        </td>
+                                        {% if section.section == 'quoted_not_won' %}
+                                            <td>{{ item.quote_line_count or 0 }}</td>
+                                            <td>{{ item.customer_count or 0 }}</td>
+                                            <td>{{ item.total_quoted_qty or '-' }}</td>
+                                            <td>{{ item.stock_quantity or 0 }}</td>
+                                            <td>{{ item.latest_quoted_on or item.quoted_on or item.date_created or '-' }}</td>
+                                            <td>{{ item.base_cost_gbp or '-' }}</td>
+                                            <td>{{ item.quote_price_gbp or '-' }}</td>
+                                            <td>{{ item.margin_percent or '-' }}</td>
+                                            <td>{{ item.source_detail or '-' }}</td>
+                                            <td>{{ item.customer_name or '-' }}</td>
+                                        {% else %}
+                                            <td>{{ item.sales_order_count or 0 }}</td>
+                                            <td>{{ item.total_sales_qty or '-' }}</td>
+                                            <td>{{ item.customer_count or 0 }}</td>
+                                            <td>{{ item.last_sale_date or '-' }}</td>
+                                            <td>{{ item.avg_sale_price or '-' }}</td>
+                                            <td>{{ item.stock_quantity or 0 }}</td>
+                                            <td>{{ item.latest_base_cost_gbp or '-' }}</td>
+                                            <td>{{ item.latest_margin_percent or '-' }}</td>
+                                            <td>{{ item.recommendation or '-' }}</td>
+                                        {% endif %}
+                                        {% for name in section.comment_columns %}
+                                            <td class="comment-cell">
+                                                {% for comment in item.comments or [] %}
+                                                    {% if comment.user_name == name %}
+                                                        <div class="existing-comment">
+                                                            {{ comment.comment }}
+                                                            <div class="text-muted small mt-1">{{ comment.updated_at or comment.created_at }}</div>
+                                                        </div>
+                                                    {% endif %}
+                                                {% endfor %}
+                                            </td>
+                                        {% endfor %}
+                                        <td class="comment-cell">
+                                            <textarea class="form-control form-control-sm comment-textarea" placeholder="Add comment">{{ item.current_user_comment }}</textarea>
+                                            <div class="d-flex justify-content-between align-items-center mt-2">
+                                                <button type="button" class="btn btn-sm btn-outline-primary save-comment-btn">Save</button>
+                                                <span class="text-muted small status-line"></span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                {% else %}
+                                    <tr>
+                                        <td colspan="20" class="text-center text-muted py-4">No rows in this section.</td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        {% endfor %}
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const runId = {{ run_id|tojson }};
+    const statusBox = document.getElementById('report-action-status');
+
+    function setStatus(message, className = 'alert-info') {
+        if (!statusBox) return;
+        statusBox.className = `alert ${className} py-2`;
+        statusBox.textContent = message;
+    }
+
+    function postJson(url, payload) {
+        return fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload || {})
+        }).then(response => response.json().then(data => ({ ok: response.ok, data })));
+    }
+
+    document.querySelectorAll('.save-comment-btn').forEach(button => {
+        button.addEventListener('click', function() {
+            const row = button.closest('tr');
+            const status = row.querySelector('.status-line');
+            const textarea = row.querySelector('.comment-textarea');
+            button.disabled = true;
+            status.textContent = 'Saving...';
+            postJson(`/purchase-suggestions/api/reports/${runId}/comments`, {
+                section: row.dataset.section,
+                base_part_number: row.dataset.basePartNumber,
+                comment: textarea.value
+            }).then(({ ok, data }) => {
+                if (!ok || !data.success) throw new Error(data.error || 'Save failed');
+                status.textContent = data.comment?.deleted ? 'Cleared' : 'Saved';
+                setStatus('Comment saved. Resend the report to include the latest comments.', 'alert-success');
+            }).catch(error => {
+                status.textContent = error.message;
+                setStatus(`Comment save failed: ${error.message}`, 'alert-danger');
+            }).finally(() => {
+                button.disabled = false;
+            });
+        });
+    });
+
+    document.getElementById('resend-report-btn')?.addEventListener('click', function() {
+        const button = this;
+        const recipients = document.getElementById('resend-recipients')?.value || '';
+        button.disabled = true;
+        setStatus('Resending report with current comments...', 'alert-info');
+        postJson(`/purchase-suggestions/api/reports/${runId}/resend`, { recipients })
+            .then(({ ok, data }) => {
+                if (!ok || !data.success) throw new Error(data.error || 'Resend failed');
+                setStatus(`Report resent to ${(data.recipients || []).join(', ')}.`, 'alert-success');
+            })
+            .catch(error => setStatus(`Resend failed: ${error.message}`, 'alert-danger'))
+            .finally(() => {
+                button.disabled = false;
+            });
+    });
+});
+</script>
+{% endblock %}

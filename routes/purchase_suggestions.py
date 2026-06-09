@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, date
 from decimal import Decimal
 from math import ceil
 from flask import Blueprint, render_template, request, jsonify, session
+from flask_login import current_user, login_required
 from db import db_cursor, execute as db_execute
 from models import convert_currency
 
@@ -82,6 +83,61 @@ def _split_email_recipients(value):
         if email and '@' in email:
             recipients.append(email)
     return recipients
+
+
+def _current_user_id():
+    try:
+        if current_user and getattr(current_user, 'is_authenticated', False):
+            return getattr(current_user, 'id', None)
+    except RuntimeError:
+        return None
+    return None
+
+
+def _current_user_display_name():
+    try:
+        if current_user and getattr(current_user, 'is_authenticated', False):
+            username = getattr(current_user, 'username', '') or ''
+            return username.replace('_', ' ').strip().title() or f'User {getattr(current_user, "id", "")}'
+    except RuntimeError:
+        return 'System'
+    return 'System'
+
+
+def _report_public_base_url():
+    configured = (os.getenv('PURCHASE_REPORT_BASE_URL') or '').strip().rstrip('/')
+    if configured:
+        return configured
+    try:
+        if request:
+            return request.host_url.rstrip('/')
+    except RuntimeError:
+        pass
+    return 'https://mgc.sproutt.io'
+
+
+def _report_review_url(run_id):
+    return f"{_report_public_base_url()}/purchase-suggestions/reports/{run_id}"
+
+
+def _json_default(value):
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
+    return str(value)
+
+
+REPORT_SECTION_KEYS = (
+    ('quoted_not_won', 'unordered_quotes'),
+    ('frequent_sales', 'frequent_sales'),
+)
+
+
+REPORT_SECTION_LABELS = {
+    'quoted_not_won': 'Repeatedly quoted parts not yet ordered',
+    'frequent_sales': 'Frequent sales order parts',
+}
 
 
 def _parse_datetime(value):
@@ -472,7 +528,249 @@ def _load_email_reports(config):
     }
 
 
-def _build_purchase_reports_email(report):
+def _create_purchase_report_run(report, config, recipients):
+    row = db_execute(
+        """
+        INSERT INTO purchase_report_runs (
+            generated_by_user_id, config_json, recipients,
+            unordered_quote_count, frequent_sales_count
+        )
+        VALUES (?, ?::jsonb, ?, ?, ?)
+        RETURNING id
+        """,
+        (
+            _current_user_id(),
+            json.dumps(config or {}, default=_json_default),
+            ', '.join(recipients or []),
+            len(report.get('unordered_quotes', [])),
+            len(report.get('frequent_sales', [])),
+        ),
+        fetch='one',
+        commit=True,
+    )
+    run_id = row.get('id') if row else None
+    if not run_id:
+        raise RuntimeError('Unable to create purchase report run')
+
+    with db_cursor(commit=True) as cursor:
+        for section, report_key in REPORT_SECTION_KEYS:
+            for index, item in enumerate(report.get(report_key, []) or []):
+                base_part_number = item.get('base_part_number') or item.get('part_number')
+                if not base_part_number:
+                    continue
+                _execute_with_cursor(
+                    cursor,
+                    """
+                    INSERT INTO purchase_report_run_items (
+                        run_id, report_section, base_part_number,
+                        display_part_number, item_order, item_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?::jsonb)
+                    """,
+                    (
+                        run_id,
+                        section,
+                        str(base_part_number),
+                        item.get('part_number') or item.get('base_part_number'),
+                        index,
+                        json.dumps(item, default=_json_default),
+                    ),
+                )
+    return run_id
+
+
+def _load_report_comments(section_parts):
+    if not section_parts:
+        return {}
+
+    clauses = []
+    params = []
+    for section, base_part_number in sorted(section_parts):
+        clauses.append('(report_section = ? AND base_part_number = ?)')
+        params.extend([section, base_part_number])
+
+    rows = db_execute(
+        f"""
+        SELECT id, report_section, base_part_number, user_id, user_name, comment,
+               created_at, updated_at
+        FROM purchase_report_comments
+        WHERE {' OR '.join(clauses)}
+        ORDER BY user_name, updated_at DESC
+        """,
+        tuple(params),
+        fetch='all',
+    ) or []
+
+    comments = {}
+    for row in rows:
+        item = dict(row)
+        item['created_at'] = _stringify_date(item.get('created_at'))
+        item['updated_at'] = _stringify_date(item.get('updated_at'))
+        comments.setdefault((item['report_section'], item['base_part_number']), []).append(item)
+    return comments
+
+
+def _attach_report_comments(report):
+    section_parts = set()
+    for section, report_key in REPORT_SECTION_KEYS:
+        for item in report.get(report_key, []) or []:
+            base_part_number = item.get('base_part_number') or item.get('part_number')
+            if base_part_number:
+                item['report_section'] = section
+                section_parts.add((section, str(base_part_number)))
+
+    comments = _load_report_comments(section_parts)
+    for section, report_key in REPORT_SECTION_KEYS:
+        for item in report.get(report_key, []) or []:
+            base_part_number = str(item.get('base_part_number') or item.get('part_number') or '')
+            item['comments'] = comments.get((section, base_part_number), [])
+    return report
+
+
+def _load_purchase_report_run(run_id):
+    run = db_execute(
+        """
+        SELECT prr.*, u.username AS generated_by_username
+        FROM purchase_report_runs prr
+        LEFT JOIN users u ON u.id = prr.generated_by_user_id
+        WHERE prr.id = ?
+        """,
+        (run_id,),
+        fetch='one',
+    )
+    if not run:
+        return None
+
+    rows = db_execute(
+        """
+        SELECT report_section, base_part_number, display_part_number, item_order, item_json
+        FROM purchase_report_run_items
+        WHERE run_id = ?
+        ORDER BY report_section, item_order
+        """,
+        (run_id,),
+        fetch='all',
+    ) or []
+
+    report = {
+        'generated_at': _stringify_date(run.get('generated_at')),
+        'unordered_quotes': [],
+        'frequent_sales': [],
+        'summary': {
+            'unordered_quote_count': run.get('unordered_quote_count') or 0,
+            'frequent_sales_count': run.get('frequent_sales_count') or 0,
+        },
+        'config': run.get('config_json') or {},
+        'run': dict(run),
+    }
+
+    for row in rows:
+        raw_item = row.get('item_json') or {}
+        if isinstance(raw_item, str):
+            try:
+                item = json.loads(raw_item)
+            except ValueError:
+                item = {}
+        else:
+            item = dict(raw_item)
+        item['report_section'] = row.get('report_section')
+        item['base_part_number'] = item.get('base_part_number') or row.get('base_part_number')
+        item['part_number'] = item.get('part_number') or row.get('display_part_number')
+        for section, report_key in REPORT_SECTION_KEYS:
+            if row.get('report_section') == section:
+                report[report_key].append(item)
+                break
+
+    return _attach_report_comments(report)
+
+
+def _save_purchase_report_comment(section, base_part_number, comment):
+    user_id = _current_user_id()
+    if not user_id:
+        raise RuntimeError('Login required')
+    user_name = _current_user_display_name()
+    cleaned = str(comment or '').strip()
+
+    if not cleaned:
+        db_execute(
+            """
+            DELETE FROM purchase_report_comments
+            WHERE report_section = ? AND base_part_number = ? AND user_id = ?
+            """,
+            (section, base_part_number, user_id),
+            commit=True,
+        )
+        return {'deleted': True}
+
+    row = db_execute(
+        """
+        INSERT INTO purchase_report_comments (
+            report_section, base_part_number, user_id, user_name, comment, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, NOW(), NOW())
+        ON CONFLICT(report_section, base_part_number, user_id)
+        DO UPDATE SET
+            user_name = EXCLUDED.user_name,
+            comment = EXCLUDED.comment,
+            updated_at = NOW()
+        RETURNING id, report_section, base_part_number, user_id, user_name, comment, created_at, updated_at
+        """,
+        (section, base_part_number, user_id, user_name, cleaned),
+        fetch='one',
+        commit=True,
+    )
+    item = dict(row or {})
+    item['created_at'] = _stringify_date(item.get('created_at'))
+    item['updated_at'] = _stringify_date(item.get('updated_at'))
+    return item
+
+
+def _comment_columns(items):
+    columns = []
+    seen = set()
+    for item in items:
+        for comment in item.get('comments') or []:
+            name = comment.get('user_name') or 'User'
+            if name not in seen:
+                seen.add(name)
+                columns.append(name)
+    return columns
+
+
+def _comment_cell(item, user_name):
+    for comment in item.get('comments') or []:
+        if (comment.get('user_name') or 'User') == user_name:
+            bits = [comment.get('comment') or '']
+            if comment.get('updated_at'):
+                bits.append(comment.get('updated_at'))
+            return ' - '.join([bit for bit in bits if bit])
+    return ''
+
+
+def _prepare_report_review_sections(report):
+    sections = []
+    current_user_id = _current_user_id()
+    for section, report_key in REPORT_SECTION_KEYS:
+        rows = report.get(report_key, []) or []
+        comment_columns = _comment_columns(rows)
+        for item in rows:
+            item['current_user_comment'] = ''
+            for comment in item.get('comments') or []:
+                if comment.get('user_id') == current_user_id:
+                    item['current_user_comment'] = comment.get('comment') or ''
+                    break
+        sections.append({
+            'section': section,
+            'report_key': report_key,
+            'title': REPORT_SECTION_LABELS.get(section, section),
+            'rows': rows,
+            'comment_columns': comment_columns,
+        })
+    return sections
+
+
+def _build_purchase_reports_email(report, report_url=None):
+    _attach_report_comments(report)
     config = report['config']
     generated_at = escape(report.get('generated_at') or '')
     stock_filter_label = 'Out-of-stock only' if config.get('only_out_of_stock', True) else 'All stock statuses'
@@ -485,6 +783,16 @@ def _build_purchase_reports_email(report):
         'Frequently ordered parts not in stock'
         if config.get('only_out_of_stock', True)
         else 'Frequent sales order parts'
+    )
+    quote_comment_columns = _comment_columns(report.get('unordered_quotes', []))
+    sales_comment_columns = _comment_columns(report.get('frequent_sales', []))
+    quote_comment_headers = ''.join(
+        f'<th style="border:1px solid #ddd;padding:6px;">{escape(name)}</th>'
+        for name in quote_comment_columns
+    )
+    sales_comment_headers = ''.join(
+        f'<th style="border:1px solid #ddd;padding:6px;">{escape(name)}</th>'
+        for name in sales_comment_columns
     )
 
     def table_cell(value):
@@ -507,6 +815,7 @@ def _build_purchase_reports_email(report):
             + table_cell(item.get('source_detail'))
             + table_cell(item.get('customer_name'))
             + table_cell(item.get('parts_list_name'))
+            + ''.join(table_cell(_comment_cell(item, name)) for name in quote_comment_columns)
             + '</tr>'
         )
         quote_rows_text.append(
@@ -534,6 +843,7 @@ def _build_purchase_reports_email(report):
             + table_cell(_pct(item.get('latest_margin_percent')))
             + table_cell(item.get('source_detail'))
             + table_cell(item.get('recommendation'))
+            + ''.join(table_cell(_comment_cell(item, name)) for name in sales_comment_columns)
             + '</tr>'
         )
         sales_rows_text.append(
@@ -543,13 +853,22 @@ def _build_purchase_reports_email(report):
             f"margin {_pct(item.get('latest_margin_percent'))} | {item.get('source_detail') or '-'}"
         )
 
-    quote_table = ''.join(quote_rows_html) or '<tr><td colspan="12" style="padding:8px;color:#666;">No repeatedly quoted, not ordered parts found.</td></tr>'
-    sales_table = ''.join(sales_rows_html) or '<tr><td colspan="11" style="padding:8px;color:#666;">No frequent sales order candidates found.</td></tr>'
+    quote_colspan = 12 + len(quote_comment_columns)
+    sales_colspan = 11 + len(sales_comment_columns)
+    quote_table = ''.join(quote_rows_html) or f'<tr><td colspan="{quote_colspan}" style="padding:8px;color:#666;">No repeatedly quoted, not ordered parts found.</td></tr>'
+    sales_table = ''.join(sales_rows_html) or f'<tr><td colspan="{sales_colspan}" style="padding:8px;color:#666;">No frequent sales order candidates found.</td></tr>'
+    review_link_html = ''
+    review_link_text = ''
+    if report_url:
+        safe_url = escape(report_url)
+        review_link_html = f'<p><a href="{safe_url}" style="color:#0d6efd;">Open report to add comments or resend with comments</a></p>'
+        review_link_text = f"\nReview/add comments: {report_url}\n"
 
     html_body = f"""
     <html><body style="font-family:Arial,sans-serif;color:#333;line-height:1.4;">
         <h2>Purchase Suggestions Report</h2>
         <p><strong>Generated:</strong> {generated_at} UTC</p>
+        {review_link_html}
         <p>
             Quoted-not-ordered period: last {escape(str(config.get('quote_period_days')))} days.<br>
             Frequent sales period: last {escape(str(config.get('sales_period_days')))} days, minimum {escape(str(config.get('frequent_min_orders')))} order lines.<br>
@@ -571,6 +890,7 @@ def _build_purchase_reports_email(report):
                 <th style="border:1px solid #ddd;padding:6px;">Cost source</th>
                 <th style="border:1px solid #ddd;padding:6px;">Latest customer</th>
                 <th style="border:1px solid #ddd;padding:6px;">Latest quote list</th>
+                {quote_comment_headers}
             </tr></thead><tbody>{quote_table}</tbody>
         </table>
         <h3 style="margin-top:24px;">{escape(frequent_sales_heading)} ({len(report.get('frequent_sales', []))})</h3>
@@ -587,6 +907,7 @@ def _build_purchase_reports_email(report):
                 <th style="border:1px solid #ddd;padding:6px;">Margin</th>
                 <th style="border:1px solid #ddd;padding:6px;">Cost source</th>
                 <th style="border:1px solid #ddd;padding:6px;">Action</th>
+                {sales_comment_headers}
             </tr></thead><tbody>{sales_table}</tbody>
         </table>
     </body></html>
@@ -595,7 +916,8 @@ def _build_purchase_reports_email(report):
     text_body = (
         'Purchase Suggestions Report\n\n'
         f"Generated: {report.get('generated_at')} UTC\n"
-        f"Stock filter: {stock_filter_label}\n"
+        + review_link_text
+        + f"Stock filter: {stock_filter_label}\n"
         f"Quoted/not-won sales filter: {quoted_sales_filter_label}\n"
         f"Repeatedly quoted, not ordered parts: {len(report.get('unordered_quotes', []))}\n"
         f"Frequent sales candidates: {len(report.get('frequent_sales', []))}\n\n"
@@ -610,13 +932,23 @@ def _build_purchase_reports_email(report):
     return subject, html_body, text_body
 
 
-def _send_purchase_report_email(config, recipients, update_last_sent=True, subject_prefix=''):
+def _send_purchase_report_email(
+    config,
+    recipients,
+    update_last_sent=True,
+    subject_prefix='',
+    report=None,
+    run_id=None,
+):
     recipients = _split_email_recipients(','.join(recipients) if isinstance(recipients, list) else recipients)
     if not recipients:
         return {'success': False, 'sent': False, 'error': 'No recipients configured'}
 
-    report = _load_email_reports(config)
-    subject, html_body, text_body = _build_purchase_reports_email(report)
+    report = report or _load_email_reports(config)
+    if run_id is None:
+        run_id = _create_purchase_report_run(report, config, recipients)
+    report_url = _report_review_url(run_id)
+    subject, html_body, text_body = _build_purchase_reports_email(report, report_url=report_url)
     subject = f'{subject_prefix}{subject}' if subject_prefix else subject
 
     from routes.portal_admin import send_email
@@ -645,6 +977,8 @@ def _send_purchase_report_email(config, recipients, update_last_sent=True, subje
         'recipients': recipients,
         'from_email': SPROUTT_ADMIN_EMAIL,
         'summary': report.get('summary'),
+        'report_run_id': run_id,
+        'report_url': report_url,
     }
 
 
@@ -1422,6 +1756,87 @@ def send_test_email_report():
         return jsonify(result), status
     except Exception as e:
         logging.exception('Error sending test purchase report email: %s', e)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@purchase_suggestions_bp.route('/reports/<int:run_id>', methods=['GET'])
+@login_required
+def view_purchase_report_run(run_id):
+    report = _load_purchase_report_run(run_id)
+    if not report:
+        return render_template(
+            'purchase_report_review.html',
+            report=None,
+            run_id=run_id,
+            error='Purchase report run not found.',
+        ), 404
+
+    return render_template(
+        'purchase_report_review.html',
+        report=report,
+        run_id=run_id,
+        review_sections=_prepare_report_review_sections(report),
+        section_labels=REPORT_SECTION_LABELS,
+        current_user_id=_current_user_id(),
+        current_user_name=_current_user_display_name(),
+    )
+
+
+@purchase_suggestions_bp.route('/api/reports/<int:run_id>/comments', methods=['POST'])
+@login_required
+def save_purchase_report_comment(run_id):
+    try:
+        payload = request.get_json(silent=True) or {}
+        section = str(payload.get('section') or '').strip()
+        base_part_number = str(payload.get('base_part_number') or '').strip()
+        comment = payload.get('comment') or ''
+        if section not in {section_name for section_name, _ in REPORT_SECTION_KEYS}:
+            return jsonify({'success': False, 'error': 'Invalid report section'}), 400
+        if not base_part_number:
+            return jsonify({'success': False, 'error': 'Part number is required'}), 400
+
+        item = db_execute(
+            """
+            SELECT id
+            FROM purchase_report_run_items
+            WHERE run_id = ? AND report_section = ? AND base_part_number = ?
+            """,
+            (run_id, section, base_part_number),
+            fetch='one',
+        )
+        if not item:
+            return jsonify({'success': False, 'error': 'Part is not in this report snapshot'}), 404
+
+        saved = _save_purchase_report_comment(section, base_part_number, comment)
+        return jsonify({'success': True, 'comment': saved})
+    except Exception as e:
+        logging.exception('Error saving purchase report comment: %s', e)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@purchase_suggestions_bp.route('/api/reports/<int:run_id>/resend', methods=['POST'])
+@login_required
+def resend_purchase_report_run(run_id):
+    try:
+        report = _load_purchase_report_run(run_id)
+        if not report:
+            return jsonify({'success': False, 'error': 'Purchase report run not found'}), 404
+
+        payload = request.get_json(silent=True) or {}
+        run = report.get('run') or {}
+        configured_recipients = payload.get('recipients') or run.get('recipients') or _load_email_report_config().get('recipients')
+        result = _send_purchase_report_email(
+            report.get('config') or _load_email_report_config(),
+            configured_recipients,
+            update_last_sent=False,
+            subject_prefix='[Updated] ',
+            report=report,
+            run_id=run_id,
+        )
+        status = 200 if result.get('success') else 400
+        return jsonify(result), status
+    except Exception as e:
+        logging.exception('Error resending purchase report run: %s', e)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
