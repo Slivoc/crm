@@ -747,6 +747,37 @@ def _comment_cell(item, user_name):
     return ''
 
 
+def _compact_number(value, digits=0):
+    numeric = _safe_float(value)
+    if numeric is None:
+        return '-'
+    if abs(numeric - round(numeric)) < 0.000001:
+        return f'{int(round(numeric)):,}'
+    return f'{numeric:,.{digits}f}'.rstrip('0').rstrip('.')
+
+
+def _review_source_label(item):
+    source_type = (item.get('chosen_source_type') or '').strip().lower()
+    if source_type == 'stock':
+        return 'Stock'
+    supplier = item.get('source_supplier_name') or item.get('chosen_supplier_name')
+    if supplier:
+        return supplier
+    return item.get('source_label') or _format_source_label(source_type)
+
+
+def _decorate_review_item(item):
+    item['display_part'] = item.get('part_number') or item.get('base_part_number') or '-'
+    item['display_qty'] = _compact_number(item.get('total_quoted_qty') or item.get('total_sales_qty'), 2)
+    item['display_stock'] = _compact_number(item.get('stock_quantity'), 2)
+    item['display_latest_cost'] = _money(item.get('base_cost_gbp') or item.get('latest_base_cost_gbp'))
+    item['display_latest_price'] = _money(item.get('quote_price_gbp'))
+    item['display_avg_sell'] = _money(item.get('avg_sale_price'))
+    item['display_margin'] = _pct(item.get('margin_percent') or item.get('latest_margin_percent'))
+    item['display_source'] = _review_source_label(item)
+    return item
+
+
 def _prepare_report_review_sections(report):
     sections = []
     current_user_id = _current_user_id()
@@ -754,6 +785,7 @@ def _prepare_report_review_sections(report):
         rows = report.get(report_key, []) or []
         comment_columns = _comment_columns(rows)
         for item in rows:
+            _decorate_review_item(item)
             item['current_user_comment'] = ''
             for comment in item.get('comments') or []:
                 if comment.get('user_id') == current_user_id:

@@ -29,6 +29,12 @@
         white-space: nowrap;
     }
 
+    .part-cell {
+        min-width: 130px;
+        max-width: 220px;
+        white-space: normal;
+    }
+
     .report-table td {
         vertical-align: top;
     }
@@ -100,11 +106,9 @@
                                         <th>Total qty</th>
                                         <th>Stock</th>
                                         <th>Latest quote</th>
-                                        <th>Latest cost</th>
                                         <th>Latest quoted price</th>
                                         <th>Margin</th>
-                                        <th>Cost source</th>
-                                        <th>Latest customer</th>
+                                        <th>Source</th>
                                     {% else %}
                                         <th>Orders</th>
                                         <th>Qty sold</th>
@@ -112,7 +116,6 @@
                                         <th>Last sale</th>
                                         <th>Avg sell</th>
                                         <th>Stock</th>
-                                        <th>Latest quote cost</th>
                                         <th>Margin</th>
                                         <th>Action</th>
                                     {% endif %}
@@ -125,32 +128,26 @@
                             <tbody>
                                 {% for item in section.rows %}
                                     <tr data-section="{{ section.section }}" data-base-part-number="{{ item.base_part_number or item.part_number }}">
-                                        <td>
-                                            <strong>{{ item.part_number or item.base_part_number }}</strong>
-                                            {% if item.system_part_number %}
-                                                <div class="text-muted small">{{ item.system_part_number }}</div>
-                                            {% endif %}
+                                        <td class="part-cell">
+                                            <strong>{{ item.display_part }}</strong>
                                         </td>
                                         {% if section.section == 'quoted_not_won' %}
                                             <td>{{ item.quote_line_count or 0 }}</td>
                                             <td>{{ item.customer_count or 0 }}</td>
-                                            <td>{{ item.total_quoted_qty or '-' }}</td>
-                                            <td>{{ item.stock_quantity or 0 }}</td>
+                                            <td>{{ item.display_qty }}</td>
+                                            <td>{{ item.display_stock }}</td>
                                             <td>{{ item.latest_quoted_on or item.quoted_on or item.date_created or '-' }}</td>
-                                            <td>{{ item.base_cost_gbp or '-' }}</td>
-                                            <td>{{ item.quote_price_gbp or '-' }}</td>
-                                            <td>{{ item.margin_percent or '-' }}</td>
-                                            <td>{{ item.source_detail or '-' }}</td>
-                                            <td>{{ item.customer_name or '-' }}</td>
+                                            <td>{{ item.display_latest_price }}</td>
+                                            <td>{{ item.display_margin }}</td>
+                                            <td>{{ item.display_source or '-' }}</td>
                                         {% else %}
                                             <td>{{ item.sales_order_count or 0 }}</td>
-                                            <td>{{ item.total_sales_qty or '-' }}</td>
+                                            <td>{{ item.display_qty }}</td>
                                             <td>{{ item.customer_count or 0 }}</td>
                                             <td>{{ item.last_sale_date or '-' }}</td>
-                                            <td>{{ item.avg_sale_price or '-' }}</td>
-                                            <td>{{ item.stock_quantity or 0 }}</td>
-                                            <td>{{ item.latest_base_cost_gbp or '-' }}</td>
-                                            <td>{{ item.latest_margin_percent or '-' }}</td>
+                                            <td>{{ item.display_avg_sell }}</td>
+                                            <td>{{ item.display_stock }}</td>
+                                            <td>{{ item.display_margin }}</td>
                                             <td>{{ item.recommendation or '-' }}</td>
                                         {% endif %}
                                         {% for name in section.comment_columns %}
