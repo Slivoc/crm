@@ -138,7 +138,8 @@ def _normalize_report_row(row):
     item = dict(row)
     for key in (
         'quoted_on', 'date_created', 'source_quote_date', 'last_sale_date',
-        'first_sale_date', 'latest_quote_date'
+        'first_sale_date', 'latest_quote_date', 'first_quoted_on',
+        'latest_quoted_on'
     ):
         if key in item:
             item[key] = _stringify_date(item.get(key))
@@ -148,7 +149,7 @@ def _normalize_report_row(row):
         'source_unit_price', 'ordered_qty_after_quote', 'sales_order_count',
         'total_sales_qty', 'avg_sale_price', 'latest_margin_percent',
         'latest_base_cost_gbp', 'stock_quantity', 'latest_quote_price_gbp',
-        'customer_count'
+        'customer_count', 'quote_line_count', 'total_quoted_qty'
     ):
         if key in item:
             item[key] = _coerce_numeric(item.get(key))
@@ -161,65 +162,123 @@ def _load_unordered_customer_quote_report(cursor, period_days=30, max_rows=50):
     rows = _execute_with_cursor(
         cursor,
         """
+        WITH eligible_quote_lines AS (
+            SELECT
+                cql.id AS quote_line_id,
+                pll.id AS parts_list_line_id,
+                pl.id AS parts_list_id,
+                pl.name AS parts_list_name,
+                c.id AS customer_id,
+                c.name AS customer_name,
+                pll.base_part_number,
+                COALESCE(NULLIF(cql.quoted_part_number, ''), NULLIF(cql.display_part_number, ''), pll.customer_part_number, pll.base_part_number) AS part_number,
+                pn.system_part_number,
+                cql.manufacturer,
+                COALESCE(pll.chosen_qty, pll.quantity) AS quantity,
+                COALESCE(cql.quoted_on, cql.date_created) AS quoted_date,
+                cql.quoted_on,
+                cql.date_created,
+                cql.base_cost_gbp,
+                cql.delivery_per_unit,
+                cql.delivery_per_line,
+                cql.margin_percent,
+                cql.quote_price_gbp,
+                cql.lead_days,
+                pll.chosen_source_type,
+                pll.chosen_source_reference,
+                pll.chosen_cost,
+                s.name AS chosen_supplier_name,
+                psq.quote_reference AS source_quote_reference,
+                psq.quote_date AS source_quote_date,
+                sqs.name AS source_supplier_name,
+                psql.unit_price AS source_unit_price,
+                curr.currency_code AS source_currency_code
+            FROM customer_quote_lines cql
+            JOIN parts_list_lines pll ON pll.id = cql.parts_list_line_id
+            JOIN parts_lists pl ON pl.id = pll.parts_list_id
+            LEFT JOIN customers c ON c.id = pl.customer_id
+            LEFT JOIN part_numbers pn ON pn.base_part_number = pll.base_part_number
+            LEFT JOIN suppliers s ON s.id = pll.chosen_supplier_id
+            LEFT JOIN parts_list_supplier_quote_lines psql
+                ON pll.chosen_source_type = 'quote'
+               AND CAST(psql.id AS TEXT) = pll.chosen_source_reference
+            LEFT JOIN parts_list_supplier_quotes psq ON psq.id = psql.supplier_quote_id
+            LEFT JOIN suppliers sqs ON sqs.id = psq.supplier_id
+            LEFT JOIN currencies curr ON curr.id = psq.currency_id
+            WHERE COALESCE(cql.is_no_bid::int, 0) = 0
+              AND COALESCE(cql.quoted_status, '') = 'quoted'
+              AND cql.quote_price_gbp IS NOT NULL
+              AND cql.quote_price_gbp > 0
+              AND pll.base_part_number IS NOT NULL
+              AND TRIM(pll.base_part_number) <> ''
+              AND COALESCE(cql.quoted_on, cql.date_created) >= ?
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM sales_order_lines sol_ord
+                  JOIN sales_orders so_ord ON so_ord.id = sol_ord.sales_order_id
+                  WHERE sol_ord.base_part_number = pll.base_part_number
+                    AND (pl.customer_id IS NULL OR so_ord.customer_id = pl.customer_id)
+                    AND so_ord.date_entered >= COALESCE(cql.quoted_on, cql.date_created)
+              )
+        ), part_stats AS (
+            SELECT
+                base_part_number,
+                COUNT(*) AS quote_line_count,
+                COUNT(DISTINCT customer_id) AS customer_count,
+                SUM(COALESCE(quantity, 0)) AS total_quoted_qty,
+                MIN(quoted_date) AS first_quoted_on,
+                MAX(quoted_date) AS latest_quoted_on
+            FROM eligible_quote_lines
+            GROUP BY base_part_number
+            HAVING COUNT(*) > 1
+        ), latest_line AS (
+            SELECT
+                eql.*,
+                ROW_NUMBER() OVER (
+                    PARTITION BY eql.base_part_number
+                    ORDER BY eql.quoted_date DESC, eql.quote_line_id DESC
+                ) AS rn
+            FROM eligible_quote_lines eql
+        )
         SELECT
-            cql.id AS quote_line_id,
-            pll.id AS parts_list_line_id,
-            pl.id AS parts_list_id,
-            pl.name AS parts_list_name,
-            c.id AS customer_id,
-            c.name AS customer_name,
-            pll.base_part_number,
-            COALESCE(NULLIF(cql.quoted_part_number, ''), NULLIF(cql.display_part_number, ''), pll.customer_part_number, pll.base_part_number) AS part_number,
-            pn.system_part_number,
-            cql.manufacturer,
-            COALESCE(pll.chosen_qty, pll.quantity) AS quantity,
-            cql.quoted_on,
-            cql.date_created,
-            cql.base_cost_gbp,
-            cql.delivery_per_unit,
-            cql.delivery_per_line,
-            cql.margin_percent,
-            cql.quote_price_gbp,
-            cql.lead_days,
-            pll.chosen_source_type,
-            pll.chosen_source_reference,
-            pll.chosen_cost,
-            s.name AS chosen_supplier_name,
-            psq.quote_reference AS source_quote_reference,
-            psq.quote_date AS source_quote_date,
-            sqs.name AS source_supplier_name,
-            psql.unit_price AS source_unit_price,
-            curr.currency_code AS source_currency_code,
+            ll.quote_line_id,
+            ll.parts_list_line_id,
+            ll.parts_list_id,
+            ll.parts_list_name,
+            ll.customer_id,
+            ll.customer_name,
+            part_stats.base_part_number,
+            ll.part_number,
+            ll.system_part_number,
+            ll.manufacturer,
+            ll.quantity,
+            part_stats.total_quoted_qty,
+            part_stats.quote_line_count,
+            part_stats.customer_count,
+            part_stats.first_quoted_on,
+            part_stats.latest_quoted_on,
+            ll.quoted_on,
+            ll.date_created,
+            ll.base_cost_gbp,
+            ll.delivery_per_unit,
+            ll.delivery_per_line,
+            ll.margin_percent,
+            ll.quote_price_gbp,
+            ll.lead_days,
+            ll.chosen_source_type,
+            ll.chosen_source_reference,
+            ll.chosen_cost,
+            ll.chosen_supplier_name,
+            ll.source_quote_reference,
+            ll.source_quote_date,
+            ll.source_supplier_name,
+            ll.source_unit_price,
+            ll.source_currency_code,
             0 AS ordered_qty_after_quote,
             NULL AS last_order_date
-        FROM customer_quote_lines cql
-        JOIN parts_list_lines pll ON pll.id = cql.parts_list_line_id
-        JOIN parts_lists pl ON pl.id = pll.parts_list_id
-        LEFT JOIN customers c ON c.id = pl.customer_id
-        LEFT JOIN part_numbers pn ON pn.base_part_number = pll.base_part_number
-        LEFT JOIN suppliers s ON s.id = pll.chosen_supplier_id
-        LEFT JOIN parts_list_supplier_quote_lines psql
-            ON pll.chosen_source_type = 'quote'
-           AND CAST(psql.id AS TEXT) = pll.chosen_source_reference
-        LEFT JOIN parts_list_supplier_quotes psq ON psq.id = psql.supplier_quote_id
-        LEFT JOIN suppliers sqs ON sqs.id = psq.supplier_id
-        LEFT JOIN currencies curr ON curr.id = psq.currency_id
-        WHERE COALESCE(cql.is_no_bid::int, 0) = 0
-          AND COALESCE(cql.quoted_status, '') = 'quoted'
-          AND cql.quote_price_gbp IS NOT NULL
-          AND cql.quote_price_gbp > 0
-          AND pll.base_part_number IS NOT NULL
-          AND TRIM(pll.base_part_number) <> ''
-          AND COALESCE(cql.quoted_on, cql.date_created) >= ?
-          AND NOT EXISTS (
-              SELECT 1
-              FROM sales_order_lines sol_ord
-              JOIN sales_orders so_ord ON so_ord.id = sol_ord.sales_order_id
-              WHERE sol_ord.base_part_number = pll.base_part_number
-                AND (pl.customer_id IS NULL OR so_ord.customer_id = pl.customer_id)
-                AND so_ord.date_entered >= COALESCE(cql.quoted_on, cql.date_created)
-          )
-        ORDER BY COALESCE(cql.quoted_on, cql.date_created) DESC, cql.quote_price_gbp DESC
+        FROM part_stats
+        JOIN latest_line ll ON ll.base_part_number = part_stats.base_part_number AND ll.rn = 1
+        ORDER BY part_stats.quote_line_count DESC, part_stats.latest_quoted_on DESC, ll.quote_price_gbp DESC
         LIMIT ?
         """,
         (cutoff, int(max_rows)),
@@ -377,21 +436,24 @@ def _build_purchase_reports_email(report):
     for item in report.get('unordered_quotes', []):
         quote_rows_html.append(
             '<tr>'
-            + table_cell(item.get('customer_name'))
             + table_cell(item.get('part_number') or item.get('base_part_number'))
-            + table_cell(item.get('quantity'))
-            + table_cell(item.get('quoted_on') or item.get('date_created'))
+            + table_cell(item.get('quote_line_count'))
+            + table_cell(item.get('customer_count'))
+            + table_cell(item.get('total_quoted_qty'))
+            + table_cell(item.get('latest_quoted_on') or item.get('quoted_on') or item.get('date_created'))
             + table_cell(_money(item.get('base_cost_gbp')))
             + table_cell(_money(item.get('quote_price_gbp')))
             + table_cell(_pct(item.get('margin_percent')))
             + table_cell(item.get('source_detail'))
+            + table_cell(item.get('customer_name'))
             + table_cell(item.get('parts_list_name'))
             + '</tr>'
         )
         quote_rows_text.append(
-            f"- {item.get('customer_name') or '-'} | {item.get('part_number') or item.get('base_part_number')} | "
-            f"quoted {item.get('quoted_on') or item.get('date_created') or '-'} | "
-            f"cost {_money(item.get('base_cost_gbp'))} -> sell {_money(item.get('quote_price_gbp'))} | "
+            f"- {item.get('part_number') or item.get('base_part_number')} | "
+            f"{item.get('quote_line_count') or 0} quotes / {item.get('customer_count') or 0} customers | "
+            f"total qty {item.get('total_quoted_qty') or '-'} | latest {item.get('latest_quoted_on') or item.get('quoted_on') or item.get('date_created') or '-'} | "
+            f"latest cost {_money(item.get('base_cost_gbp'))} -> sell {_money(item.get('quote_price_gbp'))} | "
             f"margin {_pct(item.get('margin_percent'))} | {item.get('source_detail') or '-'}"
         )
 
@@ -420,7 +482,7 @@ def _build_purchase_reports_email(report):
             f"margin {_pct(item.get('latest_margin_percent'))} | {item.get('source_detail') or '-'}"
         )
 
-    quote_table = ''.join(quote_rows_html) or '<tr><td colspan="9" style="padding:8px;color:#666;">No quoted-not-ordered lines found.</td></tr>'
+    quote_table = ''.join(quote_rows_html) or '<tr><td colspan="11" style="padding:8px;color:#666;">No repeatedly quoted, not ordered parts found.</td></tr>'
     sales_table = ''.join(sales_rows_html) or '<tr><td colspan="11" style="padding:8px;color:#666;">No frequent sales order candidates found.</td></tr>'
 
     html_body = f"""
@@ -431,18 +493,20 @@ def _build_purchase_reports_email(report):
             Quoted-not-ordered period: last {escape(str(config.get('quote_period_days')))} days.<br>
             Frequent sales period: last {escape(str(config.get('sales_period_days')))} days, minimum {escape(str(config.get('frequent_min_orders')))} order lines.
         </p>
-        <h3>Customer quote lines not yet ordered ({len(report.get('unordered_quotes', []))})</h3>
+        <h3>Repeatedly quoted parts not yet ordered ({len(report.get('unordered_quotes', []))})</h3>
         <table style="border-collapse:collapse;width:100%;font-size:13px;">
             <thead><tr style="background:#f3f4f6;">
-                <th style="border:1px solid #ddd;padding:6px;">Customer</th>
                 <th style="border:1px solid #ddd;padding:6px;">Part</th>
-                <th style="border:1px solid #ddd;padding:6px;">Qty</th>
-                <th style="border:1px solid #ddd;padding:6px;">Quoted</th>
-                <th style="border:1px solid #ddd;padding:6px;">Cost</th>
-                <th style="border:1px solid #ddd;padding:6px;">Sell</th>
+                <th style="border:1px solid #ddd;padding:6px;">Quotes</th>
+                <th style="border:1px solid #ddd;padding:6px;">Customers</th>
+                <th style="border:1px solid #ddd;padding:6px;">Total qty</th>
+                <th style="border:1px solid #ddd;padding:6px;">Latest quote</th>
+                <th style="border:1px solid #ddd;padding:6px;">Latest cost</th>
+                <th style="border:1px solid #ddd;padding:6px;">Latest sell</th>
                 <th style="border:1px solid #ddd;padding:6px;">Margin</th>
                 <th style="border:1px solid #ddd;padding:6px;">Cost source</th>
-                <th style="border:1px solid #ddd;padding:6px;">Quote list</th>
+                <th style="border:1px solid #ddd;padding:6px;">Latest customer</th>
+                <th style="border:1px solid #ddd;padding:6px;">Latest quote list</th>
             </tr></thead><tbody>{quote_table}</tbody>
         </table>
         <h3 style="margin-top:24px;">Frequent sales order parts ({len(report.get('frequent_sales', []))})</h3>
@@ -467,9 +531,9 @@ def _build_purchase_reports_email(report):
     text_body = (
         'Purchase Suggestions Report\n\n'
         f"Generated: {report.get('generated_at')} UTC\n"
-        f"Quoted-not-ordered: {len(report.get('unordered_quotes', []))}\n"
+        f"Repeatedly quoted, not ordered parts: {len(report.get('unordered_quotes', []))}\n"
         f"Frequent sales candidates: {len(report.get('frequent_sales', []))}\n\n"
-        'Customer quote lines not yet ordered:\n'
+        'Repeatedly quoted parts not yet ordered:\n'
         + ('\n'.join(quote_rows_text) if quote_rows_text else '- None')
         + '\n\nFrequent sales order parts:\n'
         + ('\n'.join(sales_rows_text) if sales_rows_text else '- None')

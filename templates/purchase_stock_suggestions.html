@@ -1351,7 +1351,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 .then(({ ok, data }) => {
                     if (!ok || !data.success) throw new Error(data.error || 'Preview failed');
                     setEmailReportStatus(
-                        `Preview complete: ${data.summary.unordered_quote_count || 0} quoted-not-ordered lines and ${data.summary.frequent_sales_count || 0} frequent sales candidates.`,
+                        `Preview complete: ${data.summary.unordered_quote_count || 0} repeatedly quoted parts not yet ordered and ${data.summary.frequent_sales_count || 0} frequent sales candidates.`,
                         'alert-success'
                     );
                 })
