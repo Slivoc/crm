@@ -373,6 +373,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 calcBaseBtn: row.querySelector('.line-calc-btn[data-calc="base"]'),
                 calcDeliveryBtn: row.querySelector('.line-calc-btn[data-calc="delivery"]'),
                 calcMarginBtn: row.querySelector('.line-calc-btn[data-calc="margin"]'),
+                customerSalePill: row.querySelector('.customer-sale-pill'),
                 detailRow: detailRow
             };
 
@@ -385,6 +386,7 @@ document.addEventListener('DOMContentLoaded', function() {
             // Update Visuals for this row
             updateRowVisuals(row, elements, fins, status, isNoBid);
             updateQuoteDeltaIndicator(row, elements, lineData, isNoBid);
+            updateCustomerSalePill(elements, lineData, isNoBid);
 
             // Add to Global Totals
             globalState.totalCost += fins.cost;
@@ -491,6 +493,73 @@ document.addEventListener('DOMContentLoaded', function() {
         quoteCell.title = `Quote is ${Math.abs(deltaPct).toFixed(0)}% ${dir} ${referenceType} (GBP ${referencePrice.toFixed(2)})${salesContext}`;
     }
 
+    function updateCustomerSalePill(elements, lineData, isNoBid) {
+        const pill = elements.customerSalePill;
+        if (!pill) return;
+
+        pill.classList.remove(
+            'customer-sale-near',
+            'customer-sale-over',
+            'customer-sale-under',
+            'customer-sale-no-quote'
+        );
+
+        const saleCount = Number.parseInt(lineData.sold_to_customer_group_count, 10) || 0;
+        const latestPrice = toNumber(lineData.customer_group_last_sale_price_gbp);
+        const avgPrice = toNumber(lineData.customer_group_avg_sale_price_gbp);
+        const quotePrice = toNumber(elements.quotePriceGbp?.value);
+        const referencePrice = saleCount >= 3 && avgPrice > 0 ? avgPrice : latestPrice;
+        const referenceType = saleCount >= 3 && avgPrice > 0 ? 'average customer-group sale price' : 'latest customer-group sale price';
+        const latestCustomer = (lineData.customer_group_last_sale_customer_name || CUSTOMER_NAME || '').toString().trim();
+        const latestRef = (lineData.customer_group_last_sale_ref || '').toString().trim();
+        const latestScope = lineData.customer_group_last_sale_is_direct ? 'customer' : 'associated customer';
+        const historyText = `Sold ${saleCount} time${saleCount === 1 ? '' : 's'} to this customer group`;
+        const latestText = latestPrice > 0
+            ? `latest ${latestScope}${latestCustomer ? ` ${latestCustomer}` : ''} at GBP ${latestPrice.toFixed(2)}`
+            : `latest ${latestScope}${latestCustomer ? ` ${latestCustomer}` : ''}`;
+        const refText = latestRef ? `; SO ${latestRef}` : '';
+
+        if (isNoBid || quotePrice <= 0 || referencePrice <= 0) {
+            pill.classList.add('customer-sale-no-quote');
+            pill.innerHTML = '<i class="bi bi-bag-check"></i>Sold before';
+            pill.title = `${historyText}; ${latestText}${refText}`;
+            return;
+        }
+
+        const deltaPct = ((quotePrice - referencePrice) / referencePrice) * 100;
+        if (!Number.isFinite(deltaPct)) {
+            pill.classList.add('customer-sale-no-quote');
+            pill.innerHTML = '<i class="bi bi-bag-check"></i>Sold before';
+            pill.title = `${historyText}; ${latestText}${refText}`;
+            return;
+        }
+
+        const roundedDelta = Math.abs(deltaPct).toFixed(0);
+        let label = 'Near history';
+        let className = 'customer-sale-near';
+        let direction = 'near';
+        let icon = 'bi-bag-check';
+
+        if (deltaPct >= 10) {
+            label = `High +${roundedDelta}%`;
+            className = 'customer-sale-over';
+            direction = 'above';
+            icon = 'bi-arrow-up-right';
+        } else if (deltaPct <= -10) {
+            label = `Low -${roundedDelta}%`;
+            className = 'customer-sale-under';
+            direction = 'below';
+            icon = 'bi-arrow-down-right';
+        }
+
+        pill.classList.add(className);
+        pill.innerHTML = `<i class="bi ${icon}"></i>${label}`;
+        const comparisonText = direction === 'near'
+            ? `within ${roundedDelta}% of`
+            : `${roundedDelta}% ${direction}`;
+        pill.title = `Quote is ${comparisonText} ${referenceType} (GBP ${referencePrice.toFixed(2)}). ${historyText}; ${latestText}${refText}`;
+    }
+
     function updateSummaryDisplay() {
         const displayCurrencyId = getDisplayCurrencyId();
         const displayCurrencyCode = getCurrencyCode(displayCurrencyId);
@@ -585,6 +654,7 @@ document.addEventListener('DOMContentLoaded', function() {
         requestAnimationFrame(() => {
             updateRowVisuals(row, cached.elements, newFins, status, isNoBid);
             updateQuoteDeltaIndicator(row, cached.elements, cached.lineData, isNoBid);
+            updateCustomerSalePill(cached.elements, cached.lineData, isNoBid);
             updateSummaryDisplay();
             updateEmailQuoteWarnings();
             if (!skipUnsavedFlag) {
@@ -834,7 +904,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const input = e.target;
         if (!input.classList.contains('editable-field')) return;
         const field = input.dataset.field;
-        if (field !== 'delivery_per_line' && field !== 'chosen_qty') return;
+        if (field !== 'delivery_per_line' && field !== 'chosen_qty' && field !== 'quote_price_gbp') return;
 
         const row = input.closest('tr');
         if (row.dataset.locked === '1') return;
