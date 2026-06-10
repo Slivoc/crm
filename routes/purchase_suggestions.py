@@ -184,6 +184,15 @@ def _date_cutoff(days):
     return datetime.utcnow().date() - timedelta(days=max(1, int(days or 1)))
 
 
+def _normalized_base_sql(column_sql):
+    if _using_postgres():
+        return f"regexp_replace(UPPER(COALESCE({column_sql}, '')), '[^A-Z0-9]', '', 'g')"
+    expr = f"UPPER(COALESCE({column_sql}, ''))"
+    for char in ("-", " ", "/", "_", "."):
+        expr = f"REPLACE({expr}, '{char}', '')"
+    return expr
+
+
 def _format_source_label(source_type):
     source_type = (source_type or '').strip().lower()
     labels = {
@@ -262,9 +271,12 @@ def _load_unordered_customer_quote_report(
     sales_cutoff = _date_cutoff(sales_period_days)
     min_occurrences = max(1, int(min_occurrences or 1))
     max_sales_ratio = max(0.0, min(float(max_sales_ratio_percent or 0), 100.0)) / 100.0
+    pll_base_key = _normalized_base_sql('pll.base_part_number')
+    stock_base_key = _normalized_base_sql('base_part_number')
+    sales_base_key = _normalized_base_sql('sol.base_part_number')
     rows = _execute_with_cursor(
         cursor,
-        """
+        f"""
         WITH eligible_quote_lines AS (
             SELECT
                 cql.id AS quote_line_id,
@@ -273,7 +285,8 @@ def _load_unordered_customer_quote_report(
                 pl.name AS parts_list_name,
                 c.id AS customer_id,
                 c.name AS customer_name,
-                pll.base_part_number,
+                {pll_base_key} AS base_part_number,
+                pll.base_part_number AS raw_base_part_number,
                 COALESCE(NULLIF(cql.quoted_part_number, ''), NULLIF(cql.display_part_number, ''), pll.customer_part_number, pll.base_part_number) AS part_number,
                 pn.system_part_number,
                 cql.manufacturer,
@@ -312,8 +325,7 @@ def _load_unordered_customer_quote_report(
               AND COALESCE(cql.quoted_status, '') = 'quoted'
               AND cql.quote_price_gbp IS NOT NULL
               AND cql.quote_price_gbp > 0
-              AND pll.base_part_number IS NOT NULL
-              AND TRIM(pll.base_part_number) <> ''
+              AND {pll_base_key} <> ''
               AND COALESCE(cql.quoted_on, cql.date_created) >= ?
               AND (? = 0 OR LOWER(COALESCE(pll.chosen_source_type, '')) = 'stock')
         ), part_stats AS (
@@ -337,24 +349,22 @@ def _load_unordered_customer_quote_report(
                 ) AS rn
             FROM eligible_quote_lines eql
         ), stock AS (
-            SELECT base_part_number, SUM(available_quantity) AS stock_quantity
+            SELECT {stock_base_key} AS base_part_number, SUM(available_quantity) AS stock_quantity
             FROM stock_movements
             WHERE movement_type = 'IN'
               AND available_quantity > 0
-              AND base_part_number IS NOT NULL
-              AND TRIM(base_part_number) <> ''
-            GROUP BY base_part_number
+              AND {stock_base_key} <> ''
+            GROUP BY {stock_base_key}
         ), recent_sales AS (
             SELECT
-                sol.base_part_number,
+                {sales_base_key} AS base_part_number,
                 COUNT(*) AS sales_order_count_in_period,
                 COUNT(DISTINCT so.id) AS sales_order_occurrence_count_in_period
             FROM sales_order_lines sol
             JOIN sales_orders so ON so.id = sol.sales_order_id
-            WHERE sol.base_part_number IS NOT NULL
-              AND TRIM(sol.base_part_number) <> ''
+            WHERE {sales_base_key} <> ''
               AND so.date_entered >= ?
-            GROUP BY sol.base_part_number
+            GROUP BY {sales_base_key}
         )
         SELECT
             ll.quote_line_id,
@@ -432,17 +442,19 @@ def _load_unordered_customer_quote_report(
 
 def _load_stock_sourced_unwon_quote_report(cursor, period_days=30, max_rows=50):
     cutoff = _date_cutoff(period_days)
+    pll_base_key = _normalized_base_sql('pll.base_part_number')
+    stock_base_key = _normalized_base_sql('base_part_number')
+    sale_base_key = _normalized_base_sql('sol_ord.base_part_number')
     rows = _execute_with_cursor(
         cursor,
-        """
+        f"""
         WITH stock AS (
-            SELECT base_part_number, SUM(available_quantity) AS stock_quantity
+            SELECT {stock_base_key} AS base_part_number, SUM(available_quantity) AS stock_quantity
             FROM stock_movements
             WHERE movement_type = 'IN'
               AND available_quantity > 0
-              AND base_part_number IS NOT NULL
-              AND TRIM(base_part_number) <> ''
-            GROUP BY base_part_number
+              AND {stock_base_key} <> ''
+            GROUP BY {stock_base_key}
         )
         SELECT
             cql.id AS quote_line_id,
@@ -451,7 +463,8 @@ def _load_stock_sourced_unwon_quote_report(cursor, period_days=30, max_rows=50):
             pl.name AS parts_list_name,
             c.id AS customer_id,
             c.name AS customer_name,
-            pll.base_part_number,
+            {pll_base_key} AS base_part_number,
+            pll.base_part_number AS raw_base_part_number,
             COALESCE(NULLIF(cql.quoted_part_number, ''), NULLIF(cql.display_part_number, ''), pll.customer_part_number, pll.base_part_number) AS part_number,
             pn.system_part_number,
             cql.manufacturer,
@@ -489,20 +502,19 @@ def _load_stock_sourced_unwon_quote_report(cursor, period_days=30, max_rows=50):
         JOIN parts_lists pl ON pl.id = pll.parts_list_id
         LEFT JOIN customers c ON c.id = pl.customer_id
         LEFT JOIN part_numbers pn ON pn.base_part_number = pll.base_part_number
-        LEFT JOIN stock ON stock.base_part_number = pll.base_part_number
+        LEFT JOIN stock ON stock.base_part_number = {pll_base_key}
         WHERE COALESCE(cql.is_no_bid::int, 0) = 0
           AND COALESCE(cql.quoted_status, '') = 'quoted'
           AND cql.quote_price_gbp IS NOT NULL
           AND cql.quote_price_gbp > 0
           AND LOWER(COALESCE(pll.chosen_source_type, '')) = 'stock'
-          AND pll.base_part_number IS NOT NULL
-          AND TRIM(pll.base_part_number) <> ''
+          AND {pll_base_key} <> ''
           AND COALESCE(cql.quoted_on, cql.date_created) >= ?
           AND NOT EXISTS (
               SELECT 1
               FROM sales_order_lines sol_ord
               JOIN sales_orders so_ord ON so_ord.id = sol_ord.sales_order_id
-              WHERE sol_ord.base_part_number = pll.base_part_number
+              WHERE {sale_base_key} = {pll_base_key}
                 AND (pl.customer_id IS NULL OR so_ord.customer_id = pl.customer_id)
                 AND so_ord.date_entered >= COALESCE(cql.quoted_on, cql.date_created)
           )
@@ -517,12 +529,15 @@ def _load_stock_sourced_unwon_quote_report(cursor, period_days=30, max_rows=50):
 
 def _load_frequent_sales_source_cost_report(cursor, period_days=90, min_orders=3, max_rows=50, only_out_of_stock=True):
     cutoff = _date_cutoff(period_days)
+    sales_base_key = _normalized_base_sql('sol.base_part_number')
+    quote_base_key = _normalized_base_sql('pll.base_part_number')
+    stock_base_key = _normalized_base_sql('base_part_number')
     rows = _execute_with_cursor(
         cursor,
-        """
+        f"""
         WITH sales AS (
             SELECT
-                sol.base_part_number,
+                {sales_base_key} AS base_part_number,
                 COUNT(*) AS sales_order_count,
                 SUM(COALESCE(sol.quantity, 0)) AS total_sales_qty,
                 AVG(CASE WHEN sol.price > 0 THEN sol.price END) AS avg_sale_price,
@@ -531,14 +546,13 @@ def _load_frequent_sales_source_cost_report(cursor, period_days=90, min_orders=3
                 COUNT(DISTINCT so.customer_id) AS customer_count
             FROM sales_order_lines sol
             JOIN sales_orders so ON so.id = sol.sales_order_id
-            WHERE sol.base_part_number IS NOT NULL
-              AND TRIM(sol.base_part_number) <> ''
+            WHERE {sales_base_key} <> ''
               AND so.date_entered >= ?
-            GROUP BY sol.base_part_number
+            GROUP BY {sales_base_key}
             HAVING COUNT(*) >= ?
         ), latest_quote AS (
             SELECT
-                pll.base_part_number,
+                {quote_base_key} AS base_part_number,
                 cql.id AS quote_line_id,
                 pl.id AS parts_list_id,
                 pl.name AS parts_list_name,
@@ -557,7 +571,7 @@ def _load_frequent_sales_source_cost_report(cursor, period_days=90, min_orders=3
                 psql.unit_price AS source_unit_price,
                 curr.currency_code AS source_currency_code,
                 ROW_NUMBER() OVER (
-                    PARTITION BY pll.base_part_number
+                    PARTITION BY {quote_base_key}
                     ORDER BY COALESCE(cql.quoted_on, cql.date_created) DESC, cql.id DESC
                 ) AS rn
             FROM customer_quote_lines cql
@@ -575,13 +589,12 @@ def _load_frequent_sales_source_cost_report(cursor, period_days=90, min_orders=3
               AND cql.quote_price_gbp IS NOT NULL
               AND cql.quote_price_gbp > 0
         ), stock AS (
-            SELECT base_part_number, SUM(available_quantity) AS stock_quantity
+            SELECT {stock_base_key} AS base_part_number, SUM(available_quantity) AS stock_quantity
             FROM stock_movements
             WHERE movement_type = 'IN'
               AND available_quantity > 0
-              AND base_part_number IS NOT NULL
-              AND TRIM(base_part_number) <> ''
-            GROUP BY base_part_number
+              AND {stock_base_key} <> ''
+            GROUP BY {stock_base_key}
         )
         SELECT
             sales.base_part_number,
@@ -1086,7 +1099,11 @@ def _build_purchase_reports_email(report, report_url=None):
         <table style="border-collapse:collapse;width:100%;font-size:13px;">
             <thead><tr style="background:#f3f4f6;">
                 <th style="border:1px solid #ddd;padding:6px;">Part</th>
+                <th style="border:1px solid #ddd;padding:6px;">Quote lines</th>
+                <th style="border:1px solid #ddd;padding:6px;">Occurrences</th>
+                <th style="border:1px solid #ddd;padding:6px;">Customers</th>
                 <th style="border:1px solid #ddd;padding:6px;">Total qty</th>
+                <th style="border:1px solid #ddd;padding:6px;">Sales ratio</th>
                 <th style="border:1px solid #ddd;padding:6px;">Stock</th>
                 <th style="border:1px solid #ddd;padding:6px;">Latest quote</th>
                 <th style="border:1px solid #ddd;padding:6px;">Latest cost</th>
@@ -1102,18 +1119,14 @@ def _build_purchase_reports_email(report, report_url=None):
         <table style="border-collapse:collapse;width:100%;font-size:13px;">
             <thead><tr style="background:#f3f4f6;">
                 <th style="border:1px solid #ddd;padding:6px;">Part</th>
-                <th style="border:1px solid #ddd;padding:6px;">Quote lines</th>
-                <th style="border:1px solid #ddd;padding:6px;">Occurrences</th>
-                <th style="border:1px solid #ddd;padding:6px;">Customers</th>
-                <th style="border:1px solid #ddd;padding:6px;">Total qty</th>
-                <th style="border:1px solid #ddd;padding:6px;">Sales ratio</th>
+                <th style="border:1px solid #ddd;padding:6px;">Qty</th>
                 <th style="border:1px solid #ddd;padding:6px;">Stock</th>
-                <th style="border:1px solid #ddd;padding:6px;">Latest quote</th>
+                <th style="border:1px solid #ddd;padding:6px;">Quote date</th>
                 <th style="border:1px solid #ddd;padding:6px;">Latest cost</th>
-                <th style="border:1px solid #ddd;padding:6px;">Latest quoted price</th>
+                <th style="border:1px solid #ddd;padding:6px;">Quoted price</th>
                 <th style="border:1px solid #ddd;padding:6px;">Margin</th>
-                <th style="border:1px solid #ddd;padding:6px;">Latest customer</th>
-                <th style="border:1px solid #ddd;padding:6px;">Latest quote list</th>
+                <th style="border:1px solid #ddd;padding:6px;">Customer</th>
+                <th style="border:1px solid #ddd;padding:6px;">Quote list</th>
                 {stock_comment_headers}
             </tr></thead><tbody>{stock_table}</tbody>
         </table>
