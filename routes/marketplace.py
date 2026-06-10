@@ -4075,6 +4075,11 @@ def run_marketplace_export_upload_job(trigger='scheduled', force=False):
             report['email_error'] = str(exc)
 
 
+def run_marketplace_export_upload_job_with_app_context(app, trigger='scheduled', force=False):
+    with app.app_context():
+        return run_marketplace_export_upload_job(trigger=trigger, force=force)
+
+
 def run_due_marketplace_export_upload():
     enabled = str(get_portal_setting(_MARKETPLACE_JOB_ENABLED_SETTING, '0') or '0').strip() == '1'
     if not enabled:
@@ -4108,11 +4113,13 @@ def schedule_marketplace_test_upload_email():
 
     run_at = datetime.now() + timedelta(minutes=1)
     job_id = f"marketplace_test_upload_{uuid.uuid4().hex}"
+    app = current_app._get_current_object()
     scheduler.add_job(
         id=job_id,
-        func=run_marketplace_export_upload_job,
+        func=run_marketplace_export_upload_job_with_app_context,
         trigger='date',
         run_date=run_at,
+        args=[app],
         kwargs={'trigger': 'one_minute_test', 'force': True},
         replace_existing=False,
     )

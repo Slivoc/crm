@@ -100,7 +100,7 @@
                             <thead class="table-light">
                                 <tr>
                                     <th>Part</th>
-                                    {% if section.section in ['quoted_not_won', 'stock_not_won'] %}
+                                    {% if section.section == 'quoted_not_won' %}
                                         <th>Quote lines</th>
                                         <th>Occurrences</th>
                                         <th>Customers</th>
@@ -111,6 +111,14 @@
                                         <th>Latest quoted price</th>
                                         <th>Margin</th>
                                         <th>Source</th>
+                                    {% elif section.section == 'stock_not_won' %}
+                                        <th>Qty</th>
+                                        <th>Stock</th>
+                                        <th>Quote date</th>
+                                        <th>Quoted price</th>
+                                        <th>Margin</th>
+                                        <th>Customer</th>
+                                        <th>Quote list</th>
                                     {% else %}
                                         <th>Orders</th>
                                         <th>Qty sold</th>
@@ -133,7 +141,7 @@
                                         <td class="part-cell">
                                             <strong>{{ item.display_part }}</strong>
                                         </td>
-                                        {% if section.section in ['quoted_not_won', 'stock_not_won'] %}
+                                        {% if section.section == 'quoted_not_won' %}
                                             <td>{{ item.quote_line_count or 0 }}</td>
                                             <td>{{ item.quote_occurrence_count or 0 }}</td>
                                             <td>{{ item.customer_count or 0 }}</td>
@@ -144,6 +152,14 @@
                                             <td>{{ item.display_latest_price }}</td>
                                             <td>{{ item.display_margin }}</td>
                                             <td>{{ item.display_source or '-' }}</td>
+                                        {% elif section.section == 'stock_not_won' %}
+                                            <td>{{ item.display_qty }}</td>
+                                            <td>{{ item.display_stock }}</td>
+                                            <td>{{ item.latest_quoted_on or item.quoted_on or item.date_created or '-' }}</td>
+                                            <td>{{ item.display_latest_price }}</td>
+                                            <td>{{ item.display_margin }}</td>
+                                            <td>{{ item.customer_name or '-' }}</td>
+                                            <td>{{ item.parts_list_name or '-' }}</td>
                                         {% else %}
                                             <td>{{ item.sales_order_count or 0 }}</td>
                                             <td>{{ item.display_qty }}</td>

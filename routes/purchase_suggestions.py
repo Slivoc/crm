@@ -430,6 +430,91 @@ def _load_unordered_customer_quote_report(
     return [_normalize_report_row(row) for row in rows]
 
 
+def _load_stock_sourced_unwon_quote_report(cursor, period_days=30, max_rows=50):
+    cutoff = _date_cutoff(period_days)
+    rows = _execute_with_cursor(
+        cursor,
+        """
+        WITH stock AS (
+            SELECT base_part_number, SUM(available_quantity) AS stock_quantity
+            FROM stock_movements
+            WHERE movement_type = 'IN'
+              AND available_quantity > 0
+              AND base_part_number IS NOT NULL
+              AND TRIM(base_part_number) <> ''
+            GROUP BY base_part_number
+        )
+        SELECT
+            cql.id AS quote_line_id,
+            pll.id AS parts_list_line_id,
+            pl.id AS parts_list_id,
+            pl.name AS parts_list_name,
+            c.id AS customer_id,
+            c.name AS customer_name,
+            pll.base_part_number,
+            COALESCE(NULLIF(cql.quoted_part_number, ''), NULLIF(cql.display_part_number, ''), pll.customer_part_number, pll.base_part_number) AS part_number,
+            pn.system_part_number,
+            cql.manufacturer,
+            COALESCE(pll.chosen_qty, pll.quantity) AS quantity,
+            COALESCE(pll.chosen_qty, pll.quantity) AS total_quoted_qty,
+            1 AS quote_line_count,
+            1 AS quote_occurrence_count,
+            1 AS customer_count,
+            COALESCE(cql.quoted_on, cql.date_created) AS latest_quoted_on,
+            cql.quoted_on,
+            cql.date_created,
+            cql.base_cost_gbp,
+            cql.delivery_per_unit,
+            cql.delivery_per_line,
+            cql.margin_percent,
+            cql.quote_price_gbp,
+            cql.lead_days,
+            pll.chosen_source_type,
+            pll.chosen_source_reference,
+            pll.chosen_cost,
+            'Stock' AS chosen_supplier_name,
+            NULL AS source_quote_reference,
+            NULL AS source_quote_date,
+            NULL AS source_supplier_name,
+            NULL AS source_unit_price,
+            NULL AS source_currency_code,
+            COALESCE(stock.stock_quantity, 0) AS stock_quantity,
+            0 AS sales_order_count_in_period,
+            0 AS sales_order_occurrence_count_in_period,
+            NULL AS sales_ratio,
+            0 AS ordered_qty_after_quote,
+            NULL AS last_order_date
+        FROM customer_quote_lines cql
+        JOIN parts_list_lines pll ON pll.id = cql.parts_list_line_id
+        JOIN parts_lists pl ON pl.id = pll.parts_list_id
+        LEFT JOIN customers c ON c.id = pl.customer_id
+        LEFT JOIN part_numbers pn ON pn.base_part_number = pll.base_part_number
+        LEFT JOIN stock ON stock.base_part_number = pll.base_part_number
+        WHERE COALESCE(cql.is_no_bid::int, 0) = 0
+          AND COALESCE(cql.quoted_status, '') = 'quoted'
+          AND cql.quote_price_gbp IS NOT NULL
+          AND cql.quote_price_gbp > 0
+          AND LOWER(COALESCE(pll.chosen_source_type, '')) = 'stock'
+          AND pll.base_part_number IS NOT NULL
+          AND TRIM(pll.base_part_number) <> ''
+          AND COALESCE(cql.quoted_on, cql.date_created) >= ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM sales_order_lines sol_ord
+              JOIN sales_orders so_ord ON so_ord.id = sol_ord.sales_order_id
+              WHERE sol_ord.base_part_number = pll.base_part_number
+                AND (pl.customer_id IS NULL OR so_ord.customer_id = pl.customer_id)
+                AND so_ord.date_entered >= COALESCE(cql.quoted_on, cql.date_created)
+          )
+        ORDER BY COALESCE(cql.quoted_on, cql.date_created) DESC, cql.quote_price_gbp DESC
+        LIMIT ?
+        """,
+        (cutoff, int(max_rows)),
+        fetch='all',
+    ) or []
+    return [_normalize_report_row(row) for row in rows]
+
+
 def _load_frequent_sales_source_cost_report(cursor, period_days=90, min_orders=3, max_rows=50, only_out_of_stock=True):
     cutoff = _date_cutoff(period_days)
     rows = _execute_with_cursor(
@@ -554,15 +639,10 @@ def _load_email_reports(config):
             max_sales_ratio_percent=config.get('quote_max_sales_ratio_percent', 25),
             only_out_of_stock=config.get('only_out_of_stock', True),
         ) if config.get('include_unordered_quotes') else []
-        stock_not_won = _load_unordered_customer_quote_report(
+        stock_not_won = _load_stock_sourced_unwon_quote_report(
             cursor,
             period_days=config.get('quote_period_days', 30),
-            sales_period_days=config.get('sales_period_days', 90),
             max_rows=config.get('max_rows', 50),
-            min_occurrences=config.get('quote_min_occurrences', 2),
-            max_sales_ratio_percent=config.get('quote_max_sales_ratio_percent', 25),
-            only_out_of_stock=False,
-            stock_only=True,
         ) if config.get('include_stock_not_won') else []
         frequent_sales = _load_frequent_sales_source_cost_report(
             cursor,
@@ -930,11 +1010,7 @@ def _build_purchase_reports_email(report, report_url=None):
         stock_rows_html.append(
             '<tr>'
             + table_cell(item.get('part_number') or item.get('base_part_number'))
-            + table_cell(item.get('quote_line_count'))
-            + table_cell(item.get('quote_occurrence_count'))
-            + table_cell(item.get('customer_count'))
             + table_cell(item.get('total_quoted_qty'))
-            + table_cell(_pct((_safe_float(item.get('sales_ratio')) or 0) * 100))
             + table_cell(item.get('stock_quantity'))
             + table_cell(item.get('latest_quoted_on') or item.get('quoted_on') or item.get('date_created'))
             + table_cell(_money(item.get('base_cost_gbp')))
@@ -947,8 +1023,6 @@ def _build_purchase_reports_email(report, report_url=None):
         )
         stock_rows_text.append(
             f"- {item.get('part_number') or item.get('base_part_number')} | "
-            f"{item.get('quote_occurrence_count') or 0} stock quote occurrences / {item.get('customer_count') or 0} customers | "
-            f"sales ratio {_pct((_safe_float(item.get('sales_ratio')) or 0) * 100)} | "
             f"total qty {item.get('total_quoted_qty') or '-'} | stock {item.get('stock_quantity') or 0} | "
             f"latest {item.get('latest_quoted_on') or item.get('quoted_on') or item.get('date_created') or '-'} | "
             f"quoted price {_money(item.get('quote_price_gbp'))} | margin {_pct(item.get('margin_percent'))}"
@@ -981,7 +1055,7 @@ def _build_purchase_reports_email(report, report_url=None):
         )
 
     quote_colspan = 14 + len(quote_comment_columns)
-    stock_colspan = 13 + len(stock_comment_columns)
+    stock_colspan = 9 + len(stock_comment_columns)
     sales_colspan = 11 + len(sales_comment_columns)
     quote_table = ''.join(quote_rows_html) or f'<tr><td colspan="{quote_colspan}" style="padding:8px;color:#666;">No repeatedly quoted, not ordered parts found.</td></tr>'
     stock_table = ''.join(stock_rows_html) or f'<tr><td colspan="{stock_colspan}" style="padding:8px;color:#666;">No stock-sourced quote losses found.</td></tr>'
@@ -1000,8 +1074,9 @@ def _build_purchase_reports_email(report, report_url=None):
         {review_link_html}
         <p>
             Quoted-not-ordered period: last {escape(str(config.get('quote_period_days')))} days.<br>
-            Quote minimum: {escape(str(config.get('quote_min_occurrences')))} distinct quote/list occurrences.<br>
-            Quote sales ratio ceiling: {escape(str(config.get('quote_max_sales_ratio_percent')))}%.<br>
+            Grouped quoted-not-won minimum: {escape(str(config.get('quote_min_occurrences')))} distinct quote/list occurrences.<br>
+            Grouped quoted-not-won sales ratio ceiling: {escape(str(config.get('quote_max_sales_ratio_percent')))}%.<br>
+            Stock-sourced losses: individual stock-sourced quote lines with no matching customer sales order after the quote date.<br>
             Frequent sales period: last {escape(str(config.get('sales_period_days')))} days, minimum {escape(str(config.get('frequent_min_orders')))} order lines.<br>
             Quote-loss stock filter: {escape(quote_stock_filter_label)}.<br>
             Frequent-sales stock filter: {escape(sales_stock_filter_label)}.<br>
@@ -1011,11 +1086,7 @@ def _build_purchase_reports_email(report, report_url=None):
         <table style="border-collapse:collapse;width:100%;font-size:13px;">
             <thead><tr style="background:#f3f4f6;">
                 <th style="border:1px solid #ddd;padding:6px;">Part</th>
-                <th style="border:1px solid #ddd;padding:6px;">Quote lines</th>
-                <th style="border:1px solid #ddd;padding:6px;">Occurrences</th>
-                <th style="border:1px solid #ddd;padding:6px;">Customers</th>
                 <th style="border:1px solid #ddd;padding:6px;">Total qty</th>
-                <th style="border:1px solid #ddd;padding:6px;">Sales ratio</th>
                 <th style="border:1px solid #ddd;padding:6px;">Stock</th>
                 <th style="border:1px solid #ddd;padding:6px;">Latest quote</th>
                 <th style="border:1px solid #ddd;padding:6px;">Latest cost</th>
@@ -1072,7 +1143,7 @@ def _build_purchase_reports_email(report, report_url=None):
         + review_link_text
         + f"Quote-loss stock filter: {quote_stock_filter_label}\n"
         f"Frequent-sales stock filter: {sales_stock_filter_label}\n"
-        f"Quoted/not-won sales filter: {quoted_sales_filter_label}\n"
+        f"Grouped quoted/not-won sales filter: {quoted_sales_filter_label}\n"
         f"Repeatedly quoted, not ordered parts: {len(report.get('unordered_quotes', []))}\n"
         f"Quoted from stock but not won: {len(report.get('stock_not_won', []))}\n"
         f"Frequent sales candidates: {len(report.get('frequent_sales', []))}\n\n"

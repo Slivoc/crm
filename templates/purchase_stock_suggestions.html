@@ -308,7 +308,7 @@
                             <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
                                 <div>
                                     <div class="fw-semibold">Quote-loss reports</div>
-                                    <div class="text-muted small">Parts repeatedly quoted where sales orders are low relative to quote occurrences.</div>
+                                    <div class="text-muted small">Grouped quoted-not-won uses quote occurrences and sales ratio. Stock-sourced losses are individual stock quote lines with no matching customer sale after the quote date.</div>
                                 </div>
                                 <div>
                                     <div class="form-check form-check-inline">
@@ -1424,7 +1424,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     const salesStockFilter = data.config?.frequent_only_out_of_stock !== false ? ' with no available stock' : '';
                     const salesRatio = data.config?.quote_max_sales_ratio_percent ?? 25;
                     setEmailReportStatus(
-                        `Preview complete: ${data.summary.unordered_quote_count || 0} quoted-not-won parts${quoteStockFilter} at <= ${salesRatio}% sales ratio, ${data.summary.stock_not_won_count || 0} stock-sourced quote losses, and ${data.summary.frequent_sales_count || 0} frequent sales candidates${salesStockFilter}.`,
+                        `Preview complete: ${data.summary.unordered_quote_count || 0} grouped quoted-not-won parts${quoteStockFilter} at <= ${salesRatio}% sales ratio, ${data.summary.stock_not_won_count || 0} stock-sourced lost quote lines, and ${data.summary.frequent_sales_count || 0} frequent sales candidates${salesStockFilter}.`,
                         'alert-success'
                     );
                 })
