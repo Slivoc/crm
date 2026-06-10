@@ -247,6 +247,30 @@
     flex: 1;
 }
 
+.mobile-mailbox .mailbox-day-separator {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 12px 6px;
+    background: #f5f7fb;
+    color: #495057;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    border-bottom: 1px solid #e1e6ef;
+}
+
+.mobile-mailbox .mailbox-day-separator::after {
+    content: "";
+    height: 1px;
+    flex: 1;
+    background: #d8dee9;
+}
+
 #emailBodyFrame {
     background: white;
 }
@@ -281,7 +305,7 @@ let selectedSupplierData = null;
 let pendingQuoteListId = null;
 let manualPartsContext = null;
 
-const MAILBOX_PAGE_SIZE = 20;
+const MAILBOX_PAGE_SIZE = 100;
 const emailSearchInput = document.getElementById('emailSearch');
 const filterCustomerContacts = document.getElementById('filterCustomerContacts');
 const filterSupplierContacts = document.getElementById('filterSupplierContacts');
@@ -342,9 +366,9 @@ async function loadEmails(nextToken = null) {
     }
 
     try {
-        let url = `/emails/graph/messages?top=${MAILBOX_PAGE_SIZE}`;
+        let url = `/emails/graph/messages?page_size=${MAILBOX_PAGE_SIZE}`;
         if (nextToken) {
-            url += `&skip_token=${encodeURIComponent(nextToken)}`;
+            url += `&page_token=${encodeURIComponent(nextToken)}`;
         }
 
         const response = await fetch(url);
@@ -397,16 +421,23 @@ function renderEmailList(messages = null) {
         return;
     }
 
+    let lastDayKey = null;
     container.innerHTML = items.map(msg => {
         const from = msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || 'Unknown';
         const subject = msg.subject || '(No subject)';
         const date = formatRelativeDate(msg.receivedDateTime);
-        const isRead = msg.isRead;
+        const isUnread = msg.isRead === false;
+        const dayKey = formatMailboxDayKey(msg.receivedDateTime);
+        const dayHeader = dayKey !== lastDayKey
+            ? `<div class="mailbox-day-separator" data-day-key="${dayKey}"><span>${formatMailboxDayLabel(msg.receivedDateTime)}</span></div>`
+            : '';
+        lastDayKey = dayKey;
         const initials = getInitials(from);
         const color = getAvatarColor(from);
 
         return `
-            <div class="email-item ${isRead ? 'read' : 'unread'}" onclick="openEmail('${msg.id}')">
+            ${dayHeader}
+            <div class="email-item ${isUnread ? 'unread' : 'read'}" onclick="openEmail('${msg.id}')">
                 <div class="d-flex align-items-start">
                     <div class="email-avatar me-2" style="background: ${color};">${initials}</div>
                     <div class="email-content">
@@ -807,6 +838,7 @@ function parsePartsAvailabilitySubject(subject) {
 
 function formatRelativeDate(dateString) {
     const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return '';
     const now = new Date();
     const diffMs = now - date;
     const diffMins = Math.floor(diffMs / 60000);
@@ -819,6 +851,32 @@ function formatRelativeDate(dateString) {
     if (diffDays < 7) return `${diffDays}d`;
 
     return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
+function formatMailboxDayKey(dateString) {
+    const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return 'unknown';
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function formatMailboxDayLabel(dateString) {
+    const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return 'Unknown date';
+    const today = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(today.getDate() - 1);
+    const key = formatMailboxDayKey(dateString);
+    if (key === formatMailboxDayKey(today)) return 'Today';
+    if (key === formatMailboxDayKey(yesterday)) return 'Yesterday';
+    return date.toLocaleDateString('en-GB', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: date.getFullYear() === today.getFullYear() ? undefined : 'numeric'
+    });
 }
 
 function formatFullDate(dateString) {

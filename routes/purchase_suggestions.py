@@ -423,7 +423,7 @@ def _load_unordered_customer_quote_report(
                   ELSE 0
               END
           ) <= ?
-        ORDER BY part_stats.quote_occurrence_count DESC, part_stats.quote_line_count DESC, part_stats.latest_quoted_on DESC, ll.quote_price_gbp DESC
+        ORDER BY part_stats.customer_count DESC, part_stats.quote_occurrence_count DESC, part_stats.quote_line_count DESC, part_stats.latest_quoted_on DESC, ll.quote_price_gbp DESC
         LIMIT ?
         """,
         (
@@ -518,7 +518,7 @@ def _load_stock_sourced_unwon_quote_report(cursor, period_days=30, max_rows=50):
                 AND (pl.customer_id IS NULL OR so_ord.customer_id = pl.customer_id)
                 AND so_ord.date_entered >= COALESCE(cql.quoted_on, cql.date_created)
           )
-        ORDER BY COALESCE(cql.quoted_on, cql.date_created) DESC, cql.quote_price_gbp DESC
+        ORDER BY {pll_base_key} ASC, COALESCE(cql.quoted_on, cql.date_created) DESC, cql.quote_price_gbp DESC
         LIMIT ?
         """,
         (cutoff, int(max_rows)),

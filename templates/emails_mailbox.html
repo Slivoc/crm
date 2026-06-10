@@ -552,7 +552,7 @@ let mailboxFolderList = null;
 let mailboxFolderListLoading = false;
 let mailboxManualPartsContext = null;
 const MAILBOX_FOLDERS_CACHE_KEY = 'mailboxFoldersCache';
-const MAILBOX_PAGE_SIZE = 25;
+const MAILBOX_PAGE_SIZE = 100;
 let mailboxLoadImages = localStorage.getItem('mailboxLoadImages');
 mailboxLoadImages = mailboxLoadImages === null ? true : mailboxLoadImages === 'true';
 const inlinePrefetchInFlight = new Set();
@@ -839,6 +839,7 @@ function setGraphStatus(settings) {
 
 function formatRelativeDate(dateString) {
     const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return '';
     const now = new Date();
     const diffMs = now - date;
     const diffMins = Math.floor(diffMs / 60000);
@@ -851,6 +852,32 @@ function formatRelativeDate(dateString) {
     if (diffDays < 7) return `${diffDays}d ago`;
     
     return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
+function formatMailboxDayKey(dateString) {
+    const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return 'unknown';
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function formatMailboxDayLabel(dateString) {
+    const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return 'Unknown date';
+    const today = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(today.getDate() - 1);
+    const key = formatMailboxDayKey(dateString);
+    if (key === formatMailboxDayKey(today)) return 'Today';
+    if (key === formatMailboxDayKey(yesterday)) return 'Yesterday';
+    return date.toLocaleDateString('en-GB', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: date.getFullYear() === today.getFullYear() ? undefined : 'numeric'
+    });
 }
 
 function formatFullDate(dateString) {
@@ -887,6 +914,17 @@ function getAvatarColor(name) {
 function truncateText(text, maxLength) {
     if (!text) return '';
     return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+}
+
+function escapeHtml(value) {
+    if (value === null || value === undefined) return '';
+    return String(value).replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+    }[char]));
 }
 
 function extractEmailDomain(email) {
@@ -1849,6 +1887,12 @@ async function loadMailboxMessages({ reset = false, useCache = false, silent = f
 }
 
 function renderEmailList(messages, append = false) {
+    const existingDaySeparators = append && emailListContainer
+        ? emailListContainer.querySelectorAll('.mailbox-day-separator')
+        : [];
+    let lastDayKey = existingDaySeparators.length
+        ? existingDaySeparators[existingDaySeparators.length - 1].getAttribute('data-day-key')
+        : null;
     const html = messages.map(message => {
         const from = message.from?.emailAddress?.name || message.from?.emailAddress?.address || 'Unknown';
         const fromEmail = message.from_email || '';
@@ -1857,9 +1901,15 @@ function renderEmailList(messages, append = false) {
         const subject = message.subject || '(no subject)';
         const preview = message.bodyPreview || '';
         const dateStr = formatRelativeDate(message.receivedDateTime);
+        const dayKey = formatMailboxDayKey(message.receivedDateTime);
+        const dayHeader = dayKey !== lastDayKey
+            ? `<div class="mailbox-day-separator" data-day-key="${dayKey}"><span>${formatMailboxDayLabel(message.receivedDateTime)}</span></div>`
+            : '';
+        lastDayKey = dayKey;
         const initials = getInitials(from);
         const avatarColor = getAvatarColor(from);
         const isSelected = selectedMessageId === message.id;
+        const isUnread = message.isRead === false;
         if (message.folder_rule && normalizedFromEmail) {
             setFolderRuleForEmail(normalizedFromEmail, message.folder_rule);
         }
@@ -1891,16 +1941,17 @@ function renderEmailList(messages, append = false) {
             : '';
         
         return `
-            <div class="email-item ${isSelected ? 'selected' : ''}" data-id="${message.id}">
+            ${dayHeader}
+            <div class="email-item ${isSelected ? 'selected' : ''} ${isUnread ? 'unread' : 'read'}" data-id="${message.id}">
                 <div class="email-avatar" style="background-color: ${avatarColor}">${initials}</div>
                 <div class="email-content">
                     <div class="email-top-row">
-                        <span class="email-sender">${from}</span>
+                        <span class="email-sender">${escapeHtml(from)}</span>
                         <span class="email-date">${dateStr}</span>
                     </div>
-                    <div class="email-subject">${truncateText(subject, 50)}</div>
-                    <div class="email-preview">${truncateText(preview, 80)}</div>
-                    ${company ? `<span class="email-company-tag"><i class="bi bi-building"></i> ${company}</span>` : ''}
+                    <div class="email-subject">${escapeHtml(truncateText(subject, 50))}</div>
+                    <div class="email-preview">${escapeHtml(truncateText(preview, 80))}</div>
+                    ${company ? `<span class="email-company-tag"><i class="bi bi-building"></i> ${escapeHtml(company)}</span>` : ''}
                     ${badges}
                 </div>
             </div>
@@ -3516,6 +3567,30 @@ mailboxManualPartsInput?.addEventListener('keydown', (event) => {
     opacity: 0.5;
 }
 
+.mailbox-day-separator {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px 7px;
+    background: #f5f7fb;
+    color: #495057;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    border-bottom: 1px solid #e1e6ef;
+}
+
+.mailbox-day-separator::after {
+    content: "";
+    height: 1px;
+    flex: 1;
+    background: #d8dee9;
+}
+
 /* Email Item */
 .email-item {
     display: flex;
@@ -3524,6 +3599,30 @@ mailboxManualPartsInput?.addEventListener('keydown', (event) => {
     border-bottom: 1px solid #f1f3f4;
     cursor: pointer;
     transition: background-color 0.15s;
+}
+
+.email-item.unread {
+    background: #fff;
+    border-left: 4px solid #0d6efd;
+    padding-left: 12px;
+}
+
+.email-item.unread .email-sender,
+.email-item.unread .email-subject {
+    font-weight: 700;
+}
+
+.email-item.unread .email-preview {
+    color: #343a40;
+}
+
+.email-item.unread .email-date {
+    color: #0d6efd;
+    font-weight: 700;
+}
+
+.email-item.read {
+    background: #fbfcfe;
 }
 
 .email-item:hover {

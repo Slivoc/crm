@@ -3541,7 +3541,7 @@ def graph_messages():
         page_size = int(page_size)
     except (TypeError, ValueError):
         page_size = 25
-    page_size = max(1, min(page_size, 50))
+    page_size = max(1, min(page_size, 100))
 
     page_token = request.args.get("page_token")
     use_cache_only = request.args.get("use_cache", "").lower() == "true"
@@ -3630,7 +3630,7 @@ def graph_messages():
             "$top": str(page_size),
             "$select": (
                 "id,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,"
-                "bodyPreview,webLink,conversationId"
+                "bodyPreview,webLink,conversationId,hasAttachments,isRead,importance"
             ),
             "$orderby": "receivedDateTime desc",
         }
