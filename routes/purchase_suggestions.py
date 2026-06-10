@@ -21,12 +21,15 @@ PURCHASE_REPORT_DEFAULT_CONFIG = {
     'frequency_days': 1,
     'quote_period_days': 30,
     'sales_period_days': 90,
+    'quote_min_occurrences': 2,
+    'quote_max_sales_ratio_percent': 25,
     'frequent_min_orders': 3,
     'max_rows': 50,
     'include_unordered_quotes': True,
     'include_frequent_sales': True,
+    'include_stock_not_won': True,
     'only_out_of_stock': True,
-    'only_unsold_in_sales_period': True,
+    'frequent_only_out_of_stock': True,
     'last_sent_at': None,
 }
 
@@ -50,13 +53,16 @@ def _load_email_report_config():
     config['frequency_days'] = max(1, min(int(config.get('frequency_days') or 1), 30))
     config['quote_period_days'] = max(1, min(int(config.get('quote_period_days') or 30), 365))
     config['sales_period_days'] = max(1, min(int(config.get('sales_period_days') or 90), 730))
+    config['quote_min_occurrences'] = max(1, min(int(config.get('quote_min_occurrences') or 2), 100))
+    config['quote_max_sales_ratio_percent'] = max(0, min(float(config.get('quote_max_sales_ratio_percent') or 0), 100))
     config['frequent_min_orders'] = max(1, min(int(config.get('frequent_min_orders') or 3), 100))
     config['max_rows'] = max(1, min(int(config.get('max_rows') or 50), 500))
     config['enabled'] = bool(config.get('enabled'))
     config['include_unordered_quotes'] = bool(config.get('include_unordered_quotes'))
     config['include_frequent_sales'] = bool(config.get('include_frequent_sales'))
+    config['include_stock_not_won'] = bool(config.get('include_stock_not_won', True))
     config['only_out_of_stock'] = bool(config.get('only_out_of_stock', True))
-    config['only_unsold_in_sales_period'] = bool(config.get('only_unsold_in_sales_period', True))
+    config['frequent_only_out_of_stock'] = bool(config.get('frequent_only_out_of_stock', config.get('only_out_of_stock', True)))
     config['recipients'] = str(config.get('recipients') or '').strip()
     return config
 
@@ -74,6 +80,27 @@ def _save_email_report_config(config):
         commit=True,
     )
     return _load_email_report_config()
+
+
+def _apply_email_report_payload(config, payload):
+    payload = payload or {}
+    config.update({
+        'enabled': bool(payload.get('enabled')),
+        'recipients': str(payload.get('recipients') or '').strip(),
+        'frequency_days': max(1, min(int(payload.get('frequency_days') or 1), 30)),
+        'quote_period_days': max(1, min(int(payload.get('quote_period_days') or 30), 365)),
+        'sales_period_days': max(1, min(int(payload.get('sales_period_days') or 90), 730)),
+        'quote_min_occurrences': max(1, min(int(payload.get('quote_min_occurrences') or 2), 100)),
+        'quote_max_sales_ratio_percent': max(0, min(float(payload.get('quote_max_sales_ratio_percent') or 0), 100)),
+        'frequent_min_orders': max(1, min(int(payload.get('frequent_min_orders') or 3), 100)),
+        'max_rows': max(1, min(int(payload.get('max_rows') or 50), 500)),
+        'include_unordered_quotes': bool(payload.get('include_unordered_quotes', True)),
+        'include_stock_not_won': bool(payload.get('include_stock_not_won', True)),
+        'include_frequent_sales': bool(payload.get('include_frequent_sales', True)),
+        'only_out_of_stock': bool(payload.get('only_out_of_stock', True)),
+        'frequent_only_out_of_stock': bool(payload.get('frequent_only_out_of_stock', True)),
+    })
+    return config
 
 
 def _split_email_recipients(value):
@@ -130,12 +157,14 @@ def _json_default(value):
 
 REPORT_SECTION_KEYS = (
     ('quoted_not_won', 'unordered_quotes'),
+    ('stock_not_won', 'stock_not_won'),
     ('frequent_sales', 'frequent_sales'),
 )
 
 
 REPORT_SECTION_LABELS = {
     'quoted_not_won': 'Repeatedly quoted parts not yet ordered',
+    'stock_not_won': 'Quoted from stock but not won',
     'frequent_sales': 'Frequent sales order parts',
 }
 
@@ -210,7 +239,8 @@ def _normalize_report_row(row):
         'total_sales_qty', 'avg_sale_price', 'latest_margin_percent',
         'latest_base_cost_gbp', 'stock_quantity', 'latest_quote_price_gbp',
         'customer_count', 'quote_line_count', 'total_quoted_qty',
-        'sales_order_count_in_period'
+        'quote_occurrence_count', 'sales_order_count_in_period',
+        'sales_order_occurrence_count_in_period', 'sales_ratio'
     ):
         if key in item:
             item[key] = _coerce_numeric(item.get(key))
@@ -223,11 +253,15 @@ def _load_unordered_customer_quote_report(
     period_days=30,
     sales_period_days=90,
     max_rows=50,
+    min_occurrences=2,
+    max_sales_ratio_percent=25,
     only_out_of_stock=True,
-    only_unsold_in_sales_period=True,
+    stock_only=False,
 ):
     cutoff = _date_cutoff(period_days)
     sales_cutoff = _date_cutoff(sales_period_days)
+    min_occurrences = max(1, int(min_occurrences or 1))
+    max_sales_ratio = max(0.0, min(float(max_sales_ratio_percent or 0), 100.0)) / 100.0
     rows = _execute_with_cursor(
         cursor,
         """
@@ -281,25 +315,19 @@ def _load_unordered_customer_quote_report(
               AND pll.base_part_number IS NOT NULL
               AND TRIM(pll.base_part_number) <> ''
               AND COALESCE(cql.quoted_on, cql.date_created) >= ?
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM sales_order_lines sol_ord
-                  JOIN sales_orders so_ord ON so_ord.id = sol_ord.sales_order_id
-                  WHERE sol_ord.base_part_number = pll.base_part_number
-                    AND (pl.customer_id IS NULL OR so_ord.customer_id = pl.customer_id)
-                    AND so_ord.date_entered >= COALESCE(cql.quoted_on, cql.date_created)
-              )
+              AND (? = 0 OR LOWER(COALESCE(pll.chosen_source_type, '')) = 'stock')
         ), part_stats AS (
             SELECT
                 base_part_number,
                 COUNT(*) AS quote_line_count,
+                COUNT(DISTINCT parts_list_id) AS quote_occurrence_count,
                 COUNT(DISTINCT customer_id) AS customer_count,
                 SUM(COALESCE(quantity, 0)) AS total_quoted_qty,
                 MIN(quoted_date) AS first_quoted_on,
                 MAX(quoted_date) AS latest_quoted_on
             FROM eligible_quote_lines
             GROUP BY base_part_number
-            HAVING COUNT(*) > 1
+            HAVING COUNT(DISTINCT parts_list_id) >= ?
         ), latest_line AS (
             SELECT
                 eql.*,
@@ -319,7 +347,8 @@ def _load_unordered_customer_quote_report(
         ), recent_sales AS (
             SELECT
                 sol.base_part_number,
-                COUNT(*) AS sales_order_count_in_period
+                COUNT(*) AS sales_order_count_in_period,
+                COUNT(DISTINCT so.id) AS sales_order_occurrence_count_in_period
             FROM sales_order_lines sol
             JOIN sales_orders so ON so.id = sol.sales_order_id
             WHERE sol.base_part_number IS NOT NULL
@@ -341,11 +370,18 @@ def _load_unordered_customer_quote_report(
             ll.quantity,
             part_stats.total_quoted_qty,
             part_stats.quote_line_count,
+            part_stats.quote_occurrence_count,
             part_stats.customer_count,
             part_stats.first_quoted_on,
             part_stats.latest_quoted_on,
             COALESCE(stock.stock_quantity, 0) AS stock_quantity,
             COALESCE(recent_sales.sales_order_count_in_period, 0) AS sales_order_count_in_period,
+            COALESCE(recent_sales.sales_order_occurrence_count_in_period, 0) AS sales_order_occurrence_count_in_period,
+            CASE
+                WHEN part_stats.quote_occurrence_count > 0
+                THEN COALESCE(recent_sales.sales_order_occurrence_count_in_period, 0) * 1.0 / part_stats.quote_occurrence_count
+                ELSE 0
+            END AS sales_ratio,
             ll.quoted_on,
             ll.date_created,
             ll.base_cost_gbp,
@@ -370,15 +406,23 @@ def _load_unordered_customer_quote_report(
         LEFT JOIN stock ON stock.base_part_number = part_stats.base_part_number
         LEFT JOIN recent_sales ON recent_sales.base_part_number = part_stats.base_part_number
         WHERE (? = 0 OR COALESCE(stock.stock_quantity, 0) <= 0)
-          AND (? = 0 OR COALESCE(recent_sales.sales_order_count_in_period, 0) = 0)
-        ORDER BY part_stats.quote_line_count DESC, part_stats.latest_quoted_on DESC, ll.quote_price_gbp DESC
+          AND (
+              CASE
+                  WHEN part_stats.quote_occurrence_count > 0
+                  THEN COALESCE(recent_sales.sales_order_occurrence_count_in_period, 0) * 1.0 / part_stats.quote_occurrence_count
+                  ELSE 0
+              END
+          ) <= ?
+        ORDER BY part_stats.quote_occurrence_count DESC, part_stats.quote_line_count DESC, part_stats.latest_quoted_on DESC, ll.quote_price_gbp DESC
         LIMIT ?
         """,
         (
             cutoff,
+            1 if stock_only else 0,
+            min_occurrences,
             sales_cutoff,
             1 if only_out_of_stock else 0,
-            1 if only_unsold_in_sales_period else 0,
+            max_sales_ratio,
             int(max_rows),
         ),
         fetch='all',
@@ -506,22 +550,35 @@ def _load_email_reports(config):
             period_days=config.get('quote_period_days', 30),
             sales_period_days=config.get('sales_period_days', 90),
             max_rows=config.get('max_rows', 50),
+            min_occurrences=config.get('quote_min_occurrences', 2),
+            max_sales_ratio_percent=config.get('quote_max_sales_ratio_percent', 25),
             only_out_of_stock=config.get('only_out_of_stock', True),
-            only_unsold_in_sales_period=config.get('only_unsold_in_sales_period', True),
         ) if config.get('include_unordered_quotes') else []
+        stock_not_won = _load_unordered_customer_quote_report(
+            cursor,
+            period_days=config.get('quote_period_days', 30),
+            sales_period_days=config.get('sales_period_days', 90),
+            max_rows=config.get('max_rows', 50),
+            min_occurrences=config.get('quote_min_occurrences', 2),
+            max_sales_ratio_percent=config.get('quote_max_sales_ratio_percent', 25),
+            only_out_of_stock=False,
+            stock_only=True,
+        ) if config.get('include_stock_not_won') else []
         frequent_sales = _load_frequent_sales_source_cost_report(
             cursor,
             period_days=config.get('sales_period_days', 90),
             min_orders=config.get('frequent_min_orders', 3),
             max_rows=config.get('max_rows', 50),
-            only_out_of_stock=config.get('only_out_of_stock', True),
+            only_out_of_stock=config.get('frequent_only_out_of_stock', True),
         ) if config.get('include_frequent_sales') else []
     return {
         'generated_at': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
         'unordered_quotes': unordered_quotes,
+        'stock_not_won': stock_not_won,
         'frequent_sales': frequent_sales,
         'summary': {
             'unordered_quote_count': len(unordered_quotes),
+            'stock_not_won_count': len(stock_not_won),
             'frequent_sales_count': len(frequent_sales),
         },
         'config': config,
@@ -533,9 +590,9 @@ def _create_purchase_report_run(report, config, recipients):
         """
         INSERT INTO purchase_report_runs (
             generated_by_user_id, config_json, recipients,
-            unordered_quote_count, frequent_sales_count
+            unordered_quote_count, stock_not_won_count, frequent_sales_count
         )
-        VALUES (?, ?::jsonb, ?, ?, ?)
+        VALUES (?, ?::jsonb, ?, ?, ?, ?)
         RETURNING id
         """,
         (
@@ -543,6 +600,7 @@ def _create_purchase_report_run(report, config, recipients):
             json.dumps(config or {}, default=_json_default),
             ', '.join(recipients or []),
             len(report.get('unordered_quotes', [])),
+            len(report.get('stock_not_won', [])),
             len(report.get('frequent_sales', [])),
         ),
         fetch='one',
@@ -655,9 +713,11 @@ def _load_purchase_report_run(run_id):
     report = {
         'generated_at': _stringify_date(run.get('generated_at')),
         'unordered_quotes': [],
+        'stock_not_won': [],
         'frequent_sales': [],
         'summary': {
             'unordered_quote_count': run.get('unordered_quote_count') or 0,
+            'stock_not_won_count': run.get('stock_not_won_count') or 0,
             'frequent_sales_count': run.get('frequent_sales_count') or 0,
         },
         'config': run.get('config_json') or {},
@@ -805,18 +865,16 @@ def _build_purchase_reports_email(report, report_url=None):
     _attach_report_comments(report)
     config = report['config']
     generated_at = escape(report.get('generated_at') or '')
-    stock_filter_label = 'Out-of-stock only' if config.get('only_out_of_stock', True) else 'All stock statuses'
-    quoted_sales_filter_label = (
-        f"No sales in last {config.get('sales_period_days')} days"
-        if config.get('only_unsold_in_sales_period', True)
-        else 'May include parts sold in SO period'
-    )
+    quote_stock_filter_label = 'Out-of-stock only' if config.get('only_out_of_stock', True) else 'All stock statuses'
+    sales_stock_filter_label = 'Out-of-stock only' if config.get('frequent_only_out_of_stock', True) else 'All stock statuses'
+    quoted_sales_filter_label = f"Sales ratio at or below {config.get('quote_max_sales_ratio_percent')}%"
     frequent_sales_heading = (
         'Frequently ordered parts not in stock'
-        if config.get('only_out_of_stock', True)
+        if config.get('frequent_only_out_of_stock', True)
         else 'Frequent sales order parts'
     )
     quote_comment_columns = _comment_columns(report.get('unordered_quotes', []))
+    stock_comment_columns = _comment_columns(report.get('stock_not_won', []))
     sales_comment_columns = _comment_columns(report.get('frequent_sales', []))
     quote_comment_headers = ''.join(
         f'<th style="border:1px solid #ddd;padding:6px;">{escape(name)}</th>'
@@ -825,6 +883,10 @@ def _build_purchase_reports_email(report, report_url=None):
     sales_comment_headers = ''.join(
         f'<th style="border:1px solid #ddd;padding:6px;">{escape(name)}</th>'
         for name in sales_comment_columns
+    )
+    stock_comment_headers = ''.join(
+        f'<th style="border:1px solid #ddd;padding:6px;">{escape(name)}</th>'
+        for name in stock_comment_columns
     )
 
     def table_cell(value):
@@ -837,8 +899,10 @@ def _build_purchase_reports_email(report, report_url=None):
             '<tr>'
             + table_cell(item.get('part_number') or item.get('base_part_number'))
             + table_cell(item.get('quote_line_count'))
+            + table_cell(item.get('quote_occurrence_count'))
             + table_cell(item.get('customer_count'))
             + table_cell(item.get('total_quoted_qty'))
+            + table_cell(_pct((_safe_float(item.get('sales_ratio')) or 0) * 100))
             + table_cell(item.get('stock_quantity'))
             + table_cell(item.get('latest_quoted_on') or item.get('quoted_on') or item.get('date_created'))
             + table_cell(_money(item.get('base_cost_gbp')))
@@ -852,11 +916,42 @@ def _build_purchase_reports_email(report, report_url=None):
         )
         quote_rows_text.append(
             f"- {item.get('part_number') or item.get('base_part_number')} | "
-            f"{item.get('quote_line_count') or 0} quotes / {item.get('customer_count') or 0} customers | "
+            f"{item.get('quote_occurrence_count') or 0} quote occurrences / {item.get('customer_count') or 0} customers | "
+            f"sales ratio {_pct((_safe_float(item.get('sales_ratio')) or 0) * 100)} | "
             f"total qty {item.get('total_quoted_qty') or '-'} | stock {item.get('stock_quantity') or 0} | "
             f"latest {item.get('latest_quoted_on') or item.get('quoted_on') or item.get('date_created') or '-'} | "
             f"latest cost {_money(item.get('base_cost_gbp'))} -> quoted price {_money(item.get('quote_price_gbp'))} | "
             f"margin {_pct(item.get('margin_percent'))} | {item.get('source_detail') or '-'}"
+        )
+
+    stock_rows_html = []
+    stock_rows_text = []
+    for item in report.get('stock_not_won', []):
+        stock_rows_html.append(
+            '<tr>'
+            + table_cell(item.get('part_number') or item.get('base_part_number'))
+            + table_cell(item.get('quote_line_count'))
+            + table_cell(item.get('quote_occurrence_count'))
+            + table_cell(item.get('customer_count'))
+            + table_cell(item.get('total_quoted_qty'))
+            + table_cell(_pct((_safe_float(item.get('sales_ratio')) or 0) * 100))
+            + table_cell(item.get('stock_quantity'))
+            + table_cell(item.get('latest_quoted_on') or item.get('quoted_on') or item.get('date_created'))
+            + table_cell(_money(item.get('base_cost_gbp')))
+            + table_cell(_money(item.get('quote_price_gbp')))
+            + table_cell(_pct(item.get('margin_percent')))
+            + table_cell(item.get('customer_name'))
+            + table_cell(item.get('parts_list_name'))
+            + ''.join(table_cell(_comment_cell(item, name)) for name in stock_comment_columns)
+            + '</tr>'
+        )
+        stock_rows_text.append(
+            f"- {item.get('part_number') or item.get('base_part_number')} | "
+            f"{item.get('quote_occurrence_count') or 0} stock quote occurrences / {item.get('customer_count') or 0} customers | "
+            f"sales ratio {_pct((_safe_float(item.get('sales_ratio')) or 0) * 100)} | "
+            f"total qty {item.get('total_quoted_qty') or '-'} | stock {item.get('stock_quantity') or 0} | "
+            f"latest {item.get('latest_quoted_on') or item.get('quoted_on') or item.get('date_created') or '-'} | "
+            f"quoted price {_money(item.get('quote_price_gbp'))} | margin {_pct(item.get('margin_percent'))}"
         )
 
     sales_rows_html = []
@@ -885,9 +980,11 @@ def _build_purchase_reports_email(report, report_url=None):
             f"margin {_pct(item.get('latest_margin_percent'))} | {item.get('source_detail') or '-'}"
         )
 
-    quote_colspan = 12 + len(quote_comment_columns)
+    quote_colspan = 14 + len(quote_comment_columns)
+    stock_colspan = 13 + len(stock_comment_columns)
     sales_colspan = 11 + len(sales_comment_columns)
     quote_table = ''.join(quote_rows_html) or f'<tr><td colspan="{quote_colspan}" style="padding:8px;color:#666;">No repeatedly quoted, not ordered parts found.</td></tr>'
+    stock_table = ''.join(stock_rows_html) or f'<tr><td colspan="{stock_colspan}" style="padding:8px;color:#666;">No stock-sourced quote losses found.</td></tr>'
     sales_table = ''.join(sales_rows_html) or f'<tr><td colspan="{sales_colspan}" style="padding:8px;color:#666;">No frequent sales order candidates found.</td></tr>'
     review_link_html = ''
     review_link_text = ''
@@ -903,17 +1000,22 @@ def _build_purchase_reports_email(report, report_url=None):
         {review_link_html}
         <p>
             Quoted-not-ordered period: last {escape(str(config.get('quote_period_days')))} days.<br>
+            Quote minimum: {escape(str(config.get('quote_min_occurrences')))} distinct quote/list occurrences.<br>
+            Quote sales ratio ceiling: {escape(str(config.get('quote_max_sales_ratio_percent')))}%.<br>
             Frequent sales period: last {escape(str(config.get('sales_period_days')))} days, minimum {escape(str(config.get('frequent_min_orders')))} order lines.<br>
-            Stock filter: {escape(stock_filter_label)}.<br>
+            Quote-loss stock filter: {escape(quote_stock_filter_label)}.<br>
+            Frequent-sales stock filter: {escape(sales_stock_filter_label)}.<br>
             Quoted/not-won sales filter: {escape(quoted_sales_filter_label)}.
         </p>
         <h3>Repeatedly quoted parts not yet ordered ({len(report.get('unordered_quotes', []))})</h3>
         <table style="border-collapse:collapse;width:100%;font-size:13px;">
             <thead><tr style="background:#f3f4f6;">
                 <th style="border:1px solid #ddd;padding:6px;">Part</th>
-                <th style="border:1px solid #ddd;padding:6px;">Quotes</th>
+                <th style="border:1px solid #ddd;padding:6px;">Quote lines</th>
+                <th style="border:1px solid #ddd;padding:6px;">Occurrences</th>
                 <th style="border:1px solid #ddd;padding:6px;">Customers</th>
                 <th style="border:1px solid #ddd;padding:6px;">Total qty</th>
+                <th style="border:1px solid #ddd;padding:6px;">Sales ratio</th>
                 <th style="border:1px solid #ddd;padding:6px;">Stock</th>
                 <th style="border:1px solid #ddd;padding:6px;">Latest quote</th>
                 <th style="border:1px solid #ddd;padding:6px;">Latest cost</th>
@@ -924,6 +1026,25 @@ def _build_purchase_reports_email(report, report_url=None):
                 <th style="border:1px solid #ddd;padding:6px;">Latest quote list</th>
                 {quote_comment_headers}
             </tr></thead><tbody>{quote_table}</tbody>
+        </table>
+        <h3 style="margin-top:24px;">Quoted from stock but not won ({len(report.get('stock_not_won', []))})</h3>
+        <table style="border-collapse:collapse;width:100%;font-size:13px;">
+            <thead><tr style="background:#f3f4f6;">
+                <th style="border:1px solid #ddd;padding:6px;">Part</th>
+                <th style="border:1px solid #ddd;padding:6px;">Quote lines</th>
+                <th style="border:1px solid #ddd;padding:6px;">Occurrences</th>
+                <th style="border:1px solid #ddd;padding:6px;">Customers</th>
+                <th style="border:1px solid #ddd;padding:6px;">Total qty</th>
+                <th style="border:1px solid #ddd;padding:6px;">Sales ratio</th>
+                <th style="border:1px solid #ddd;padding:6px;">Stock</th>
+                <th style="border:1px solid #ddd;padding:6px;">Latest quote</th>
+                <th style="border:1px solid #ddd;padding:6px;">Latest cost</th>
+                <th style="border:1px solid #ddd;padding:6px;">Latest quoted price</th>
+                <th style="border:1px solid #ddd;padding:6px;">Margin</th>
+                <th style="border:1px solid #ddd;padding:6px;">Latest customer</th>
+                <th style="border:1px solid #ddd;padding:6px;">Latest quote list</th>
+                {stock_comment_headers}
+            </tr></thead><tbody>{stock_table}</tbody>
         </table>
         <h3 style="margin-top:24px;">{escape(frequent_sales_heading)} ({len(report.get('frequent_sales', []))})</h3>
         <table style="border-collapse:collapse;width:100%;font-size:13px;">
@@ -949,17 +1070,21 @@ def _build_purchase_reports_email(report, report_url=None):
         'Purchase Suggestions Report\n\n'
         f"Generated: {report.get('generated_at')} UTC\n"
         + review_link_text
-        + f"Stock filter: {stock_filter_label}\n"
+        + f"Quote-loss stock filter: {quote_stock_filter_label}\n"
+        f"Frequent-sales stock filter: {sales_stock_filter_label}\n"
         f"Quoted/not-won sales filter: {quoted_sales_filter_label}\n"
         f"Repeatedly quoted, not ordered parts: {len(report.get('unordered_quotes', []))}\n"
+        f"Quoted from stock but not won: {len(report.get('stock_not_won', []))}\n"
         f"Frequent sales candidates: {len(report.get('frequent_sales', []))}\n\n"
         'Repeatedly quoted parts not yet ordered:\n'
         + ('\n'.join(quote_rows_text) if quote_rows_text else '- None')
+        + '\n\nQuoted from stock but not won:\n'
+        + ('\n'.join(stock_rows_text) if stock_rows_text else '- None')
         + f'\n\n{frequent_sales_heading}:\n'
         + ('\n'.join(sales_rows_text) if sales_rows_text else '- None')
     )
 
-    total = len(report.get('unordered_quotes', [])) + len(report.get('frequent_sales', []))
+    total = len(report.get('unordered_quotes', [])) + len(report.get('stock_not_won', [])) + len(report.get('frequent_sales', []))
     subject = f'Purchase suggestions report ({total} candidates)'
     return subject, html_body, text_body
 
@@ -1688,19 +1813,7 @@ def save_email_report_config():
     try:
         payload = request.get_json(silent=True) or {}
         config = _load_email_report_config()
-        config.update({
-            'enabled': bool(payload.get('enabled')),
-            'recipients': str(payload.get('recipients') or '').strip(),
-            'frequency_days': max(1, min(int(payload.get('frequency_days') or 1), 30)),
-            'quote_period_days': max(1, min(int(payload.get('quote_period_days') or 30), 365)),
-            'sales_period_days': max(1, min(int(payload.get('sales_period_days') or 90), 730)),
-            'frequent_min_orders': max(1, min(int(payload.get('frequent_min_orders') or 3), 100)),
-            'max_rows': max(1, min(int(payload.get('max_rows') or 50), 500)),
-            'include_unordered_quotes': bool(payload.get('include_unordered_quotes', True)),
-            'include_frequent_sales': bool(payload.get('include_frequent_sales', True)),
-            'only_out_of_stock': bool(payload.get('only_out_of_stock', True)),
-            'only_unsold_in_sales_period': bool(payload.get('only_unsold_in_sales_period', True)),
-        })
+        _apply_email_report_payload(config, payload)
         saved = _save_email_report_config(config)
         return jsonify({'success': True, 'config': saved})
     except Exception as e:
@@ -1717,6 +1830,8 @@ def preview_email_report():
         config.update({key: payload[key] for key in payload if key in PURCHASE_REPORT_DEFAULT_CONFIG})
         config['quote_period_days'] = max(1, min(int(config.get('quote_period_days') or 30), 365))
         config['sales_period_days'] = max(1, min(int(config.get('sales_period_days') or 90), 730))
+        config['quote_min_occurrences'] = max(1, min(int(config.get('quote_min_occurrences') or 2), 100))
+        config['quote_max_sales_ratio_percent'] = max(0, min(float(config.get('quote_max_sales_ratio_percent') or 0), 100))
         config['frequent_min_orders'] = max(1, min(int(config.get('frequent_min_orders') or 3), 100))
         config['max_rows'] = max(1, min(int(config.get('max_rows') or 50), 500))
         report = _load_email_reports(config)
@@ -1733,19 +1848,7 @@ def send_email_report_now():
         payload = request.get_json(silent=True) or {}
         if payload:
             config = _load_email_report_config()
-            config.update({
-                'enabled': bool(payload.get('enabled')),
-                'recipients': str(payload.get('recipients') or '').strip(),
-                'frequency_days': max(1, min(int(payload.get('frequency_days') or 1), 30)),
-                'quote_period_days': max(1, min(int(payload.get('quote_period_days') or 30), 365)),
-                'sales_period_days': max(1, min(int(payload.get('sales_period_days') or 90), 730)),
-                'frequent_min_orders': max(1, min(int(payload.get('frequent_min_orders') or 3), 100)),
-                'max_rows': max(1, min(int(payload.get('max_rows') or 50), 500)),
-                'include_unordered_quotes': bool(payload.get('include_unordered_quotes', True)),
-                'include_frequent_sales': bool(payload.get('include_frequent_sales', True)),
-                'only_out_of_stock': bool(payload.get('only_out_of_stock', True)),
-                'only_unsold_in_sales_period': bool(payload.get('only_unsold_in_sales_period', True)),
-            })
+            _apply_email_report_payload(config, payload)
             _save_email_report_config(config)
         result = send_due_purchase_suggestion_reports(force=True)
         status = 200 if result.get('success') else 400
@@ -1765,19 +1868,7 @@ def send_test_email_report():
             return jsonify({'success': False, 'error': 'Test recipient is required'}), 400
 
         config = _load_email_report_config()
-        config.update({
-            'enabled': bool(payload.get('enabled')),
-            'recipients': str(payload.get('recipients') or '').strip(),
-            'frequency_days': max(1, min(int(payload.get('frequency_days') or 1), 30)),
-            'quote_period_days': max(1, min(int(payload.get('quote_period_days') or 30), 365)),
-            'sales_period_days': max(1, min(int(payload.get('sales_period_days') or 90), 730)),
-            'frequent_min_orders': max(1, min(int(payload.get('frequent_min_orders') or 3), 100)),
-            'max_rows': max(1, min(int(payload.get('max_rows') or 50), 500)),
-            'include_unordered_quotes': bool(payload.get('include_unordered_quotes', True)),
-            'include_frequent_sales': bool(payload.get('include_frequent_sales', True)),
-            'only_out_of_stock': bool(payload.get('only_out_of_stock', True)),
-            'only_unsold_in_sales_period': bool(payload.get('only_unsold_in_sales_period', True)),
-        })
+        _apply_email_report_payload(config, payload)
         result = _send_purchase_report_email(
             config,
             [test_recipient],

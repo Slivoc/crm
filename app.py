@@ -60,7 +60,7 @@ from routes.cqs import cqs_bp
 from routes.so_import import so_import_bp
 from routes.ils import ils_bp
 from routes.customer_quoting import customer_quoting_bp
-from routes.marketplace import marketplace_bp
+from routes.marketplace import marketplace_bp, run_due_marketplace_export_upload
 from routes.portal_api import portal_api_bp
 from routes.portal_admin import portal_admin_bp
 from routes.news_email import send_news_email
@@ -521,6 +521,24 @@ def scheduled_purchase_suggestion_email_reports():
             current_app.logger.exception("Scheduled Purchase Suggestions Email failed: %s", exc)
 
 
+@scheduler.task('cron', id='marketplace_export_upload', minute='*')
+def scheduled_marketplace_export_upload():
+    with app.app_context():
+        try:
+            result = run_due_marketplace_export_upload()
+            if result.get('sent') or result.get('reason') not in {'not_due', 'disabled', 'already_started'}:
+                current_app.logger.info(
+                    "Scheduled Marketplace Export Upload: success=%s sent=%s reason=%s import_id=%s error=%s",
+                    result.get('success'),
+                    result.get('sent'),
+                    result.get('reason'),
+                    result.get('import_id'),
+                    result.get('error'),
+                )
+        except Exception as exc:
+            current_app.logger.exception("Scheduled Marketplace Export Upload failed: %s", exc)
+
+
 @scheduler.task('cron', id='graph_mailbox_sync', hour=1, minute=20)
 def scheduled_graph_mailbox_sync():
     with app.app_context():
@@ -555,6 +573,7 @@ def scheduled_graph_email_cache_sync():
 
 
 scheduler.init_app(app)
+app.config['SCHEDULER_INSTANCE'] = scheduler
 scheduler.start()
 
 @app.context_processor

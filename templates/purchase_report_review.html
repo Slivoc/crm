@@ -100,10 +100,12 @@
                             <thead class="table-light">
                                 <tr>
                                     <th>Part</th>
-                                    {% if section.section == 'quoted_not_won' %}
-                                        <th>Quotes</th>
+                                    {% if section.section in ['quoted_not_won', 'stock_not_won'] %}
+                                        <th>Quote lines</th>
+                                        <th>Occurrences</th>
                                         <th>Customers</th>
                                         <th>Total qty</th>
+                                        <th>Sales ratio</th>
                                         <th>Stock</th>
                                         <th>Latest quote</th>
                                         <th>Latest quoted price</th>
@@ -131,10 +133,12 @@
                                         <td class="part-cell">
                                             <strong>{{ item.display_part }}</strong>
                                         </td>
-                                        {% if section.section == 'quoted_not_won' %}
+                                        {% if section.section in ['quoted_not_won', 'stock_not_won'] %}
                                             <td>{{ item.quote_line_count or 0 }}</td>
+                                            <td>{{ item.quote_occurrence_count or 0 }}</td>
                                             <td>{{ item.customer_count or 0 }}</td>
                                             <td>{{ item.display_qty }}</td>
+                                            <td>{{ "%.1f"|format((item.sales_ratio or 0) * 100) }}%</td>
                                             <td>{{ item.display_stock }}</td>
                                             <td>{{ item.latest_quoted_on or item.quoted_on or item.date_created or '-' }}</td>
                                             <td>{{ item.display_latest_price }}</td>

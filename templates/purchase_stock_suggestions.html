@@ -268,7 +268,7 @@
         </div>
         <div class="card-body">
             <p class="text-muted mb-3">
-                Configure an email that runs overnight. It highlights parts repeatedly quoted but not won, plus frequently ordered parts, with stock availability and latest source cost/margin details.
+                Configure the overnight email reports. Quote-loss controls apply to quoted/not-won reports; frequent-sales controls apply only to frequent sales.
             </p>
             <form id="email-report-config-form">
                 <div class="row g-3 align-items-end">
@@ -300,50 +300,97 @@
                         </select>
                     </div>
                     <div class="col-md-2">
-                        <label for="email-report-quote-period" class="form-label">Quoted period</label>
+                        <label for="email-report-max-rows" class="form-label">Max rows/report</label>
+                        <input type="number" class="form-control" id="email-report-max-rows" min="1" max="500" value="50">
+                    </div>
+                    <div class="col-12">
+                        <div class="border rounded p-3">
+                            <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
+                                <div>
+                                    <div class="fw-semibold">Quote-loss reports</div>
+                                    <div class="text-muted small">Parts repeatedly quoted where sales orders are low relative to quote occurrences.</div>
+                                </div>
+                                <div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="checkbox" id="email-report-include-quotes" checked>
+                                        <label class="form-check-label" for="email-report-include-quotes">Quoted not won</label>
+                                    </div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="checkbox" id="email-report-include-stock-not-won" checked>
+                                        <label class="form-check-label" for="email-report-include-stock-not-won">Quoted from stock not won</label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row g-3 align-items-end">
+                                <div class="col-md-3">
+                                    <label for="email-report-quote-period" class="form-label">Quoted period</label>
                         <div class="input-group">
                             <input type="number" class="form-control" id="email-report-quote-period" min="1" max="365" value="30">
                             <span class="input-group-text">days</span>
                         </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="email-report-min-quote-occurrences" class="form-label">Minimum quote occurrences</label>
+                                    <input type="number" class="form-control" id="email-report-min-quote-occurrences" min="1" max="100" value="2">
+                                    <div class="form-text">Counts distinct parts lists, not duplicate lines on one list.</div>
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="email-report-max-sales-ratio" class="form-label">Maximum sales ratio</label>
+                                    <div class="input-group">
+                                        <input type="number" class="form-control" id="email-report-max-sales-ratio" min="0" max="100" step="1" value="25">
+                                        <span class="input-group-text">%</span>
+                                    </div>
+                                    <div class="form-text">Sales order occurrences divided by quote occurrences.</div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="form-check mt-4">
+                                        <input class="form-check-input" type="checkbox" id="email-report-only-out-of-stock" checked>
+                                        <label class="form-check-label" for="email-report-only-out-of-stock">Quoted not won: only no available stock</label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                    <div class="col-md-2">
-                        <label for="email-report-sales-period" class="form-label">SO period</label>
+                    <div class="col-12">
+                        <div class="border rounded p-3">
+                            <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
+                                <div>
+                                    <div class="fw-semibold">Frequent sales report</div>
+                                    <div class="text-muted small">Parts with repeated sales order activity, using the minimum order-line threshold below.</div>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="email-report-include-sales" checked>
+                                    <label class="form-check-label" for="email-report-include-sales">Frequent sales</label>
+                                </div>
+                            </div>
+                            <div class="row g-3 align-items-end">
+                                <div class="col-md-3">
+                                    <label for="email-report-sales-period" class="form-label">SO period</label>
                         <div class="input-group">
                             <input type="number" class="form-control" id="email-report-sales-period" min="1" max="730" value="90">
                             <span class="input-group-text">days</span>
                         </div>
-                    </div>
-                    <div class="col-md-2">
-                        <label for="email-report-min-orders" class="form-label">Frequent min</label>
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="email-report-min-orders" class="form-label">Minimum order lines</label>
                         <div class="input-group">
                             <input type="number" class="form-control" id="email-report-min-orders" min="1" max="100" value="3">
                             <span class="input-group-text">orders</span>
                         </div>
-                    </div>
-                    <div class="col-md-2">
-                        <label for="email-report-max-rows" class="form-label">Max rows/report</label>
-                        <input type="number" class="form-control" id="email-report-max-rows" min="1" max="500" value="50">
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="form-check mt-4">
+                                        <input class="form-check-input" type="checkbox" id="email-report-only-out-of-stock-sales" checked>
+                                        <label class="form-check-label" for="email-report-only-out-of-stock-sales">Only no available stock</label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     <div class="col-md-4">
                         <div class="form-check form-switch mb-2">
                             <input class="form-check-input" type="checkbox" id="email-report-enabled">
                             <label class="form-check-label" for="email-report-enabled">Enable scheduled overnight email</label>
-                        </div>
-                        <div class="form-check form-check-inline">
-                            <input class="form-check-input" type="checkbox" id="email-report-include-quotes" checked>
-                            <label class="form-check-label" for="email-report-include-quotes">Quoted not ordered</label>
-                        </div>
-                        <div class="form-check form-check-inline">
-                            <input class="form-check-input" type="checkbox" id="email-report-include-sales" checked>
-                            <label class="form-check-label" for="email-report-include-sales">Frequent sales</label>
-                        </div>
-                        <div class="form-check mt-2">
-                            <input class="form-check-input" type="checkbox" id="email-report-only-out-of-stock" checked>
-                            <label class="form-check-label" for="email-report-only-out-of-stock">Only show parts with no available stock</label>
-                        </div>
-                        <div class="form-check mt-2">
-                            <input class="form-check-input" type="checkbox" id="email-report-only-unsold-period" checked>
-                            <label class="form-check-label" for="email-report-only-unsold-period">Only show quoted parts with no sales in SO period</label>
                         </div>
                     </div>
                     <div class="col-md-6 text-md-end">
@@ -1001,12 +1048,15 @@ document.addEventListener('DOMContentLoaded', function() {
         frequencyDays: document.getElementById('email-report-frequency'),
         quotePeriodDays: document.getElementById('email-report-quote-period'),
         salesPeriodDays: document.getElementById('email-report-sales-period'),
+        quoteMinOccurrences: document.getElementById('email-report-min-quote-occurrences'),
+        quoteMaxSalesRatio: document.getElementById('email-report-max-sales-ratio'),
         frequentMinOrders: document.getElementById('email-report-min-orders'),
         maxRows: document.getElementById('email-report-max-rows'),
         includeQuotes: document.getElementById('email-report-include-quotes'),
+        includeStockNotWon: document.getElementById('email-report-include-stock-not-won'),
         includeSales: document.getElementById('email-report-include-sales'),
         onlyOutOfStock: document.getElementById('email-report-only-out-of-stock'),
-        onlyUnsoldPeriod: document.getElementById('email-report-only-unsold-period')
+        frequentOnlyOutOfStock: document.getElementById('email-report-only-out-of-stock-sales')
     };
 
     function escapeHtml(value) {
@@ -1056,12 +1106,15 @@ document.addEventListener('DOMContentLoaded', function() {
             frequency_days: Number.parseInt(emailReportFields.frequencyDays?.value, 10) || 1,
             quote_period_days: Number.parseInt(emailReportFields.quotePeriodDays?.value, 10) || 30,
             sales_period_days: Number.parseInt(emailReportFields.salesPeriodDays?.value, 10) || 90,
+            quote_min_occurrences: Number.parseInt(emailReportFields.quoteMinOccurrences?.value, 10) || 2,
+            quote_max_sales_ratio_percent: Number.parseFloat(emailReportFields.quoteMaxSalesRatio?.value) || 0,
             frequent_min_orders: Number.parseInt(emailReportFields.frequentMinOrders?.value, 10) || 3,
             max_rows: Number.parseInt(emailReportFields.maxRows?.value, 10) || 50,
             include_unordered_quotes: Boolean(emailReportFields.includeQuotes?.checked),
+            include_stock_not_won: Boolean(emailReportFields.includeStockNotWon?.checked),
             include_frequent_sales: Boolean(emailReportFields.includeSales?.checked),
             only_out_of_stock: Boolean(emailReportFields.onlyOutOfStock?.checked),
-            only_unsold_in_sales_period: Boolean(emailReportFields.onlyUnsoldPeriod?.checked)
+            frequent_only_out_of_stock: Boolean(emailReportFields.frequentOnlyOutOfStock?.checked)
         };
     }
 
@@ -1072,12 +1125,15 @@ document.addEventListener('DOMContentLoaded', function() {
         if (emailReportFields.frequencyDays) emailReportFields.frequencyDays.value = config.frequency_days || 1;
         if (emailReportFields.quotePeriodDays) emailReportFields.quotePeriodDays.value = config.quote_period_days || 30;
         if (emailReportFields.salesPeriodDays) emailReportFields.salesPeriodDays.value = config.sales_period_days || 90;
+        if (emailReportFields.quoteMinOccurrences) emailReportFields.quoteMinOccurrences.value = config.quote_min_occurrences || 2;
+        if (emailReportFields.quoteMaxSalesRatio) emailReportFields.quoteMaxSalesRatio.value = config.quote_max_sales_ratio_percent ?? 25;
         if (emailReportFields.frequentMinOrders) emailReportFields.frequentMinOrders.value = config.frequent_min_orders || 3;
         if (emailReportFields.maxRows) emailReportFields.maxRows.value = config.max_rows || 50;
         if (emailReportFields.includeQuotes) emailReportFields.includeQuotes.checked = config.include_unordered_quotes !== false;
+        if (emailReportFields.includeStockNotWon) emailReportFields.includeStockNotWon.checked = config.include_stock_not_won !== false;
         if (emailReportFields.includeSales) emailReportFields.includeSales.checked = config.include_frequent_sales !== false;
         if (emailReportFields.onlyOutOfStock) emailReportFields.onlyOutOfStock.checked = config.only_out_of_stock !== false;
-        if (emailReportFields.onlyUnsoldPeriod) emailReportFields.onlyUnsoldPeriod.checked = config.only_unsold_in_sales_period !== false;
+        if (emailReportFields.frequentOnlyOutOfStock) emailReportFields.frequentOnlyOutOfStock.checked = config.frequent_only_out_of_stock !== false;
         if (emailReportLastSent) {
             emailReportLastSent.textContent = config.last_sent_at ? `Last sent ${formatDate(config.last_sent_at)}` : 'Not sent yet';
         }
@@ -1364,10 +1420,11 @@ document.addEventListener('DOMContentLoaded', function() {
             postJson('/purchase-suggestions/api/email-report-preview', getEmailReportPayload())
                 .then(({ ok, data }) => {
                     if (!ok || !data.success) throw new Error(data.error || 'Preview failed');
-                    const stockFilter = data.config?.only_out_of_stock !== false ? ' with no available stock' : '';
-                    const salesFilter = data.config?.only_unsold_in_sales_period !== false ? ' and no sales in the SO period' : '';
+                    const quoteStockFilter = data.config?.only_out_of_stock !== false ? ' with no available stock' : '';
+                    const salesStockFilter = data.config?.frequent_only_out_of_stock !== false ? ' with no available stock' : '';
+                    const salesRatio = data.config?.quote_max_sales_ratio_percent ?? 25;
                     setEmailReportStatus(
-                        `Preview complete: ${data.summary.unordered_quote_count || 0} repeatedly quoted parts${stockFilter}${salesFilter} and ${data.summary.frequent_sales_count || 0} frequent sales candidates${stockFilter}.`,
+                        `Preview complete: ${data.summary.unordered_quote_count || 0} quoted-not-won parts${quoteStockFilter} at <= ${salesRatio}% sales ratio, ${data.summary.stock_not_won_count || 0} stock-sourced quote losses, and ${data.summary.frequent_sales_count || 0} frequent sales candidates${salesStockFilter}.`,
                         'alert-success'
                     );
                 })

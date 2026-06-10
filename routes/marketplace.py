@@ -2,10 +2,11 @@
 Airbus Marketplace routes
 """
 
-from flask import Blueprint, jsonify, request, send_file, render_template
+from flask import Blueprint, current_app, jsonify, request, send_file, render_template
 import calendar
 import csv
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
+from html import escape
 import io
 import logging
 import os
@@ -13,6 +14,7 @@ import time
 import json
 import re
 import shutil
+import traceback
 import uuid
 
 from airbus_marketplace_helper import (
@@ -38,6 +40,11 @@ _AIRBUS_HARDWARE_REFERENCE_CACHE = None
 _AIRBUS_HARDWARE_REFERENCE_CACHE_MTIME = None
 _ACTIVE_MASTER_LIST_SUMMARY_SETTING = 'marketplace_master_list_active_summary'
 _ACTIVE_MASTER_LIST_UPLOAD_TOKEN_SETTING = 'marketplace_master_list_active_upload_token'
+_MARKETPLACE_JOB_PAYLOAD_SETTING = 'marketplace_export_job_payload'
+_MARKETPLACE_JOB_ENABLED_SETTING = 'marketplace_export_job_enabled'
+_MARKETPLACE_JOB_TIME_SETTING = 'marketplace_export_job_time'
+_MARKETPLACE_JOB_LAST_STARTED_SETTING = 'marketplace_export_job_last_started_minute'
+_MARKETPLACE_JOB_ADMIN_EMAIL = 'tom@mgcaero.co.uk'
 _MASTER_LIST_TEST_REFERENCE_MAP = {
     '21215DC2405J': 'MKP-H-57077',
     'MS20470AD4-8': 'MKP-H-45486',
@@ -64,6 +71,30 @@ def _get_mirakl_config():
     api_key = os.getenv('MIRAKL_API_KEY') or get_portal_setting('mirakl_api_key')
     shop_id = os.getenv('MIRAKL_SHOP_ID') or get_portal_setting('mirakl_shop_id')
     return base_url, api_key, shop_id
+
+
+def _get_mirakl_diagnostics():
+    env_base_url = os.getenv('MIRAKL_BASE_URL')
+    env_shop_id = os.getenv('MIRAKL_SHOP_ID')
+    env_api_key = os.getenv('MIRAKL_API_KEY')
+    portal_base_url = get_portal_setting('mirakl_base_url')
+    portal_shop_id = get_portal_setting('mirakl_shop_id')
+    portal_api_key = get_portal_setting('mirakl_api_key')
+    base_url = env_base_url or portal_base_url
+    shop_id = env_shop_id or portal_shop_id
+    api_key = env_api_key or portal_api_key
+    return {
+        'base_url': base_url,
+        'shop_id': shop_id,
+        'api_key_masked': _mask_api_key(api_key),
+        'api_key_length': len(api_key) if api_key else 0,
+        'sources': {
+            'base_url': 'env' if env_base_url else ('portal' if portal_base_url else None),
+            'shop_id': 'env' if env_shop_id else ('portal' if portal_shop_id else None),
+            'api_key': 'env' if env_api_key else ('portal' if portal_api_key else None),
+        },
+        'headers': ['Authorization'] + (['X-Mirakl-Shop-Id'] if shop_id else []),
+    }
 
 
 def _get_mirakl_client():
@@ -3485,6 +3516,9 @@ def export_to_marketplace():
         debug_offer_export = _coerce_bool(export_data.get('debug_offer_export'), default=False)
         if export_mode not in ('products', 'offers'):
             export_mode = 'products'
+        import_mode = _coerce_text(export_data.get('import_mode'), default='NORMAL').upper()
+        if import_mode not in ('NORMAL', 'REPLACE'):
+            import_mode = 'NORMAL'
         export_defaults = _normalize_marketplace_export_defaults(export_data.get('defaults'))
         source_mode = _coerce_text(export_data.get('source_mode'), default='filters')
         if source_mode not in ('filters', 'baseline'):
@@ -3789,6 +3823,7 @@ def export_to_marketplace():
             'include_non_hqpl_alts': include_non_hqpl_alts,
             'include_alt_stock_rollup': include_alt_stock_rollup,
             'export_mode': export_mode,
+            'import_mode': import_mode,
             'debug_offer_export': debug_offer_export,
             'defaults': export_defaults,
             'source_mode': source_mode,
@@ -3813,6 +3848,280 @@ def export_to_marketplace():
     except Exception as e:
         logger.exception("Error exporting to marketplace")
         return jsonify({'error': str(e)}), 500
+
+
+def _json_debug(value):
+    try:
+        return json.dumps(value, indent=2, default=str)
+    except Exception:
+        return str(value)
+
+
+def _load_marketplace_job_payload():
+    raw_payload = get_portal_setting(_MARKETPLACE_JOB_PAYLOAD_SETTING)
+    if not raw_payload:
+        return None, 'No marketplace export payload has been saved yet. Download an export CSV first.'
+    try:
+        payload = json.loads(raw_payload)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        return None, f'Invalid saved marketplace export payload JSON: {exc}'
+    if not isinstance(payload, dict):
+        return None, 'Saved marketplace export payload is not a JSON object.'
+    return payload, None
+
+
+def _send_marketplace_job_email(report):
+    from routes.portal_admin import send_email
+
+    success = bool(report.get('success'))
+    trigger = report.get('trigger') or 'scheduled'
+    mode = report.get('export_mode') or 'unknown'
+    import_id = report.get('import_id') or 'none'
+    subject_status = 'OK' if success else 'FAILED'
+    subject = f'Airbus marketplace upload {subject_status} ({trigger}, {mode}, import {import_id})'
+    text_body = (
+        'Airbus marketplace upload report\n\n'
+        f"Status: {subject_status}\n"
+        f"Trigger: {trigger}\n"
+        f"Started: {report.get('started_at')} UTC\n"
+        f"Finished: {report.get('finished_at')} UTC\n"
+        f"Configured time: {report.get('configured_time')}\n"
+        f"Export mode: {mode}\n"
+        f"Import mode: {report.get('import_mode')}\n"
+        f"Parts requested: {report.get('base_part_count')}\n"
+        f"CSV status: {report.get('csv_status_code')}\n"
+        f"CSV bytes: {report.get('csv_bytes')}\n"
+        f"Mirakl import ID: {import_id}\n"
+        f"Skipped invalid: {report.get('skipped_invalid_count')}\n"
+        f"Stored offer product IDs: {report.get('stored_offer_product_ids_count')}\n"
+        f"Error: {report.get('error') or '-'}\n\n"
+        'Mirakl diagnostics:\n'
+        f"{_json_debug(report.get('mirakl_diagnostics'))}\n\n"
+        'Import result:\n'
+        f"{_json_debug(report.get('import_result'))}\n\n"
+        'Payload summary:\n'
+        f"{_json_debug(report.get('payload_summary'))}\n\n"
+        'CSV error body:\n'
+        f"{report.get('csv_error_body') or '-'}\n\n"
+        'Traceback:\n'
+        f"{report.get('traceback') or '-'}"
+    )
+    html_body = f"""
+    <html><body>
+        <h2>Airbus marketplace upload report</h2>
+        <table style="border-collapse:collapse;font-size:14px;">
+            <tr><td style="padding:4px 10px;font-weight:bold;">Status</td><td>{escape(subject_status)}</td></tr>
+            <tr><td style="padding:4px 10px;font-weight:bold;">Trigger</td><td>{escape(str(trigger))}</td></tr>
+            <tr><td style="padding:4px 10px;font-weight:bold;">Started</td><td>{escape(str(report.get('started_at')))} UTC</td></tr>
+            <tr><td style="padding:4px 10px;font-weight:bold;">Finished</td><td>{escape(str(report.get('finished_at')))} UTC</td></tr>
+            <tr><td style="padding:4px 10px;font-weight:bold;">Configured time</td><td>{escape(str(report.get('configured_time')))}</td></tr>
+            <tr><td style="padding:4px 10px;font-weight:bold;">Export mode</td><td>{escape(str(mode))}</td></tr>
+            <tr><td style="padding:4px 10px;font-weight:bold;">Import mode</td><td>{escape(str(report.get('import_mode')))}</td></tr>
+            <tr><td style="padding:4px 10px;font-weight:bold;">Parts requested</td><td>{escape(str(report.get('base_part_count')))}</td></tr>
+            <tr><td style="padding:4px 10px;font-weight:bold;">CSV status</td><td>{escape(str(report.get('csv_status_code')))}</td></tr>
+            <tr><td style="padding:4px 10px;font-weight:bold;">CSV bytes</td><td>{escape(str(report.get('csv_bytes')))}</td></tr>
+            <tr><td style="padding:4px 10px;font-weight:bold;">Mirakl import ID</td><td>{escape(str(import_id))}</td></tr>
+            <tr><td style="padding:4px 10px;font-weight:bold;">Skipped invalid</td><td>{escape(str(report.get('skipped_invalid_count')))}</td></tr>
+            <tr><td style="padding:4px 10px;font-weight:bold;">Stored offer product IDs</td><td>{escape(str(report.get('stored_offer_product_ids_count')))}</td></tr>
+            <tr><td style="padding:4px 10px;font-weight:bold;">Error</td><td>{escape(str(report.get('error') or '-'))}</td></tr>
+        </table>
+        <h3>Mirakl diagnostics</h3>
+        <pre>{escape(_json_debug(report.get('mirakl_diagnostics')))}</pre>
+        <h3>Import result</h3>
+        <pre>{escape(_json_debug(report.get('import_result')))}</pre>
+        <h3>Payload summary</h3>
+        <pre>{escape(_json_debug(report.get('payload_summary')))}</pre>
+        <h3>CSV error body</h3>
+        <pre>{escape(str(report.get('csv_error_body') or '-'))}</pre>
+        <h3>Traceback</h3>
+        <pre>{escape(str(report.get('traceback') or '-'))}</pre>
+    </body></html>
+    """
+    return send_email(
+        _MARKETPLACE_JOB_ADMIN_EMAIL,
+        subject,
+        html_body,
+        text_body,
+        from_email='admin@sproutt.io',
+        from_name='Sproutt Admin',
+    )
+
+
+def _marketplace_import_id(result):
+    if not isinstance(result, dict):
+        return None
+    for key in ('import_id', 'importId', 'id'):
+        if result.get(key):
+            return result.get(key)
+    return None
+
+
+def run_marketplace_export_upload_job(trigger='scheduled', force=False):
+    started_at = datetime.utcnow()
+    configured_time = get_portal_setting(_MARKETPLACE_JOB_TIME_SETTING, '00:00') or '00:00'
+    payload, payload_error = _load_marketplace_job_payload()
+    report = {
+        'success': False,
+        'trigger': trigger,
+        'started_at': started_at.isoformat(timespec='seconds'),
+        'finished_at': None,
+        'configured_time': configured_time,
+        'export_mode': None,
+        'import_mode': None,
+        'base_part_count': 0,
+        'csv_status_code': None,
+        'csv_bytes': 0,
+        'import_id': None,
+        'import_result': None,
+        'skipped_invalid_count': 0,
+        'stored_offer_product_ids_count': 0,
+        'payload_summary': None,
+        'mirakl_diagnostics': _get_mirakl_diagnostics(),
+        'csv_error_body': None,
+        'error': payload_error,
+        'traceback': None,
+        'email_sent': False,
+    }
+
+    try:
+        if payload_error:
+            return report
+
+        export_mode = _coerce_text(payload.get('export_mode'), default='products')
+        if export_mode not in ('products', 'offers'):
+            export_mode = 'products'
+        import_mode = _coerce_text(payload.get('import_mode'), default='NORMAL').upper()
+        if export_mode == 'products':
+            import_mode = 'NORMAL'
+
+        base_part_numbers = [
+            str(value).strip()
+            for value in (payload.get('base_part_numbers') or [])
+            if str(value).strip()
+        ]
+        report.update({
+            'export_mode': export_mode,
+            'import_mode': import_mode,
+            'base_part_count': len(base_part_numbers),
+            'payload_summary': {
+                'base_part_count': len(base_part_numbers),
+                'first_base_part_numbers': base_part_numbers[:20],
+                'default_quantity': payload.get('default_quantity'),
+                'skip_invalid_mandatory': payload.get('skip_invalid_mandatory'),
+                'include_non_hqpl_alts': payload.get('include_non_hqpl_alts'),
+                'include_alt_stock_rollup': payload.get('include_alt_stock_rollup'),
+                'source_mode': payload.get('source_mode'),
+                'baseline_rows_count': len(payload.get('baseline_rows') or {}),
+                'debug_offer_export': payload.get('debug_offer_export'),
+            },
+        })
+
+        if not base_part_numbers:
+            report['error'] = 'Saved marketplace export payload contains no base_part_numbers.'
+            return report
+
+        export_payload = dict(payload)
+        export_payload['export_mode'] = export_mode
+        export_payload['debug_offer_export'] = False
+        export_payload['schedule_recurring'] = True
+        export_payload['schedule_time'] = configured_time
+
+        with current_app.test_request_context('/marketplace/export', method='POST', json=export_payload):
+            csv_response = current_app.make_response(export_to_marketplace())
+            csv_response.direct_passthrough = False
+            status_code = getattr(csv_response, 'status_code', None) or 200
+            response_body = csv_response.get_data() or b''
+
+        report['csv_status_code'] = status_code
+        report['csv_bytes'] = len(response_body)
+        if status_code >= 400:
+            report['csv_error_body'] = response_body.decode('utf-8', errors='replace')[:10000]
+            report['error'] = f'CSV generation failed with HTTP {status_code}.'
+            return report
+
+        csv_bytes = response_body
+        if not csv_bytes:
+            report['error'] = 'CSV generation returned an empty file.'
+            return report
+
+        client, client_error = _get_mirakl_client()
+        if client_error:
+            report['error'] = client_error
+            return report
+
+        if export_mode == 'offers':
+            if import_mode == 'REPLACE':
+                csv_bytes = _remove_csv_column(csv_bytes, 'update-delete')
+            result = client.import_offers(csv_bytes, import_mode=import_mode)
+        else:
+            result = client.import_products(csv_bytes, import_mode='NORMAL')
+
+        report['import_result'] = result
+        report['import_id'] = _marketplace_import_id(result)
+        report['success'] = True
+        report['error'] = None
+        return report
+    except Exception as exc:
+        logger.exception("Scheduled marketplace export upload failed")
+        report['error'] = str(exc)
+        report['traceback'] = traceback.format_exc()
+        return report
+    finally:
+        report['finished_at'] = datetime.utcnow().isoformat(timespec='seconds')
+        try:
+            report['email_sent'] = bool(_send_marketplace_job_email(report))
+        except Exception as exc:
+            logger.exception("Failed to send marketplace upload admin email")
+            report['email_error'] = str(exc)
+
+
+def run_due_marketplace_export_upload():
+    enabled = str(get_portal_setting(_MARKETPLACE_JOB_ENABLED_SETTING, '0') or '0').strip() == '1'
+    if not enabled:
+        return {'success': True, 'sent': False, 'reason': 'disabled'}
+
+    configured_time = get_portal_setting(_MARKETPLACE_JOB_TIME_SETTING, '00:00') or '00:00'
+    now = datetime.now()
+    if now.strftime('%H:%M') != configured_time:
+        return {'success': True, 'sent': False, 'reason': 'not_due', 'configured_time': configured_time}
+
+    run_key = now.strftime('%Y-%m-%d %H:%M')
+    if get_portal_setting(_MARKETPLACE_JOB_LAST_STARTED_SETTING) == run_key:
+        return {'success': True, 'sent': False, 'reason': 'already_started', 'run_key': run_key}
+
+    db = get_db()
+    cursor = db.cursor()
+    try:
+        _upsert_portal_setting(cursor, _MARKETPLACE_JOB_LAST_STARTED_SETTING, run_key)
+        db.commit()
+    finally:
+        cursor.close()
+
+    return run_marketplace_export_upload_job(trigger='nightly')
+
+
+@marketplace_bp.route('/schedule-test-upload-email', methods=['POST'])
+def schedule_marketplace_test_upload_email():
+    scheduler = current_app.config.get('SCHEDULER_INSTANCE')
+    if not scheduler:
+        return jsonify({'success': False, 'error': 'Scheduler is not available in app config.'}), 500
+
+    run_at = datetime.now() + timedelta(minutes=1)
+    job_id = f"marketplace_test_upload_{uuid.uuid4().hex}"
+    scheduler.add_job(
+        id=job_id,
+        func=run_marketplace_export_upload_job,
+        trigger='date',
+        run_date=run_at,
+        kwargs={'trigger': 'one_minute_test', 'force': True},
+        replace_existing=False,
+    )
+    return jsonify({
+        'success': True,
+        'job_id': job_id,
+        'run_at': run_at.isoformat(timespec='seconds'),
+        'recipient': _MARKETPLACE_JOB_ADMIN_EMAIL,
+    }), 200
 
 
 @marketplace_bp.route('/auto-categorize', methods=['POST'])
@@ -3933,27 +4242,7 @@ def auto_categorize_parts():
 @marketplace_bp.route('/mirakl/health', methods=['GET'])
 def mirakl_health():
     client, error = _get_mirakl_client()
-    env_base_url = os.getenv('MIRAKL_BASE_URL')
-    env_shop_id = os.getenv('MIRAKL_SHOP_ID')
-    env_api_key = os.getenv('MIRAKL_API_KEY')
-    portal_base_url = get_portal_setting('mirakl_base_url')
-    portal_shop_id = get_portal_setting('mirakl_shop_id')
-    portal_api_key = get_portal_setting('mirakl_api_key')
-    base_url = env_base_url or portal_base_url
-    shop_id = env_shop_id or portal_shop_id
-    api_key = env_api_key or portal_api_key
-    diagnostics = {
-        'base_url': base_url,
-        'shop_id': shop_id,
-        'api_key_masked': _mask_api_key(api_key),
-        'api_key_length': len(api_key) if api_key else 0,
-        'sources': {
-            'base_url': 'env' if env_base_url else ('portal' if portal_base_url else None),
-            'shop_id': 'env' if env_shop_id else ('portal' if portal_shop_id else None),
-            'api_key': 'env' if env_api_key else ('portal' if portal_api_key else None),
-        },
-        'headers': ['Authorization'] + (['X-Mirakl-Shop-Id'] if shop_id else []),
-    }
+    diagnostics = _get_mirakl_diagnostics()
     if error:
         return jsonify({'success': False, 'error': error, 'diagnostics': diagnostics}), 400
 
