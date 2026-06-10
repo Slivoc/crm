@@ -880,6 +880,9 @@ def view_portal_request(request_id):
     has_submitted_estimated_currency = _table_has_column('portal_quote_request_lines', 'submitted_estimated_currency')
     has_submitted_estimated_lead_days = _table_has_column('portal_quote_request_lines', 'submitted_estimated_lead_days')
     has_submitted_price_source = _table_has_column('portal_quote_request_lines', 'submitted_price_source')
+    has_submitted_estimated_part_number = _table_has_column('portal_quote_request_lines', 'submitted_estimated_part_number')
+    has_submitted_is_global_alternative = _table_has_column('portal_quote_request_lines', 'submitted_is_global_alternative')
+    has_submitted_alternative_to_part_number = _table_has_column('portal_quote_request_lines', 'submitted_alternative_to_part_number')
     has_submitted_target_price = _table_has_column('portal_quote_request_lines', 'submitted_target_price_gbp')
     portal_line_notes_select = "pqrl.line_notes as portal_line_notes," if has_portal_line_notes else "NULL as portal_line_notes,"
     portal_parts_list_line_select = "pqrl.parts_list_line_id as portal_parts_list_line_id," if has_portal_parts_list_line_id else "NULL as portal_parts_list_line_id,"
@@ -891,6 +894,9 @@ def view_portal_request(request_id):
     submitted_estimated_currency_select = "pqrl.submitted_estimated_currency as portal_estimated_currency," if has_submitted_estimated_currency else "NULL as portal_estimated_currency,"
     submitted_estimated_lead_days_select = "pqrl.submitted_estimated_lead_days as portal_estimated_lead_days," if has_submitted_estimated_lead_days else "NULL as portal_estimated_lead_days,"
     submitted_price_source_select = "pqrl.submitted_price_source as portal_price_source," if has_submitted_price_source else "NULL as portal_price_source,"
+    submitted_estimated_part_number_select = "pqrl.submitted_estimated_part_number as portal_estimated_part_number," if has_submitted_estimated_part_number else "NULL as portal_estimated_part_number,"
+    submitted_is_global_alternative_select = "pqrl.submitted_is_global_alternative as portal_estimate_is_global_alternative," if has_submitted_is_global_alternative else "FALSE as portal_estimate_is_global_alternative,"
+    submitted_alternative_to_part_number_select = "pqrl.submitted_alternative_to_part_number as portal_estimate_alternative_to_part_number," if has_submitted_alternative_to_part_number else "NULL as portal_estimate_alternative_to_part_number,"
     submitted_target_price_select = "pqrl.submitted_target_price_gbp as portal_target_price_gbp," if has_submitted_target_price else "NULL as portal_target_price_gbp,"
 
     lines = db_execute(f"""
@@ -906,6 +912,9 @@ def view_portal_request(request_id):
             {submitted_estimated_currency_select}
             {submitted_estimated_lead_days_select}
             {submitted_price_source_select}
+            {submitted_estimated_part_number_select}
+            {submitted_is_global_alternative_select}
+            {submitted_alternative_to_part_number_select}
             {submitted_target_price_select}
             c.currency_code,
 
@@ -1012,6 +1021,17 @@ def view_portal_request(request_id):
             if line.get('target_price_gbp') is not None else
             line.get('portal_target_price_gbp')
         )
+        portal_estimated_part_number = (line.get('portal_estimated_part_number') or '').strip()
+        portal_estimate_alt_to = (line.get('portal_estimate_alternative_to_part_number') or '').strip()
+        line['portal_estimated_part_number'] = portal_estimated_part_number
+        line['portal_estimate_alternative_to_part_number'] = portal_estimate_alt_to
+        line['portal_estimate_is_alternative'] = bool(line.get('portal_estimate_is_global_alternative'))
+        if not line['portal_estimate_is_alternative'] and portal_estimated_part_number:
+            estimated_base = create_base_part_number(portal_estimated_part_number)
+            requested_base = line.get('base_part_number') or create_base_part_number(requested_part_number)
+            line['portal_estimate_is_alternative'] = bool(
+                estimated_base and requested_base and estimated_base != requested_base
+            )
 
     currencies = db_execute("SELECT id, currency_code FROM currencies ORDER BY id", fetch='all') or []
 

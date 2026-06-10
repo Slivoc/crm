@@ -107,6 +107,91 @@ def _expand_global_alt_results(customer_id, requested_part_number, base_part_num
     return alt_rows
 
 
+
+def _estimate_matches_requested_part(estimate, part):
+    """Return True when an estimate row is for the requested part, not one of its global alternatives."""
+    if not estimate or estimate.get('is_global_alternative'):
+        return False
+
+    requested_base = part.get('base_part_number') or create_base_part_number(part.get('part_number') or '')
+    estimate_base = estimate.get('base_part_number') or create_base_part_number(
+        estimate.get('requested_part_number')
+        or estimate.get('part_number')
+        or ''
+    )
+    if requested_base and estimate_base:
+        return requested_base == estimate_base
+
+    requested_part = (part.get('part_number') or '').strip().upper()
+    estimate_part = (
+        estimate.get('requested_part_number')
+        or estimate.get('part_number')
+        or ''
+    ).strip().upper()
+    return bool(requested_part and estimate_part and requested_part == estimate_part)
+
+
+def _estimate_matches_global_alt(estimate, part):
+    """Return True when an estimate row is a priced global alternative for the requested part."""
+    if not estimate or not estimate.get('is_global_alternative'):
+        return False
+
+    requested_base = part.get('base_part_number') or create_base_part_number(part.get('part_number') or '')
+    alternative_to_base = estimate.get('alternative_to_base_part_number') or create_base_part_number(
+        estimate.get('alternative_to_part_number')
+        or estimate.get('source_part_number')
+        or ''
+    )
+    if requested_base and alternative_to_base:
+        return requested_base == alternative_to_base
+
+    requested_part = (part.get('part_number') or '').strip().upper()
+    alternative_to_part = (
+        estimate.get('alternative_to_part_number')
+        or estimate.get('source_part_number')
+        or ''
+    ).strip().upper()
+    return bool(requested_part and alternative_to_part and requested_part == alternative_to_part)
+
+
+def _select_submitted_estimate(part, estimate_results):
+    """Choose the estimate snapshot that best represents what the portal showed for a submitted line."""
+    direct_estimates = [
+        estimate for estimate in estimate_results
+        if _estimate_matches_requested_part(estimate, part)
+    ]
+    priced_direct = next(
+        (estimate for estimate in direct_estimates if estimate.get('estimated_price') is not None),
+        None,
+    )
+    if priced_direct:
+        return priced_direct
+
+    priced_alt = next(
+        (
+            estimate for estimate in estimate_results
+            if _estimate_matches_global_alt(estimate, part)
+            and estimate.get('estimated_price') is not None
+        ),
+        None,
+    )
+    if priced_alt:
+        return priced_alt
+
+    return direct_estimates[0] if direct_estimates else {}
+
+
+def _submitted_estimate_part_number(estimate):
+    """Return the part number whose data supplied the submitted estimate snapshot."""
+    if not estimate:
+        return None
+    return (
+        estimate.get('part_number')
+        or estimate.get('requested_part_number')
+        or None
+    )
+
+
 def _apply_margin(value, margin_pct, places=2):
     """Apply margin and round up so the resulting price meets or exceeds margin."""
     if value is None:
@@ -2252,8 +2337,11 @@ def submit_quote_request():
             )
             if estimate_data and estimate_data.get('success'):
                 estimate_results = estimate_data.get('results', []) or []
-                for part, estimate in zip(normalized_parts, estimate_results):
-                    submitted_estimates_by_line_number[part['line_number']] = estimate or {}
+                for part in normalized_parts:
+                    submitted_estimates_by_line_number[part['line_number']] = _select_submitted_estimate(
+                        part,
+                        estimate_results,
+                    )
         except Exception:
             logging.exception("Failed to capture submitted portal estimate snapshot")
 
@@ -2268,6 +2356,9 @@ def submit_quote_request():
             has_submitted_estimated_currency = _table_has_column('portal_quote_request_lines', 'submitted_estimated_currency')
             has_submitted_estimated_lead_days = _table_has_column('portal_quote_request_lines', 'submitted_estimated_lead_days')
             has_submitted_price_source = _table_has_column('portal_quote_request_lines', 'submitted_price_source')
+            has_submitted_estimated_part_number = _table_has_column('portal_quote_request_lines', 'submitted_estimated_part_number')
+            has_submitted_is_global_alternative = _table_has_column('portal_quote_request_lines', 'submitted_is_global_alternative')
+            has_submitted_alternative_to_part_number = _table_has_column('portal_quote_request_lines', 'submitted_alternative_to_part_number')
             has_submitted_target_price = _table_has_column('portal_quote_request_lines', 'submitted_target_price_gbp')
             customer_row = _execute_with_cursor(cursor, """
                 SELECT salesperson_id
@@ -2440,6 +2531,18 @@ def submit_quote_request():
                 if has_submitted_price_source:
                     columns.append("submitted_price_source")
                     values.append(submitted_estimate.get('price_source'))
+                if has_submitted_estimated_part_number:
+                    columns.append("submitted_estimated_part_number")
+                    values.append(_submitted_estimate_part_number(submitted_estimate))
+                if has_submitted_is_global_alternative:
+                    columns.append("submitted_is_global_alternative")
+                    values.append(bool(submitted_estimate.get('is_global_alternative')))
+                if has_submitted_alternative_to_part_number:
+                    columns.append("submitted_alternative_to_part_number")
+                    values.append(
+                        submitted_estimate.get('alternative_to_part_number')
+                        or submitted_estimate.get('source_part_number')
+                    )
                 if has_submitted_target_price:
                     columns.append("submitted_target_price_gbp")
                     values.append(part.get('target_price_gbp'))

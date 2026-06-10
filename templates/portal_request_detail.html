@@ -278,6 +278,18 @@
                         <div class="text-muted">No estimate</div>
                     {% endif %}
 
+                    {% if line.portal_estimate_is_alternative %}
+                        <br><span class="badge bg-info text-dark">Alternative guide price</span>
+                        {% if line.portal_estimated_part_number %}
+                        <br><small class="text-info">Alt part: {{ line.portal_estimated_part_number }}</small>
+                        {% endif %}
+                        {% if line.portal_estimate_alternative_to_part_number %}
+                        <br><small class="text-muted">For requested: {{ line.portal_estimate_alternative_to_part_number }}</small>
+                        {% endif %}
+                    {% elif line.portal_estimated_part_number %}
+                        <br><small class="text-muted">Part: {{ line.portal_estimated_part_number }}</small>
+                    {% endif %}
+
                     {% if line.portal_estimated_lead_days is not none %}
                         <small class="text-muted">
                             Lead: {{ line.portal_estimated_lead_days }} days{% if line.portal_estimated_lead_days == 0 %} (in stock){% endif %}
