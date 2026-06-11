@@ -136,6 +136,8 @@ def _get_customer_flightradar_aircraft(customer_id: int, *, limit: int = 25):
                    last_callsign,
                    last_origin,
                    last_destination,
+                   last_lat,
+                   last_lon,
                    last_alt,
                    last_gspeed,
                    observed_count

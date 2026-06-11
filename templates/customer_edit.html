@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 
 {% block content %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIINfQ8mkCht8E+bz0zgvqPUkR3v1sAikH8="
+      crossorigin="">
 
 <div class="container-fluid mt-4" data-customer-id="{{ customer.id }}">
  <!-- Main card containing everything -->
@@ -861,10 +864,10 @@
                                   id="flightradar-airline-icao"
                                   name="airline_icao"
                                   maxlength="4"
-                                  placeholder="e.g. BHL"
+                                  placeholder="e.g. BHL, HKS, RBD"
                                   required
                                   {{ 'disabled' if not can_edit }}>
-                           <div class="form-text">Validated against Flightradar24 before saving.</div>
+                           <div class="form-text">Use ICAO codes. Existing code + match mode combinations are updated, not duplicated.</div>
                          </div>
                          <div class="mb-3">
                            <label for="flightradar-match-mode" class="form-label">Match Mode</label>
@@ -960,6 +963,8 @@
                          {% endif %}
                        </div>
 
+                       <div id="customer-flightradar-map" class="mb-4"></div>
+
                        <div class="table-responsive mb-4">
                          <table class="table table-sm align-middle mb-0">
                            <thead>
@@ -997,7 +1002,19 @@
                                <td class="fw-semibold">{{ aircraft.registration }}</td>
                                <td>{{ aircraft.aircraft_type or '-' }}</td>
                                <td>{{ aircraft.last_flight or aircraft.last_callsign or '-' }}</td>
-                               <td>{{ aircraft.last_origin or '?' }} -> {{ aircraft.last_destination or '?' }}</td>
+                               <td>
+                                 {% if aircraft.last_lat is not none and aircraft.last_lon is not none %}
+                                 <button type="button"
+                                         class="btn btn-link btn-sm p-0 flightradar-tail-map-link"
+                                         data-lat="{{ aircraft.last_lat }}"
+                                         data-lon="{{ aircraft.last_lon }}"
+                                         data-label="{{ aircraft.registration }}">
+                                   {{ aircraft.last_origin or '?' }} -> {{ aircraft.last_destination or '?' }}
+                                 </button>
+                                 {% else %}
+                                   {{ aircraft.last_origin or '?' }} -> {{ aircraft.last_destination or '?' }}
+                                 {% endif %}
+                               </td>
                                <td class="text-end">{{ aircraft.observed_count or 0 }}</td>
                                <td class="text-muted small">{{ aircraft.last_seen_at or '-' }}</td>
                              </tr>
@@ -1911,6 +1928,9 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""></script>
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const refreshButton = document.getElementById('flightradar-live-refresh');
@@ -1921,6 +1941,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const flightsBody = document.getElementById('flightradar-live-flights-body');
     const tailBody = document.getElementById('flightradar-tail-body');
     const endpoint = "{{ url_for('flightradar.customer_live_active_flights', customer_id=customer.id) }}";
+    const mapElement = document.getElementById('customer-flightradar-map');
+    let map = null;
+    let markers = [];
+    let selectedMarker = null;
 
     function escapeHtml(value) {
         return String(value ?? '').replace(/[&<>"']/g, function(character) {
@@ -1939,21 +1963,119 @@ document.addEventListener('DOMContentLoaded', function() {
         status.textContent = message;
     }
 
+    function ensureMap() {
+        if (map || !mapElement || typeof L === 'undefined') {
+            return map;
+        }
+
+        map = L.map(mapElement, {
+            fadeAnimation: false,
+            markerZoomAnimation: false,
+            zoomAnimation: false
+        }).setView([54.5, -3.0], 5);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            crossOrigin: true,
+            detectRetina: false,
+            keepBuffer: 4,
+            maxZoom: 12,
+            updateWhenIdle: true,
+            updateWhenZooming: false,
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        window.setTimeout(() => map.invalidateSize(false), 250);
+        return map;
+    }
+
+    function invalidateMap() {
+        if (map) {
+            window.requestAnimationFrame(() => map.invalidateSize(false));
+        }
+    }
+
+    function clearMapMarkers() {
+        markers.forEach(marker => marker.remove());
+        markers = [];
+    }
+
+    function addMapMarker(lat, lon, label, popupHtml) {
+        const activeMap = ensureMap();
+        if (!activeMap) return null;
+
+        const marker = L.marker([lat, lon]).addTo(activeMap);
+        marker.bindPopup(popupHtml || escapeHtml(label));
+        markers.push(marker);
+        return marker;
+    }
+
+    function focusTail(lat, lon, label, popupHtml) {
+        const activeMap = ensureMap();
+        if (!activeMap) return;
+
+        const parsedLat = Number(lat);
+        const parsedLon = Number(lon);
+        if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLon)) {
+            setStatus('warning', 'No valid position is stored for that tail number.');
+            return;
+        }
+
+        if (selectedMarker) {
+            selectedMarker.remove();
+        }
+        selectedMarker = L.marker([parsedLat, parsedLon]).addTo(activeMap);
+        selectedMarker.bindPopup(popupHtml || escapeHtml(label || 'Aircraft')).openPopup();
+        activeMap.setView([parsedLat, parsedLon], Math.max(activeMap.getZoom(), 7));
+    }
+
+    function renderMapFlights(flights) {
+        const activeMap = ensureMap();
+        if (!activeMap) return;
+
+        clearMapMarkers();
+        const bounds = [];
+        flights.forEach(flight => {
+            const lat = Number(flight.lat);
+            const lon = Number(flight.lon);
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+            const label = flight.reg || flight.flight || flight.callsign || 'Aircraft';
+            const route = `${flight.orig_iata || flight.orig_icao || '?'} -> ${flight.dest_iata || flight.dest_icao || '?'}`;
+            const popup = `
+                <div class="small">
+                    <strong>${escapeHtml(label)}</strong><br>
+                    ${escapeHtml(route)}<br>
+                    ${escapeHtml(flight.type || '')}
+                </div>
+            `;
+            addMapMarker(lat, lon, label, popup);
+            bounds.push([lat, lon]);
+        });
+
+        invalidateMap();
+        if (bounds.length) {
+            activeMap.fitBounds(bounds, {padding: [28, 28], maxZoom: 7});
+        }
+    }
+
     function renderFlights(flights) {
         if (!flights.length) {
             flightsBody.innerHTML = '<tr><td colspan="6" class="text-muted text-center py-3">No active flights returned.</td></tr>';
+            renderMapFlights([]);
             return;
         }
 
         flightsBody.innerHTML = flights.map(flight => {
             const route = `${flight.orig_iata || flight.orig_icao || '?'} -> ${flight.dest_iata || flight.dest_icao || '?'}`;
+            const tailLabel = escapeHtml(flight.reg || '-');
+            const hasPosition = Number.isFinite(Number(flight.lat)) && Number.isFinite(Number(flight.lon));
             return `
                 <tr>
                     <td>
                         <div class="fw-semibold">${escapeHtml(flight.flight || flight.callsign || flight.fr24_id || '-')}</div>
                         <div class="text-muted small">${escapeHtml(flight.operating_as || '')}${flight.painted_as ? ` / ${escapeHtml(flight.painted_as)}` : ''}</div>
                     </td>
-                    <td>${escapeHtml(flight.reg || '-')}</td>
+                    <td>${hasPosition ? `<button type="button" class="btn btn-link btn-sm p-0 flightradar-tail-map-link" data-lat="${escapeHtml(flight.lat)}" data-lon="${escapeHtml(flight.lon)}" data-label="${tailLabel}">${tailLabel}</button>` : tailLabel}</td>
                     <td>${escapeHtml(flight.type || '-')}</td>
                     <td>${escapeHtml(route)}</td>
                     <td class="text-end">${escapeHtml(flight.alt ?? '-')}</td>
@@ -1961,6 +2083,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 </tr>
             `;
         }).join('');
+        renderMapFlights(flights);
     }
 
     function renderAircraft(aircraftRows) {
@@ -1971,12 +2094,16 @@ document.addEventListener('DOMContentLoaded', function() {
 
         tailBody.innerHTML = aircraftRows.map(aircraft => {
             const route = `${aircraft.last_origin || '?'} -> ${aircraft.last_destination || '?'}`;
+            const hasPosition = Number.isFinite(Number(aircraft.last_lat)) && Number.isFinite(Number(aircraft.last_lon));
+            const routeCell = hasPosition
+                ? `<button type="button" class="btn btn-link btn-sm p-0 flightradar-tail-map-link" data-lat="${escapeHtml(aircraft.last_lat)}" data-lon="${escapeHtml(aircraft.last_lon)}" data-label="${escapeHtml(aircraft.registration || '-')}">${escapeHtml(route)}</button>`
+                : escapeHtml(route);
             return `
                 <tr>
                     <td class="fw-semibold">${escapeHtml(aircraft.registration || '-')}</td>
                     <td>${escapeHtml(aircraft.aircraft_type || '-')}</td>
                     <td>${escapeHtml(aircraft.last_flight || aircraft.last_callsign || '-')}</td>
-                    <td>${escapeHtml(route)}</td>
+                    <td>${routeCell}</td>
                     <td class="text-end">${escapeHtml(aircraft.observed_count ?? 0)}</td>
                     <td class="text-muted small">${escapeHtml(aircraft.last_seen_at || '-')}</td>
                 </tr>
@@ -1984,7 +2111,21 @@ document.addEventListener('DOMContentLoaded', function() {
         }).join('');
     }
 
+    document.querySelector('a[href="#flightradar"]')?.addEventListener('shown.bs.tab', function() {
+        ensureMap();
+        window.setTimeout(invalidateMap, 250);
+    });
+
+    document.getElementById('flightradar')?.addEventListener('click', function(event) {
+        const link = event.target.closest('.flightradar-tail-map-link');
+        if (!link) return;
+
+        event.preventDefault();
+        focusTail(link.dataset.lat, link.dataset.lon, link.dataset.label || link.textContent.trim());
+    });
+
     refreshButton.addEventListener('click', async function() {
+        ensureMap();
         refreshButton.disabled = true;
         spinner.classList.remove('d-none');
         setStatus('info', 'Refreshing live Flightradar24 activity...');
@@ -2021,6 +2162,103 @@ document.addEventListener('DOMContentLoaded', function() {
 
 .customer-supplier-manager .list-group-item:last-child {
     margin-bottom: 0;
+}
+
+#customer-flightradar-map {
+    height: 340px;
+    overflow: hidden;
+    position: relative;
+    z-index: 0;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    background: #eef3f7;
+}
+
+#customer-flightradar-map.leaflet-container {
+    overflow: hidden;
+    z-index: 0;
+}
+
+#customer-flightradar-map .leaflet-pane,
+#customer-flightradar-map .leaflet-map-pane,
+#customer-flightradar-map .leaflet-tile-container,
+#customer-flightradar-map .leaflet-tile,
+#customer-flightradar-map .leaflet-marker-icon,
+#customer-flightradar-map .leaflet-marker-shadow,
+#customer-flightradar-map .leaflet-image-layer,
+#customer-flightradar-map .leaflet-layer,
+#customer-flightradar-map .leaflet-shadow-pane,
+#customer-flightradar-map .leaflet-overlay-pane,
+#customer-flightradar-map .leaflet-marker-pane,
+#customer-flightradar-map .leaflet-tooltip-pane,
+#customer-flightradar-map .leaflet-popup-pane,
+#customer-flightradar-map .leaflet-overlay-pane svg,
+#customer-flightradar-map .leaflet-zoom-box,
+#customer-flightradar-map .leaflet-control {
+    left: 0;
+    position: absolute;
+    top: 0;
+}
+
+#customer-flightradar-map .leaflet-tile,
+#customer-flightradar-map .leaflet-marker-icon,
+#customer-flightradar-map .leaflet-marker-shadow {
+    -webkit-user-drag: none;
+    user-select: none;
+}
+
+#customer-flightradar-map .leaflet-tile {
+    filter: inherit;
+    visibility: hidden;
+}
+
+#customer-flightradar-map .leaflet-tile-loaded {
+    visibility: inherit;
+}
+
+#customer-flightradar-map .leaflet-zoom-animated {
+    transform-origin: 0 0;
+}
+
+#customer-flightradar-map .leaflet-pane {
+    z-index: 400;
+}
+
+#customer-flightradar-map .leaflet-tile-pane {
+    z-index: 200;
+}
+
+#customer-flightradar-map .leaflet-overlay-pane {
+    z-index: 400;
+}
+
+#customer-flightradar-map .leaflet-shadow-pane {
+    z-index: 500;
+}
+
+#customer-flightradar-map .leaflet-marker-pane {
+    z-index: 600;
+}
+
+#customer-flightradar-map .leaflet-tooltip-pane {
+    z-index: 650;
+}
+
+#customer-flightradar-map .leaflet-popup-pane {
+    z-index: 700;
+}
+
+#customer-flightradar-map .leaflet-control {
+    pointer-events: auto;
+    position: relative;
+    z-index: 800;
+}
+
+#customer-flightradar-map img.leaflet-tile,
+#customer-flightradar-map .leaflet-marker-icon,
+#customer-flightradar-map .leaflet-marker-shadow {
+    max-height: none !important;
+    max-width: none !important;
 }
 
 /* Simplified Development Tab Styles */
