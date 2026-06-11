@@ -858,6 +858,27 @@
                      <div class="card-body">
                        <form method="post" action="{{ url_for('customers.add_customer_flightradar_link', customer_id=customer.id) }}">
                          <div class="mb-3">
+                           <label for="flightradar-operator-search" class="form-label">Search Operator List</label>
+                           <div class="input-group">
+                             <input type="text"
+                                    class="form-control"
+                                    id="flightradar-operator-search"
+                                    placeholder="Search name, ICAO, callsign, country..."
+                                    {{ 'disabled' if not can_edit }}>
+                             <button type="button"
+                                     id="flightradar-add-visible"
+                                     class="btn btn-outline-primary"
+                                     disabled>
+                               Add All Showing
+                             </button>
+                           </div>
+                           <div class="form-text">Backed by docs/flightradar/airlines.dat.</div>
+                           <div id="flightradar-operator-results" class="list-group mt-2"></div>
+                         </div>
+
+                         <hr>
+
+                         <div class="mb-3">
                            <label for="flightradar-airline-icao" class="form-label">Operator ICAO</label>
                            <input type="text"
                                   class="form-control text-uppercase"
@@ -1934,17 +1955,26 @@ document.addEventListener('DOMContentLoaded', function() {
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const refreshButton = document.getElementById('flightradar-live-refresh');
-    if (!refreshButton) return;
 
     const spinner = document.getElementById('flightradar-live-spinner');
     const status = document.getElementById('flightradar-live-status');
     const flightsBody = document.getElementById('flightradar-live-flights-body');
     const tailBody = document.getElementById('flightradar-tail-body');
     const endpoint = "{{ url_for('flightradar.customer_live_active_flights', customer_id=customer.id) }}";
+    const operatorSearch = document.getElementById('flightradar-operator-search');
+    const operatorResults = document.getElementById('flightradar-operator-results');
+    const addVisibleButton = document.getElementById('flightradar-add-visible');
+    const icaoInput = document.getElementById('flightradar-airline-icao');
+    const matchModeInput = document.getElementById('flightradar-match-mode');
+    const boundsInput = document.getElementById('flightradar-default-bounds');
+    const bulkEndpoint = "{{ url_for('customers.bulk_add_customer_flightradar_links', customer_id=customer.id) }}";
     const mapElement = document.getElementById('customer-flightradar-map');
     let map = null;
     let markers = [];
     let selectedMarker = null;
+    let aircraftIcon = null;
+    let visibleOperators = [];
+    let searchTimer = null;
 
     function escapeHtml(value) {
         return String(value ?? '').replace(/[&<>"']/g, function(character) {
@@ -1962,6 +1992,107 @@ document.addEventListener('DOMContentLoaded', function() {
         status.className = `alert alert-${type} mb-3`;
         status.textContent = message;
     }
+
+    function operatorLabel(operator) {
+        const bits = [
+            operator.icao,
+            operator.iata ? `IATA ${operator.iata}` : '',
+            operator.callsign ? `Callsign ${operator.callsign}` : '',
+            operator.country || ''
+        ].filter(Boolean);
+        return bits.join(' | ');
+    }
+
+    function renderOperatorResults(operators) {
+        visibleOperators = operators || [];
+        if (!operatorResults || !addVisibleButton) return;
+
+        addVisibleButton.disabled = visibleOperators.length === 0;
+        if (!visibleOperators.length) {
+            operatorResults.innerHTML = operatorSearch?.value.trim()
+                ? '<div class="list-group-item text-muted small">No operators found.</div>'
+                : '';
+            return;
+        }
+
+        operatorResults.innerHTML = visibleOperators.map(operator => `
+            <button type="button"
+                    class="list-group-item list-group-item-action flightradar-operator-choice"
+                    data-icao="${escapeHtml(operator.icao)}">
+                <div class="d-flex justify-content-between gap-3">
+                    <strong>${escapeHtml(operator.name || operator.icao)}</strong>
+                    <span class="badge text-bg-light">${escapeHtml(operator.icao)}</span>
+                </div>
+                <div class="text-muted small">${escapeHtml(operatorLabel(operator))}</div>
+            </button>
+        `).join('');
+    }
+
+    async function searchOperators() {
+        if (!operatorSearch) return;
+        const query = operatorSearch.value.trim();
+        if (query.length < 2) {
+            renderOperatorResults([]);
+            return;
+        }
+
+        const url = `{{ url_for('flightradar.operator_search') }}?q=${encodeURIComponent(query)}&limit=25`;
+        try {
+            const response = await fetch(url);
+            const payload = await response.json();
+            if (!response.ok || !payload.ok) {
+                throw new Error(payload.error || 'Operator search failed.');
+            }
+            renderOperatorResults(payload.operators || []);
+        } catch (error) {
+            visibleOperators = [];
+            if (operatorResults) {
+                operatorResults.innerHTML = `<div class="list-group-item text-danger small">${escapeHtml(error.message || 'Operator search failed.')}</div>`;
+            }
+            if (addVisibleButton) {
+                addVisibleButton.disabled = true;
+            }
+        }
+    }
+
+    operatorSearch?.addEventListener('input', function() {
+        window.clearTimeout(searchTimer);
+        searchTimer = window.setTimeout(searchOperators, 250);
+    });
+
+    operatorResults?.addEventListener('click', function(event) {
+        const choice = event.target.closest('.flightradar-operator-choice');
+        if (!choice || !icaoInput) return;
+        icaoInput.value = choice.dataset.icao || '';
+        icaoInput.focus();
+    });
+
+    addVisibleButton?.addEventListener('click', async function() {
+        if (!visibleOperators.length) return;
+        addVisibleButton.disabled = true;
+        addVisibleButton.textContent = 'Adding...';
+
+        try {
+            const response = await fetch(bulkEndpoint, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    operators: visibleOperators,
+                    match_mode: matchModeInput?.value || 'operating_as',
+                    default_bounds: boundsInput?.value || ''
+                })
+            });
+            const payload = await response.json();
+            if (!response.ok || !payload.ok) {
+                throw new Error(payload.error || 'Unable to add visible operators.');
+            }
+            window.location.reload();
+        } catch (error) {
+            alert(error.message || 'Unable to add visible operators.');
+            addVisibleButton.disabled = false;
+            addVisibleButton.textContent = 'Add All Showing';
+        }
+    });
 
     function ensureMap() {
         if (map || !mapElement || typeof L === 'undefined') {
@@ -1984,6 +2115,14 @@ document.addEventListener('DOMContentLoaded', function() {
             attribution: '&copy; OpenStreetMap contributors'
         }).addTo(map);
 
+        aircraftIcon = L.divIcon({
+            className: '',
+            html: '<div class="customer-aircraft-marker"><i class="bi bi-airplane-fill"></i></div>',
+            iconSize: [30, 30],
+            iconAnchor: [15, 15],
+            popupAnchor: [0, -14]
+        });
+
         window.setTimeout(() => map.invalidateSize(false), 250);
         return map;
     }
@@ -2003,7 +2142,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const activeMap = ensureMap();
         if (!activeMap) return null;
 
-        const marker = L.marker([lat, lon]).addTo(activeMap);
+        const marker = L.marker([lat, lon], {icon: aircraftIcon}).addTo(activeMap);
         marker.bindPopup(popupHtml || escapeHtml(label));
         markers.push(marker);
         return marker;
@@ -2023,7 +2162,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (selectedMarker) {
             selectedMarker.remove();
         }
-        selectedMarker = L.marker([parsedLat, parsedLon]).addTo(activeMap);
+        selectedMarker = L.marker([parsedLat, parsedLon], {icon: aircraftIcon}).addTo(activeMap);
         selectedMarker.bindPopup(popupHtml || escapeHtml(label || 'Aircraft')).openPopup();
         activeMap.setView([parsedLat, parsedLon], Math.max(activeMap.getZoom(), 7));
     }
@@ -2124,7 +2263,7 @@ document.addEventListener('DOMContentLoaded', function() {
         focusTail(link.dataset.lat, link.dataset.lon, link.dataset.label || link.textContent.trim());
     });
 
-    refreshButton.addEventListener('click', async function() {
+    refreshButton?.addEventListener('click', async function() {
         ensureMap();
         refreshButton.disabled = true;
         spinner.classList.remove('d-none');
@@ -2259,6 +2398,20 @@ document.addEventListener('DOMContentLoaded', function() {
 #customer-flightradar-map .leaflet-marker-shadow {
     max-height: none !important;
     max-width: none !important;
+}
+
+.customer-aircraft-marker {
+    align-items: center;
+    background: #0d6efd;
+    border: 2px solid #fff;
+    border-radius: 50%;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+    color: #fff;
+    display: flex;
+    font-size: 14px;
+    height: 30px;
+    justify-content: center;
+    width: 30px;
 }
 
 /* Simplified Development Tab Styles */

@@ -1,6 +1,9 @@
 import os
 import re
 import json
+import csv
+from functools import lru_cache
+from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, render_template, request
 from flask_login import current_user, login_required
@@ -14,6 +17,7 @@ flightradar_bp = Blueprint('flightradar', __name__, url_prefix='/flightradar')
 
 _ICAO_LIST_RE = re.compile(r'^[A-Z0-9]{2,4}(,[A-Z0-9]{2,4}){0,14}$')
 _BOUNDS_RE = re.compile(r'^-?\d{1,3}(?:\.\d{1,3})?,-?\d{1,3}(?:\.\d{1,3})?,-?\d{1,3}(?:\.\d{1,3})?,-?\d{1,3}(?:\.\d{1,3})?$')
+_AIRLINES_DAT_PATH = Path(__file__).resolve().parent.parent / 'docs' / 'flightradar' / 'airlines.dat'
 
 
 def _build_client() -> FlightradarClient:
@@ -74,6 +78,89 @@ def _normalize_match_mode(value: str) -> str:
     if mode not in ('operating_as', 'painted_as', 'both'):
         raise ValueError('Match mode must be operating_as, painted_as, or both.')
     return mode
+
+
+@lru_cache(maxsize=1)
+def _load_airline_dat_rows():
+    if not _AIRLINES_DAT_PATH.exists():
+        return []
+
+    rows = []
+    with _AIRLINES_DAT_PATH.open('r', encoding='utf-8', newline='') as handle:
+        reader = csv.reader(handle)
+        for raw in reader:
+            if len(raw) < 8:
+                continue
+            airline_id, name, alias, iata, icao, callsign, country, active = raw[:8]
+            def clean(value):
+                value = (value or '').strip()
+                return '' if value == r'\N' else value
+
+            icao = clean(icao).upper()
+            if not icao:
+                continue
+
+            row = {
+                'id': clean(airline_id),
+                'name': clean(name),
+                'alias': clean(alias),
+                'iata': clean(iata).upper(),
+                'icao': icao,
+                'callsign': clean(callsign),
+                'country': clean(country),
+                'active': clean(active).upper() == 'Y',
+            }
+            row['search_text'] = ' '.join(
+                str(row.get(key) or '').lower()
+                for key in ('name', 'alias', 'iata', 'icao', 'callsign', 'country')
+            )
+            rows.append(row)
+    return rows
+
+
+def search_local_airline_operators(query: str, *, limit: int = 25):
+    terms = [term.lower() for term in re.split(r'\s+', (query or '').strip()) if term.strip()]
+    if not terms:
+        return []
+
+    def term_matches(row, term):
+        if len(term) <= 3:
+            if term in (row['icao'].lower(), row['iata'].lower()):
+                return True
+            words = re.findall(r'[a-z0-9]+', row['search_text'])
+            return any(word.startswith(term) for word in words)
+        return term in row['search_text']
+
+    matches = []
+    for row in _load_airline_dat_rows():
+        if all(term_matches(row, term) for term in terms):
+            score = 0
+            q = ' '.join(terms)
+            if row['icao'].lower() == q:
+                score += 100
+            if row['iata'].lower() == q:
+                score += 80
+            if row['name'].lower().startswith(q):
+                score += 50
+            if row['active']:
+                score += 10
+            matches.append((score, row))
+
+    matches.sort(key=lambda item: (-item[0], item[1]['name'], item[1]['icao']))
+    return [
+        {key: value for key, value in row.items() if key != 'search_text'}
+        for _, row in matches[:limit]
+    ]
+
+
+def get_local_airline_operator(icao: str):
+    normalized = (icao or '').strip().upper()
+    if not normalized:
+        return None
+    for row in _load_airline_dat_rows():
+        if row['icao'] == normalized:
+            return {key: value for key, value in row.items() if key != 'search_text'}
+    return None
 
 
 def _can_view_customer(customer_id: int) -> bool:
@@ -231,6 +318,28 @@ def lookup_airline_by_icao(icao: str) -> dict:
     return _build_client().get_airline_light(normalized)
 
 
+def lookup_airline_by_icao_with_local_fallback(icao: str) -> dict:
+    normalized = _normalize_icao_list(icao)
+    if not normalized or ',' in normalized:
+        raise ValueError('Provide one airline/operator ICAO code.')
+    try:
+        airline = _build_client().get_airline_light(normalized)
+        airline['source'] = 'flightradar'
+        return airline
+    except FlightradarError:
+        local = get_local_airline_operator(normalized)
+        if local:
+            return {
+                'name': local.get('name'),
+                'iata': local.get('iata'),
+                'icao': local.get('icao'),
+                'callsign': local.get('callsign'),
+                'country': local.get('country'),
+                'source': 'airlines.dat',
+            }
+        raise
+
+
 @flightradar_bp.route('/')
 @login_required
 def flightradar_home():
@@ -275,6 +384,17 @@ def airline_lookup():
     except Exception as exc:
         current_app.logger.exception('Unexpected Flightradar airline lookup error')
         return jsonify({'ok': False, 'error': f'Unexpected Flightradar error: {exc}'}), 500
+
+
+@flightradar_bp.route('/api/operator-search', methods=['GET'])
+@login_required
+def operator_search():
+    query = request.args.get('q', '')
+    limit = _normalize_limit(request.args.get('limit', '25'))
+    return jsonify({
+        'ok': True,
+        'operators': search_local_airline_operators(query, limit=min(limit, 100)),
+    })
 
 
 @flightradar_bp.route('/api/live-positions', methods=['GET'])

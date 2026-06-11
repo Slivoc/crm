@@ -951,12 +951,12 @@ def add_customer_flightradar_link(customer_id):
         abort(403)
 
     try:
-        from routes.flightradar import lookup_airline_by_icao, _normalize_bounds, _normalize_match_mode
+        from routes.flightradar import lookup_airline_by_icao_with_local_fallback, _normalize_bounds, _normalize_match_mode
 
         airline_icao = (request.form.get('airline_icao') or '').strip().upper()
         match_mode = _normalize_match_mode(request.form.get('match_mode') or 'operating_as')
         default_bounds = _normalize_bounds(request.form.get('default_bounds') or '')
-        airline = lookup_airline_by_icao(airline_icao)
+        airline = lookup_airline_by_icao_with_local_fallback(airline_icao)
 
         saved_icao = (airline.get('icao') or airline_icao).strip().upper()
         db_execute(
@@ -996,6 +996,76 @@ def add_customer_flightradar_link(customer_id):
         flash(f"Unable to link Flightradar24 operator: {exc}", "danger")
 
     return redirect(url_for('customers.edit_customer', customer_id=customer_id))
+
+
+@customers_bp.route('/<int:customer_id>/flightradar-links/bulk', methods=['POST'])
+@login_required
+def bulk_add_customer_flightradar_links(customer_id):
+    customer = get_customer_by_id(customer_id)
+    if not customer:
+        return jsonify({'ok': False, 'error': 'Customer not found'}), 404
+
+    customer_dict = dict(customer) if hasattr(customer, 'keys') else customer
+    _, can_edit = _get_customer_permission_flags(customer_dict)
+    if not can_edit:
+        return jsonify({'ok': False, 'error': 'Permission denied'}), 403
+
+    try:
+        from routes.flightradar import _normalize_bounds, _normalize_match_mode, get_local_airline_operator
+
+        payload = request.get_json(silent=True) or {}
+        operators = payload.get('operators') or []
+        match_mode = _normalize_match_mode(payload.get('match_mode') or 'operating_as')
+        default_bounds = _normalize_bounds(payload.get('default_bounds') or '')
+
+        added = []
+        skipped = []
+        seen = set()
+        for operator in operators:
+            icao = str(operator.get('icao') or '').strip().upper()
+            if not icao or icao in seen:
+                continue
+            seen.add(icao)
+            local = get_local_airline_operator(icao)
+            if not local:
+                skipped.append({'icao': icao, 'reason': 'Not found in airlines.dat'})
+                continue
+
+            db_execute(
+                """
+                INSERT INTO customer_flightradar_links (
+                    customer_id,
+                    airline_icao,
+                    airline_iata,
+                    airline_name,
+                    match_mode,
+                    default_bounds
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT (customer_id, airline_icao, match_mode)
+                DO UPDATE SET
+                    airline_iata = EXCLUDED.airline_iata,
+                    airline_name = EXCLUDED.airline_name,
+                    default_bounds = EXCLUDED.default_bounds,
+                    is_active = TRUE,
+                    updated_at = NOW()
+                """,
+                (
+                    customer_id,
+                    local.get('icao'),
+                    local.get('iata') or None,
+                    local.get('name'),
+                    match_mode,
+                    default_bounds or None,
+                ),
+                commit=True,
+            )
+            added.append(local)
+
+        return jsonify({'ok': True, 'added_count': len(added), 'skipped': skipped})
+    except Exception as exc:
+        logger.exception("Unable to bulk add customer Flightradar links")
+        return jsonify({'ok': False, 'error': str(exc)}), 400
 
 
 @customers_bp.route('/<int:customer_id>/flightradar-links/<int:link_id>/delete', methods=['POST'])
