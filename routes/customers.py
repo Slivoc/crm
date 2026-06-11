@@ -122,6 +122,60 @@ def _replace_customer_supplier_relationships(customer_id, supplier_ids):
             )
 
 
+def _get_customer_flightradar_links(customer_id):
+    try:
+        rows = db_execute(
+            """
+            SELECT id,
+                   airline_icao,
+                   airline_iata,
+                   airline_name,
+                   match_mode,
+                   default_bounds,
+                   is_active,
+                   last_verified_at,
+                   last_live_sync_at
+            FROM customer_flightradar_links
+            WHERE customer_id = ?
+            ORDER BY is_active DESC, airline_name NULLS LAST, airline_icao, match_mode
+            """,
+            (customer_id,),
+            fetch='all',
+        ) or []
+    except Exception as exc:
+        logger.warning("Unable to load customer Flightradar links: %s", exc)
+        return []
+    return [dict(row) for row in rows]
+
+
+def _get_customer_flightradar_aircraft(customer_id, limit=10):
+    try:
+        rows = db_execute(
+            """
+            SELECT registration,
+                   aircraft_type,
+                   last_seen_at,
+                   last_flight,
+                   last_callsign,
+                   last_origin,
+                   last_destination,
+                   last_alt,
+                   last_gspeed,
+                   observed_count
+            FROM customer_flightradar_aircraft
+            WHERE customer_id = ?
+            ORDER BY last_seen_at DESC
+            LIMIT ?
+            """,
+            (customer_id, limit),
+            fetch='all',
+        ) or []
+    except Exception as exc:
+        logger.warning("Unable to load customer Flightradar aircraft: %s", exc)
+        return []
+    return [dict(row) for row in rows]
+
+
 def _get_customer_commercial_insights(customer_id):
     """Return commercial rollups for the customer detail reporting tab."""
     scoped_customers = db_execute(
@@ -801,6 +855,8 @@ def edit_customer(customer_id):
 
     development_plan = get_customer_development_plan(customer_id)
     commercial_insights = _get_customer_commercial_insights(customer_id)
+    flightradar_links = _get_customer_flightradar_links(customer_id)
+    flightradar_aircraft = _get_customer_flightradar_aircraft(customer_id)
 
     return render_template('customer_edit.html',
                            customer=customer_dict,
@@ -823,6 +879,8 @@ def edit_customer(customer_id):
                            suppliers=suppliers,
                            selected_supplier_ids=selected_supplier_ids,
                            commercial_insights=commercial_insights,
+                           flightradar_links=flightradar_links,
+                           flightradar_aircraft=flightradar_aircraft,
                            page=page,
                            per_page=per_page,
                            breadcrumbs=breadcrumbs,
@@ -876,6 +934,92 @@ def update_customer_status(customer_id):
             'name': status_name,
         }
     })
+
+
+@customers_bp.route('/<int:customer_id>/flightradar-links', methods=['POST'])
+@login_required
+def add_customer_flightradar_link(customer_id):
+    customer = get_customer_by_id(customer_id)
+    if not customer:
+        abort(404)
+
+    customer_dict = dict(customer) if hasattr(customer, 'keys') else customer
+    _, can_edit = _get_customer_permission_flags(customer_dict)
+    if not can_edit:
+        abort(403)
+
+    try:
+        from routes.flightradar import lookup_airline_by_icao, _normalize_bounds, _normalize_match_mode
+
+        airline_icao = (request.form.get('airline_icao') or '').strip().upper()
+        match_mode = _normalize_match_mode(request.form.get('match_mode') or 'operating_as')
+        default_bounds = _normalize_bounds(request.form.get('default_bounds') or '')
+        airline = lookup_airline_by_icao(airline_icao)
+
+        saved_icao = (airline.get('icao') or airline_icao).strip().upper()
+        db_execute(
+            """
+            INSERT INTO customer_flightradar_links (
+                customer_id,
+                airline_icao,
+                airline_iata,
+                airline_name,
+                match_mode,
+                default_bounds,
+                last_verified_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, NOW())
+            ON CONFLICT (customer_id, airline_icao, match_mode)
+            DO UPDATE SET
+                airline_iata = EXCLUDED.airline_iata,
+                airline_name = EXCLUDED.airline_name,
+                default_bounds = EXCLUDED.default_bounds,
+                is_active = TRUE,
+                last_verified_at = NOW(),
+                updated_at = NOW()
+            """,
+            (
+                customer_id,
+                saved_icao,
+                airline.get('iata'),
+                airline.get('name'),
+                match_mode,
+                default_bounds or None,
+            ),
+            commit=True,
+        )
+        flash(f"Linked Flightradar24 operator {saved_icao} to this customer.", "success")
+    except Exception as exc:
+        logger.exception("Unable to add customer Flightradar link")
+        flash(f"Unable to link Flightradar24 operator: {exc}", "danger")
+
+    return redirect(url_for('customers.edit_customer', customer_id=customer_id))
+
+
+@customers_bp.route('/<int:customer_id>/flightradar-links/<int:link_id>/delete', methods=['POST'])
+@login_required
+def delete_customer_flightradar_link(customer_id, link_id):
+    customer = get_customer_by_id(customer_id)
+    if not customer:
+        abort(404)
+
+    customer_dict = dict(customer) if hasattr(customer, 'keys') else customer
+    _, can_edit = _get_customer_permission_flags(customer_dict)
+    if not can_edit:
+        abort(403)
+
+    db_execute(
+        """
+        DELETE FROM customer_flightradar_links
+        WHERE id = ?
+          AND customer_id = ?
+        """,
+        (link_id, customer_id),
+        commit=True,
+    )
+    flash("Removed Flightradar24 link.", "success")
+    return redirect(url_for('customers.edit_customer', customer_id=customer_id))
+
 
 def get_customer_notes(customer_id):
     result = db_execute('SELECT notes FROM customers WHERE id = ?', (customer_id,), fetch='one')

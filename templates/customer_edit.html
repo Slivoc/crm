@@ -104,6 +104,11 @@
                  <i class="bi bi-cash-stack me-1"></i> Commercial Insights
                </a>
              </li>
+             <li class="nav-item">
+               <a class="nav-link" href="#flightradar" data-bs-toggle="tab">
+                 <i class="bi bi-airplane me-1"></i> Flightradar24
+               </a>
+             </li>
            </ul>
 
            <div class="tab-content">
@@ -838,6 +843,174 @@
                          </div>
                      </div>
                  </div>
+             </div>
+
+             <div class="tab-pane fade" id="flightradar" role="tabpanel">
+               <div class="row g-4">
+                 <div class="col-lg-4">
+                   <div class="card h-100 border">
+                     <div class="card-header">
+                       <h6 class="mb-0">Link Operator</h6>
+                     </div>
+                     <div class="card-body">
+                       <form method="post" action="{{ url_for('customers.add_customer_flightradar_link', customer_id=customer.id) }}">
+                         <div class="mb-3">
+                           <label for="flightradar-airline-icao" class="form-label">Operator ICAO</label>
+                           <input type="text"
+                                  class="form-control text-uppercase"
+                                  id="flightradar-airline-icao"
+                                  name="airline_icao"
+                                  maxlength="4"
+                                  placeholder="e.g. BHL"
+                                  required
+                                  {{ 'disabled' if not can_edit }}>
+                           <div class="form-text">Validated against Flightradar24 before saving.</div>
+                         </div>
+                         <div class="mb-3">
+                           <label for="flightradar-match-mode" class="form-label">Match Mode</label>
+                           <select id="flightradar-match-mode" name="match_mode" class="form-select" {{ 'disabled' if not can_edit }}>
+                             <option value="operating_as">Operating as</option>
+                             <option value="painted_as">Painted as</option>
+                             <option value="both">Both</option>
+                           </select>
+                         </div>
+                         <div class="mb-3">
+                           <label for="flightradar-default-bounds" class="form-label">Default Bounds</label>
+                           <input type="text"
+                                  class="form-control"
+                                  id="flightradar-default-bounds"
+                                  name="default_bounds"
+                                  value="72.0,25.0,-25.0,45.0"
+                                  {{ 'disabled' if not can_edit }}>
+                           <div class="form-text">Optional north,south,west,east limit for live lookups.</div>
+                         </div>
+                         <button type="submit" class="btn btn-primary w-100" {{ 'disabled' if not can_edit }}>
+                           Link Operator
+                         </button>
+                       </form>
+                     </div>
+                   </div>
+                 </div>
+
+                 <div class="col-lg-8">
+                   <div class="card border mb-4">
+                     <div class="card-header d-flex align-items-center justify-content-between">
+                       <h6 class="mb-0">Linked Operators</h6>
+                       <span class="badge text-bg-light">{{ flightradar_links|length }}</span>
+                     </div>
+                     <div class="table-responsive">
+                       <table class="table table-sm align-middle mb-0">
+                         <thead>
+                           <tr>
+                             <th>Operator</th>
+                             <th>Mode</th>
+                             <th>Bounds</th>
+                             <th>Last Live Sync</th>
+                             <th></th>
+                           </tr>
+                         </thead>
+                         <tbody>
+                           {% for link in flightradar_links %}
+                           <tr>
+                             <td>
+                               <div class="fw-semibold">{{ link.airline_icao }}</div>
+                               <div class="text-muted small">{{ link.airline_name or 'Name not returned' }}{% if link.airline_iata %} ({{ link.airline_iata }}){% endif %}</div>
+                             </td>
+                             <td>{{ link.match_mode|replace('_', ' ')|title }}</td>
+                             <td><code>{{ link.default_bounds or '-' }}</code></td>
+                             <td class="text-muted small">{{ link.last_live_sync_at or '-' }}</td>
+                             <td class="text-end">
+                               {% if can_edit %}
+                               <form method="post"
+                                     action="{{ url_for('customers.delete_customer_flightradar_link', customer_id=customer.id, link_id=link.id) }}"
+                                     onsubmit="return confirm('Remove this Flightradar24 link?');">
+                                 <button type="submit" class="btn btn-sm btn-outline-danger">Remove</button>
+                               </form>
+                               {% endif %}
+                             </td>
+                           </tr>
+                           {% else %}
+                           <tr><td colspan="5" class="text-muted text-center py-3">No Flightradar24 operators linked yet.</td></tr>
+                           {% endfor %}
+                         </tbody>
+                       </table>
+                     </div>
+                   </div>
+
+                   <div class="card border">
+                     <div class="card-header d-flex align-items-center justify-content-between gap-3">
+                       <div>
+                         <h6 class="mb-0">Live Active Flights</h6>
+                         <div class="text-muted small">Refresh stores observed tail numbers for this customer.</div>
+                       </div>
+                       <button type="button"
+                               id="flightradar-live-refresh"
+                               class="btn btn-sm btn-outline-primary"
+                               {{ 'disabled' if flightradar_links|length == 0 }}>
+                         <span id="flightradar-live-spinner" class="spinner-border spinner-border-sm me-1 d-none" aria-hidden="true"></span>
+                         Refresh Live
+                       </button>
+                     </div>
+                     <div class="card-body">
+                       <div id="flightradar-live-status" class="alert alert-secondary mb-3">
+                         {% if flightradar_links %}
+                           Refresh live activity to update active flights and observed tails.
+                         {% else %}
+                           Link at least one operator before refreshing live activity.
+                         {% endif %}
+                       </div>
+
+                       <div class="table-responsive mb-4">
+                         <table class="table table-sm align-middle mb-0">
+                           <thead>
+                             <tr>
+                               <th>Flight</th>
+                               <th>Tail</th>
+                               <th>Type</th>
+                               <th>Route</th>
+                               <th class="text-end">Alt</th>
+                               <th class="text-end">Speed</th>
+                             </tr>
+                           </thead>
+                           <tbody id="flightradar-live-flights-body">
+                             <tr><td colspan="6" class="text-muted text-center py-3">No live refresh run yet.</td></tr>
+                           </tbody>
+                         </table>
+                       </div>
+
+                       <h6>Stored Tail Numbers</h6>
+                       <div class="table-responsive">
+                         <table class="table table-sm align-middle mb-0">
+                           <thead>
+                             <tr>
+                               <th>Tail</th>
+                               <th>Type</th>
+                               <th>Last Flight</th>
+                               <th>Last Route</th>
+                               <th class="text-end">Seen</th>
+                               <th>Last Seen</th>
+                             </tr>
+                           </thead>
+                           <tbody id="flightradar-tail-body">
+                             {% for aircraft in flightradar_aircraft %}
+                             <tr>
+                               <td class="fw-semibold">{{ aircraft.registration }}</td>
+                               <td>{{ aircraft.aircraft_type or '-' }}</td>
+                               <td>{{ aircraft.last_flight or aircraft.last_callsign or '-' }}</td>
+                               <td>{{ aircraft.last_origin or '?' }} -> {{ aircraft.last_destination or '?' }}</td>
+                               <td class="text-end">{{ aircraft.observed_count or 0 }}</td>
+                               <td class="text-muted small">{{ aircraft.last_seen_at or '-' }}</td>
+                             </tr>
+                             {% else %}
+                             <tr><td colspan="6" class="text-muted text-center py-3">No tail numbers stored yet.</td></tr>
+                             {% endfor %}
+                           </tbody>
+                         </table>
+                       </div>
+                     </div>
+                   </div>
+                 </div>
+               </div>
              </div>
 
            </div>
@@ -1735,6 +1908,108 @@ document.addEventListener('DOMContentLoaded', function() {
 
     renderSelectedSuppliers();
     renderAvailableSuppliers();
+});
+</script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const refreshButton = document.getElementById('flightradar-live-refresh');
+    if (!refreshButton) return;
+
+    const spinner = document.getElementById('flightradar-live-spinner');
+    const status = document.getElementById('flightradar-live-status');
+    const flightsBody = document.getElementById('flightradar-live-flights-body');
+    const tailBody = document.getElementById('flightradar-tail-body');
+    const endpoint = "{{ url_for('flightradar.customer_live_active_flights', customer_id=customer.id) }}";
+
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, function(character) {
+            return {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }[character];
+        });
+    }
+
+    function setStatus(type, message) {
+        status.className = `alert alert-${type} mb-3`;
+        status.textContent = message;
+    }
+
+    function renderFlights(flights) {
+        if (!flights.length) {
+            flightsBody.innerHTML = '<tr><td colspan="6" class="text-muted text-center py-3">No active flights returned.</td></tr>';
+            return;
+        }
+
+        flightsBody.innerHTML = flights.map(flight => {
+            const route = `${flight.orig_iata || flight.orig_icao || '?'} -> ${flight.dest_iata || flight.dest_icao || '?'}`;
+            return `
+                <tr>
+                    <td>
+                        <div class="fw-semibold">${escapeHtml(flight.flight || flight.callsign || flight.fr24_id || '-')}</div>
+                        <div class="text-muted small">${escapeHtml(flight.operating_as || '')}${flight.painted_as ? ` / ${escapeHtml(flight.painted_as)}` : ''}</div>
+                    </td>
+                    <td>${escapeHtml(flight.reg || '-')}</td>
+                    <td>${escapeHtml(flight.type || '-')}</td>
+                    <td>${escapeHtml(route)}</td>
+                    <td class="text-end">${escapeHtml(flight.alt ?? '-')}</td>
+                    <td class="text-end">${escapeHtml(flight.gspeed ?? '-')}</td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    function renderAircraft(aircraftRows) {
+        if (!aircraftRows.length) {
+            tailBody.innerHTML = '<tr><td colspan="6" class="text-muted text-center py-3">No tail numbers stored yet.</td></tr>';
+            return;
+        }
+
+        tailBody.innerHTML = aircraftRows.map(aircraft => {
+            const route = `${aircraft.last_origin || '?'} -> ${aircraft.last_destination || '?'}`;
+            return `
+                <tr>
+                    <td class="fw-semibold">${escapeHtml(aircraft.registration || '-')}</td>
+                    <td>${escapeHtml(aircraft.aircraft_type || '-')}</td>
+                    <td>${escapeHtml(aircraft.last_flight || aircraft.last_callsign || '-')}</td>
+                    <td>${escapeHtml(route)}</td>
+                    <td class="text-end">${escapeHtml(aircraft.observed_count ?? 0)}</td>
+                    <td class="text-muted small">${escapeHtml(aircraft.last_seen_at || '-')}</td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    refreshButton.addEventListener('click', async function() {
+        refreshButton.disabled = true;
+        spinner.classList.remove('d-none');
+        setStatus('info', 'Refreshing live Flightradar24 activity...');
+
+        try {
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({limit: 500})
+            });
+            const payload = await response.json();
+            if (!response.ok || !payload.ok) {
+                throw new Error(payload.error || 'Unable to refresh live Flightradar24 activity.');
+            }
+
+            renderFlights(payload.flights || []);
+            renderAircraft(payload.aircraft || []);
+            setStatus('success', `Loaded ${payload.count || 0} active flights and stored ${payload.stored_tail_count || 0} tail observations.`);
+        } catch (error) {
+            setStatus('danger', error.message || 'Unable to refresh live Flightradar24 activity.');
+        } finally {
+            spinner.classList.add('d-none');
+            refreshButton.disabled = false;
+        }
+    });
 });
 </script>
 

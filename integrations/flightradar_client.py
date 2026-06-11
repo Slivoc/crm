@@ -24,6 +24,9 @@ class FlightradarClient:
     def get_usage(self, *, period: str = '24h') -> Dict[str, Any]:
         return self._request('GET', '/api/usage', params={'period': period})
 
+    def get_airline_light(self, icao: str) -> Dict[str, Any]:
+        return self._request('GET', f'/api/static/airlines/{icao.strip().upper()}/light')
+
     def get_live_positions_full(
         self,
         *,
