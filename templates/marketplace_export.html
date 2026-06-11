@@ -574,6 +574,10 @@
                                 Quantity/pricing: include stock held under selected alternate part numbers and use the highest in-stock estimate
                             </label>
                         </div>
+                        <button class="btn btn-lg btn-outline-danger" id="downloadMissingMandatoryBtn">
+                            <i class="bi bi-clipboard-x"></i> Download Missing Mandatory Fields
+                        </button>
+                        <small class="text-muted text-end" id="missingMandatoryHint">Checks the ready-to-export categorized lines for the selected push mode.</small>
                         <button class="btn btn-lg btn-primary" id="pushToMarketplaceBtn">
                             <i class="bi bi-cloud-upload"></i> Push to Marketplace
                         </button>
@@ -898,6 +902,15 @@ $(document).ready(function() {
 
     $('#miraklPushMode').change(function() {
         updatePushActionUi();
+        updateMissingMandatoryHint();
+    });
+
+    $('#excludeExistingMarketplaceProductIds, #includeNonHqplAlts, #includeAltStockRollup').change(function() {
+        updateMissingMandatoryHint();
+    });
+
+    $('#defaultQuantity, #defaultDescriptionMode, #defaultMkpEccn, #defaultMkpProductUnit, #defaultMkpPackageContent, #defaultMkpPackageContentUnit, #defaultMkpThirdLevel').on('change keyup', function() {
+        updateMissingMandatoryHint();
     });
 
     $('#pushCsvToMarketplaceBtn').click(function() {
@@ -1270,6 +1283,7 @@ function updateSummaryStats() {
     $('#readyCount').text(categorized);
     $('#uncatCount').text(uncategorized);
     $('#uncatWarning').toggle(uncategorized > 0);
+    updateMissingMandatoryHint();
 }
 
 function renderUncategorizedParts() {
@@ -1807,6 +1821,10 @@ function buildBatchDetails(details) {
     return lines.join('\n');
 }
 
+$('#downloadMissingMandatoryBtn').click(function() {
+    downloadMissingMandatoryFields();
+});
+
 $('#downloadBatchCsvBtn').click(function() {
     if (!lastBatchDetails.length) {
         return;
@@ -2229,7 +2247,9 @@ function validateMandatoryForOfferPayload(offer) {
     if (!productIdType) {
         missing.push('product-id-type');
     }
-    if (price === null) {
+    const commercialMode = String(offer['commercial-on-collection'] || '').trim().toUpperCase();
+    const onDemandWithoutPrice = commercialMode === 'ON_DEMAND' && coercePositiveNumber(offer['price']) === null;
+    if (price === null && !onDemandWithoutPrice) {
         missing.push('price');
     }
     if (!Number.isFinite(quantity) || quantity <= 0) {
@@ -2262,6 +2282,62 @@ function splitValidParts(parts, mode, defaults) {
     });
 
     return { valid, invalid };
+}
+
+function buildMissingMandatoryRows(mode, defaults) {
+    const categorizedParts = allParts.filter(p => p.mkp_category);
+    const productIdFilter = filterExistingMarketplaceProducts(categorizedParts, mode);
+    const split = splitValidParts(productIdFilter.parts, mode, defaults);
+    return {
+        mode: mode,
+        invalid: split.invalid,
+        validCount: split.valid.length,
+        checkedCount: productIdFilter.parts.length,
+        skippedExisting: productIdFilter.skippedExisting || []
+    };
+}
+
+function downloadMissingMandatoryFields() {
+    const defaults = getMarketplaceDefaults();
+    const selectedPushMode = $('#miraklPushMode').val() || 'products';
+    const mode = selectedPushMode === 'offers' ? 'offers' : 'products';
+    const result = buildMissingMandatoryRows(mode, defaults);
+
+    if (!result.invalid.length) {
+        const skippedText = result.skippedExisting.length
+            ? ` (${result.skippedExisting.length} product line(s) skipped because they already have a marketplace product ID.)`
+            : '';
+        $('#exportStatus').text(`No ready-to-export ${mode === 'offers' ? 'offer' : 'product'} lines are missing mandatory fields.${skippedText}`);
+        alert(`No ready-to-export ${mode === 'offers' ? 'offer' : 'product'} lines are missing mandatory fields.`);
+        return;
+    }
+
+    const rows = [
+        ['mode', 'row_in_checked_set', 'part_number', 'missing_fields', 'missing_count']
+    ];
+    result.invalid.forEach((item) => {
+        rows.push([
+            mode,
+            item.row || '',
+            item.id || '',
+            (item.missing_fields || []).join('; '),
+            (item.missing_fields || []).length
+        ]);
+    });
+    const csv = rows.map((row) => row.map(escapeCsvValue).join(',')).join('\n');
+    const filenameMode = mode === 'offers' ? 'offers' : 'products';
+    downloadCsv(csv, `marketplace_${filenameMode}_missing_mandatory_fields.csv`);
+    $('#exportStatus').text(`Downloaded ${result.invalid.length} ${mode === 'offers' ? 'offer' : 'product'} line(s) missing mandatory fields from ${result.checkedCount} ready-to-export line(s).`);
+}
+
+function updateMissingMandatoryHint() {
+    const defaults = getMarketplaceDefaults();
+    const mode = ($('#miraklPushMode').val() || 'products') === 'offers' ? 'offers' : 'products';
+    const result = buildMissingMandatoryRows(mode, defaults);
+    const skippedText = result.skippedExisting.length
+        ? ` ${result.skippedExisting.length} existing product line(s) excluded before checking.`
+        : '';
+    $('#missingMandatoryHint').text(`${result.invalid.length} of ${result.checkedCount} ready-to-export ${mode} line(s) are missing mandatory fields.${skippedText}`);
 }
 
 function formatInvalidLinesPreview(invalidRows, limit = 5) {
