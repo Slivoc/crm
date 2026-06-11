@@ -851,7 +851,7 @@
              <div class="tab-pane fade" id="flightradar" role="tabpanel">
                <div class="row g-4">
                  <div class="col-lg-4">
-                   <div class="card h-100 border">
+                   <div class="card border mb-4">
                      <div class="card-header">
                        <h6 class="mb-0">Link Operator</h6>
                      </div>
@@ -912,6 +912,57 @@
                            Link Operator
                          </button>
                        </form>
+                     </div>
+                   </div>
+
+                   <div class="card border">
+                     <div class="card-header d-flex align-items-center justify-content-between gap-3">
+                       <div>
+                         <h6 class="mb-0">14-Day Activity Summary</h6>
+                         <div class="text-muted small">Uses flight summary data when available on your plan.</div>
+                       </div>
+                       <button type="button"
+                               id="flightradar-activity-refresh"
+                               class="btn btn-sm btn-outline-primary"
+                               {{ 'disabled' if flightradar_links|length == 0 }}>
+                         <span id="flightradar-activity-spinner" class="spinner-border spinner-border-sm me-1 d-none" aria-hidden="true"></span>
+                         Load
+                       </button>
+                     </div>
+                     <div class="card-body">
+                       <div id="flightradar-activity-status" class="alert alert-secondary mb-3">
+                         {% if flightradar_links %}
+                           Load the latest 14-day activity summary.
+                         {% else %}
+                           Link at least one operator before loading activity.
+                         {% endif %}
+                       </div>
+                       <div class="row g-2 mb-3">
+                         <div class="col-6">
+                           <div class="border rounded p-3 h-100">
+                             <div class="text-muted small">Flights</div>
+                             <div id="flightradar-summary-flights" class="h4 mb-0">-</div>
+                           </div>
+                         </div>
+                         <div class="col-6">
+                           <div class="border rounded p-3 h-100">
+                             <div class="text-muted small">Unique Tails</div>
+                             <div id="flightradar-summary-tails" class="h4 mb-0">-</div>
+                           </div>
+                         </div>
+                         <div class="col-12">
+                           <div class="border rounded p-3">
+                             <div class="text-muted small">Window</div>
+                             <div id="flightradar-summary-window" class="small">-</div>
+                           </div>
+                         </div>
+                       </div>
+                       <h6>Top Routes</h6>
+                       <div id="flightradar-summary-routes" class="list-group small mb-3"></div>
+                       <h6>Aircraft Types</h6>
+                       <div id="flightradar-summary-types" class="list-group small mb-3"></div>
+                       <h6>Top Airports</h6>
+                       <div id="flightradar-summary-airports" class="list-group small"></div>
                      </div>
                    </div>
                  </div>
@@ -1044,65 +1095,6 @@
                              {% endfor %}
                            </tbody>
                          </table>
-                       </div>
-                     </div>
-                   </div>
-
-                   <div class="card border mt-4">
-                     <div class="card-header d-flex align-items-center justify-content-between gap-3">
-                       <div>
-                         <h6 class="mb-0">14-Day Activity Summary</h6>
-                         <div class="text-muted small">Uses Flightradar24 flight summary data when available on your plan.</div>
-                       </div>
-                       <button type="button"
-                               id="flightradar-activity-refresh"
-                               class="btn btn-sm btn-outline-primary"
-                               {{ 'disabled' if flightradar_links|length == 0 }}>
-                         <span id="flightradar-activity-spinner" class="spinner-border spinner-border-sm me-1 d-none" aria-hidden="true"></span>
-                         Load 14 Days
-                       </button>
-                     </div>
-                     <div class="card-body">
-                       <div id="flightradar-activity-status" class="alert alert-secondary mb-3">
-                         {% if flightradar_links %}
-                           Load the latest 14-day activity summary for linked operators.
-                         {% else %}
-                           Link at least one operator before loading activity.
-                         {% endif %}
-                       </div>
-                       <div class="row g-3 mb-3">
-                         <div class="col-md-3">
-                           <div class="border rounded p-3 h-100">
-                             <div class="text-muted small">Flights</div>
-                             <div id="flightradar-summary-flights" class="h4 mb-0">-</div>
-                           </div>
-                         </div>
-                         <div class="col-md-3">
-                           <div class="border rounded p-3 h-100">
-                             <div class="text-muted small">Unique Tails</div>
-                             <div id="flightradar-summary-tails" class="h4 mb-0">-</div>
-                           </div>
-                         </div>
-                         <div class="col-md-6">
-                           <div class="border rounded p-3 h-100">
-                             <div class="text-muted small">Window</div>
-                             <div id="flightradar-summary-window" class="small">-</div>
-                           </div>
-                         </div>
-                       </div>
-                       <div class="row g-3">
-                         <div class="col-lg-4">
-                           <h6>Top Routes</h6>
-                           <div id="flightradar-summary-routes" class="list-group small"></div>
-                         </div>
-                         <div class="col-lg-4">
-                           <h6>Aircraft Types</h6>
-                           <div id="flightradar-summary-types" class="list-group small"></div>
-                         </div>
-                         <div class="col-lg-4">
-                           <h6>Top Airports</h6>
-                           <div id="flightradar-summary-airports" class="list-group small"></div>
-                         </div>
                        </div>
                      </div>
                    </div>
