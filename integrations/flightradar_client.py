@@ -49,6 +49,26 @@ class FlightradarClient:
             params['bounds'] = bounds
         return self._request('GET', '/api/live/flight-positions/full', params=params)
 
+    def get_flight_summary_full(
+        self,
+        *,
+        flight_datetime_from: str,
+        flight_datetime_to: str,
+        operating_as: Optional[str] = None,
+        painted_as: Optional[str] = None,
+        limit: int = 500,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {
+            'flight_datetime_from': flight_datetime_from,
+            'flight_datetime_to': flight_datetime_to,
+            'limit': limit,
+        }
+        if operating_as:
+            params['operating_as'] = operating_as
+        if painted_as:
+            params['painted_as'] = painted_as
+        return self._request('GET', '/api/flight-summary/full', params=params)
+
     def _request(self, method: str, path: str, *, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         if not self.config.api_key:
             raise FlightradarError('FLIGHTRADAR_API_KEY is not configured.')

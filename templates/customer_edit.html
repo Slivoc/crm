@@ -1047,6 +1047,65 @@
                        </div>
                      </div>
                    </div>
+
+                   <div class="card border mt-4">
+                     <div class="card-header d-flex align-items-center justify-content-between gap-3">
+                       <div>
+                         <h6 class="mb-0">14-Day Activity Summary</h6>
+                         <div class="text-muted small">Uses Flightradar24 flight summary data when available on your plan.</div>
+                       </div>
+                       <button type="button"
+                               id="flightradar-activity-refresh"
+                               class="btn btn-sm btn-outline-primary"
+                               {{ 'disabled' if flightradar_links|length == 0 }}>
+                         <span id="flightradar-activity-spinner" class="spinner-border spinner-border-sm me-1 d-none" aria-hidden="true"></span>
+                         Load 14 Days
+                       </button>
+                     </div>
+                     <div class="card-body">
+                       <div id="flightradar-activity-status" class="alert alert-secondary mb-3">
+                         {% if flightradar_links %}
+                           Load the latest 14-day activity summary for linked operators.
+                         {% else %}
+                           Link at least one operator before loading activity.
+                         {% endif %}
+                       </div>
+                       <div class="row g-3 mb-3">
+                         <div class="col-md-3">
+                           <div class="border rounded p-3 h-100">
+                             <div class="text-muted small">Flights</div>
+                             <div id="flightradar-summary-flights" class="h4 mb-0">-</div>
+                           </div>
+                         </div>
+                         <div class="col-md-3">
+                           <div class="border rounded p-3 h-100">
+                             <div class="text-muted small">Unique Tails</div>
+                             <div id="flightradar-summary-tails" class="h4 mb-0">-</div>
+                           </div>
+                         </div>
+                         <div class="col-md-6">
+                           <div class="border rounded p-3 h-100">
+                             <div class="text-muted small">Window</div>
+                             <div id="flightradar-summary-window" class="small">-</div>
+                           </div>
+                         </div>
+                       </div>
+                       <div class="row g-3">
+                         <div class="col-lg-4">
+                           <h6>Top Routes</h6>
+                           <div id="flightradar-summary-routes" class="list-group small"></div>
+                         </div>
+                         <div class="col-lg-4">
+                           <h6>Aircraft Types</h6>
+                           <div id="flightradar-summary-types" class="list-group small"></div>
+                         </div>
+                         <div class="col-lg-4">
+                           <h6>Top Airports</h6>
+                           <div id="flightradar-summary-airports" class="list-group small"></div>
+                         </div>
+                       </div>
+                     </div>
+                   </div>
                  </div>
                </div>
              </div>
@@ -1968,6 +2027,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const matchModeInput = document.getElementById('flightradar-match-mode');
     const boundsInput = document.getElementById('flightradar-default-bounds');
     const bulkEndpoint = "{{ url_for('customers.bulk_add_customer_flightradar_links', customer_id=customer.id) }}";
+    const activityButton = document.getElementById('flightradar-activity-refresh');
+    const activitySpinner = document.getElementById('flightradar-activity-spinner');
+    const activityStatus = document.getElementById('flightradar-activity-status');
+    const activityEndpoint = "{{ url_for('flightradar.customer_activity_summary', customer_id=customer.id) }}";
     const mapElement = document.getElementById('customer-flightradar-map');
     let map = null;
     let markers = [];
@@ -1991,6 +2054,37 @@ document.addEventListener('DOMContentLoaded', function() {
     function setStatus(type, message) {
         status.className = `alert alert-${type} mb-3`;
         status.textContent = message;
+    }
+
+    function setActivityStatus(type, message) {
+        if (!activityStatus) return;
+        activityStatus.className = `alert alert-${type} mb-3`;
+        activityStatus.textContent = message;
+    }
+
+    function renderSummaryList(elementId, rows) {
+        const element = document.getElementById(elementId);
+        if (!element) return;
+        if (!rows || !rows.length) {
+            element.innerHTML = '<div class="list-group-item text-muted">No data.</div>';
+            return;
+        }
+        element.innerHTML = rows.map(row => `
+            <div class="list-group-item d-flex justify-content-between gap-3">
+                <span>${escapeHtml(row.name || '-')}</span>
+                <span class="badge text-bg-light">${escapeHtml(row.count ?? 0)}</span>
+            </div>
+        `).join('');
+    }
+
+    function renderActivitySummary(payload) {
+        const summary = payload.summary || {};
+        document.getElementById('flightradar-summary-flights').textContent = summary.flight_count ?? 0;
+        document.getElementById('flightradar-summary-tails').textContent = summary.unique_tail_count ?? 0;
+        document.getElementById('flightradar-summary-window').textContent = `${payload.window?.from || '-'} to ${payload.window?.to || '-'}`;
+        renderSummaryList('flightradar-summary-routes', summary.top_routes || []);
+        renderSummaryList('flightradar-summary-types', summary.top_aircraft_types || []);
+        renderSummaryList('flightradar-summary-airports', summary.top_airports || []);
     }
 
     function operatorLabel(operator) {
@@ -2288,6 +2382,32 @@ document.addEventListener('DOMContentLoaded', function() {
         } finally {
             spinner.classList.add('d-none');
             refreshButton.disabled = false;
+        }
+    });
+
+    activityButton?.addEventListener('click', async function() {
+        activityButton.disabled = true;
+        activitySpinner.classList.remove('d-none');
+        setActivityStatus('info', 'Loading 14-day Flightradar24 activity summary...');
+
+        try {
+            const response = await fetch(activityEndpoint, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({limit: 500})
+            });
+            const payload = await response.json();
+            if (!response.ok || !payload.ok) {
+                throw new Error(payload.hint || payload.error || 'Unable to load Flightradar24 activity summary.');
+            }
+
+            renderActivitySummary(payload);
+            setActivityStatus('success', `Loaded ${payload.summary?.flight_count || 0} flights from the latest 14-day window.`);
+        } catch (error) {
+            setActivityStatus('danger', error.message || 'Unable to load Flightradar24 activity summary.');
+        } finally {
+            activitySpinner.classList.add('d-none');
+            activityButton.disabled = false;
         }
     });
 });

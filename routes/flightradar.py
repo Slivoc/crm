@@ -4,6 +4,7 @@ import json
 import csv
 from functools import lru_cache
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, current_app, jsonify, render_template, request
 from flask_login import current_user, login_required
@@ -71,6 +72,36 @@ def _normalize_limit(value: str) -> int:
     except (TypeError, ValueError):
         raise ValueError('Limit must be a number.')
     return max(1, min(limit, 30000))
+
+
+def _parse_iso_datetime(value: str):
+    raw = (value or '').strip()
+    if not raw:
+        return None
+    if raw.endswith('Z'):
+        raw = raw[:-1] + '+00:00'
+    parsed = datetime.fromisoformat(raw)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _format_fr24_datetime(value: datetime) -> str:
+    return value.astimezone(timezone.utc).replace(microsecond=0).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+def _normalize_summary_window(date_from: str, date_to: str):
+    now = datetime.now(timezone.utc)
+    end = _parse_iso_datetime(date_to) or now
+    start = _parse_iso_datetime(date_from) or (end - timedelta(days=14))
+    if end > now:
+        end = now
+    if start > end:
+        raise ValueError('Start date must be before end date.')
+    max_start = end - timedelta(days=14)
+    if start < max_start:
+        start = max_start
+    return start, end
 
 
 def _normalize_match_mode(value: str) -> str:
@@ -328,6 +359,52 @@ def _upsert_customer_aircraft(customer_id: int, link_id: int, flight: dict) -> b
     return True
 
 
+def _summarize_flights(flights):
+    tails = set()
+    routes = {}
+    types = {}
+    airports = {}
+
+    for flight in flights:
+        reg = flight.get('reg')
+        if reg:
+            tails.add(str(reg).upper())
+
+        aircraft_type = flight.get('type')
+        if aircraft_type:
+            types[aircraft_type] = types.get(aircraft_type, 0) + 1
+
+        origin = flight.get('orig_iata') or flight.get('orig_icao')
+        destination = (
+            flight.get('dest_iata_actual')
+            or flight.get('dest_iata')
+            or flight.get('dest_icao_actual')
+            or flight.get('dest_icao')
+        )
+        if origin:
+            airports[origin] = airports.get(origin, 0) + 1
+        if destination:
+            airports[destination] = airports.get(destination, 0) + 1
+        if origin or destination:
+            route = f"{origin or '?'} -> {destination or '?'}"
+            routes[route] = routes.get(route, 0) + 1
+
+    def top_items(mapping, limit=10):
+        return [
+            {'name': key, 'count': count}
+            for key, count in sorted(mapping.items(), key=lambda item: (-item[1], item[0]))[:limit]
+        ]
+
+    return {
+        'flight_count': len(flights),
+        'unique_tail_count': len(tails),
+        'unique_tails': sorted(tails),
+        'top_routes': top_items(routes),
+        'top_aircraft_types': top_items(types),
+        'top_airports': top_items(airports),
+    }
+
+
 def lookup_airline_by_icao(icao: str) -> dict:
     normalized = _normalize_icao_list(icao)
     if not normalized or ',' in normalized:
@@ -537,4 +614,79 @@ def customer_live_active_flights(customer_id):
         return _flightradar_error_response(exc)
     except Exception as exc:
         current_app.logger.exception('Unexpected customer Flightradar live flight error')
+        return jsonify({'ok': False, 'error': f'Unexpected Flightradar error: {exc}'}), 500
+
+
+@flightradar_bp.route('/api/customers/<int:customer_id>/activity-summary', methods=['POST'])
+@login_required
+def customer_activity_summary(customer_id):
+    if not _can_view_customer(customer_id):
+        return jsonify({'ok': False, 'error': 'Customer not found or access denied.'}), 404
+
+    try:
+        request_payload = request.get_json(silent=True) or {}
+        start, end = _normalize_summary_window(
+            request_payload.get('flight_datetime_from') or '',
+            request_payload.get('flight_datetime_to') or '',
+        )
+        limit = _normalize_limit(str(request_payload.get('limit') or '500'))
+        links = _get_customer_flightradar_links(customer_id)
+        if not links:
+            return jsonify({
+                'ok': True,
+                'window': {
+                    'from': _format_fr24_datetime(start),
+                    'to': _format_fr24_datetime(end),
+                    'max_days': 14,
+                },
+                'links': [],
+                'flights': [],
+                'summary': _summarize_flights([]),
+            })
+
+        client = _build_client()
+        flights = []
+        seen_keys = set()
+        for link in links:
+            mode = _normalize_match_mode(link.get('match_mode'))
+            icao = link.get('airline_icao')
+            payload = client.get_flight_summary_full(
+                flight_datetime_from=_format_fr24_datetime(start),
+                flight_datetime_to=_format_fr24_datetime(end),
+                operating_as=icao if mode in ('operating_as', 'both') else None,
+                painted_as=icao if mode in ('painted_as', 'both') else None,
+                limit=limit,
+            )
+            link_flights = payload.get('data') if isinstance(payload, dict) else []
+            for flight in link_flights or []:
+                dedupe_key = flight.get('fr24_id') or (
+                    flight.get('reg'),
+                    flight.get('flight'),
+                    flight.get('first_seen'),
+                    flight.get('last_seen'),
+                )
+                if dedupe_key in seen_keys:
+                    continue
+                seen_keys.add(dedupe_key)
+                flight['_customer_flightradar_link_id'] = link.get('id')
+                flight['_customer_flightradar_match_mode'] = mode
+                flights.append(flight)
+
+        return jsonify({
+            'ok': True,
+            'window': {
+                'from': _format_fr24_datetime(start),
+                'to': _format_fr24_datetime(end),
+                'max_days': 14,
+            },
+            'links': links,
+            'flights': flights,
+            'summary': _summarize_flights(flights),
+        })
+    except ValueError as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 400
+    except FlightradarError as exc:
+        return _flightradar_error_response(exc)
+    except Exception as exc:
+        current_app.logger.exception('Unexpected customer Flightradar activity summary error')
         return jsonify({'ok': False, 'error': f'Unexpected Flightradar error: {exc}'}), 500
