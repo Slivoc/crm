@@ -27,12 +27,12 @@
     .flightradar-map-panel {
         grid-column: 2;
         min-width: 0;
+        overflow: hidden;
         position: relative;
         z-index: 1;
     }
 
     #flight-map {
-        contain: layout paint;
         height: min(720px, calc(100vh - 190px));
         min-height: 520px;
         overflow: hidden;
@@ -44,61 +44,95 @@
     }
 
     #flight-map.leaflet-container {
+        overflow: hidden;
         z-index: 0;
     }
 
     #flight-map .leaflet-pane,
     #flight-map .leaflet-map-pane,
-    #flight-map .leaflet-tile-pane,
-    #flight-map .leaflet-overlay-pane,
-    #flight-map .leaflet-marker-pane,
-    #flight-map .leaflet-shadow-pane,
-    #flight-map .leaflet-tooltip-pane,
-    #flight-map .leaflet-popup-pane {
-        left: 0;
-        position: absolute;
-        top: 0;
-    }
-
-    #flight-map .leaflet-pane {
-        z-index: 1;
-    }
-
-    #flight-map .leaflet-tile-pane {
-        z-index: 2;
-    }
-
-    #flight-map .leaflet-overlay-pane {
-        z-index: 4;
-    }
-
-    #flight-map .leaflet-marker-pane {
-        z-index: 6;
-    }
-
-    #flight-map .leaflet-popup-pane {
-        z-index: 7;
-    }
-
     #flight-map .leaflet-tile-container,
     #flight-map .leaflet-tile,
     #flight-map .leaflet-marker-icon,
-    #flight-map .leaflet-marker-shadow {
+    #flight-map .leaflet-marker-shadow,
+    #flight-map .leaflet-image-layer,
+    #flight-map .leaflet-layer,
+    #flight-map .leaflet-shadow-pane,
+    #flight-map .leaflet-overlay-pane,
+    #flight-map .leaflet-marker-pane,
+    #flight-map .leaflet-tooltip-pane,
+    #flight-map .leaflet-popup-pane,
+    #flight-map .leaflet-overlay-pane svg,
+    #flight-map .leaflet-zoom-box,
+    #flight-map .leaflet-control {
         left: 0;
         position: absolute;
         top: 0;
     }
 
+    #flight-map .leaflet-tile,
+    #flight-map .leaflet-marker-icon,
+    #flight-map .leaflet-marker-shadow {
+        -webkit-user-drag: none;
+        user-select: none;
+    }
+
     #flight-map .leaflet-tile {
-        height: 256px !important;
+        filter: inherit;
+        visibility: hidden;
+    }
+
+    #flight-map .leaflet-tile-loaded {
+        visibility: inherit;
+    }
+
+    #flight-map .leaflet-zoom-animated {
+        transform-origin: 0 0;
+    }
+
+    #flight-map .leaflet-pane {
+        z-index: 400;
+    }
+
+    #flight-map .leaflet-tile-pane {
+        z-index: 200;
+    }
+
+    #flight-map .leaflet-overlay-pane {
+        z-index: 400;
+    }
+
+    #flight-map .leaflet-shadow-pane {
+        z-index: 500;
+    }
+
+    #flight-map .leaflet-marker-pane {
+        z-index: 600;
+    }
+
+    #flight-map .leaflet-tooltip-pane {
+        z-index: 650;
+    }
+
+    #flight-map .leaflet-popup-pane {
+        z-index: 700;
+    }
+
+    #flight-map .leaflet-control {
+        pointer-events: auto;
+        position: relative;
+        z-index: 800;
+    }
+
+    #flight-map img.leaflet-tile,
+    #flight-map .leaflet-marker-icon,
+    #flight-map .leaflet-marker-shadow {
         max-height: none !important;
         max-width: none !important;
-        width: 256px !important;
     }
 
     #flight-map .leaflet-control-container {
         position: relative;
-        z-index: 8;
+        z-index: 800;
     }
 
     .aircraft-marker {
@@ -269,9 +303,19 @@ document.addEventListener('DOMContentLoaded', function () {
     let markers = [];
     let refreshTimer = null;
 
-    const map = L.map('flight-map', {worldCopyJump: true}).setView([51.5, 0], 4);
+    const map = L.map('flight-map', {
+        fadeAnimation: false,
+        markerZoomAnimation: false,
+        worldCopyJump: true,
+        zoomAnimation: false
+    }).setView([51.5, 0], 4);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        crossOrigin: true,
+        detectRetina: false,
+        keepBuffer: 4,
         maxZoom: 12,
+        updateWhenIdle: true,
+        updateWhenZooming: false,
         attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
 
