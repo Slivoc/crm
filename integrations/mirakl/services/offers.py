@@ -140,7 +140,7 @@ def build_offers_csv(
             row_missing = []
             for field in REQUIRED_FIELDS:
                 if field == 'price':
-                    if _coerce_number(row.get(field)) is None:
+                    if _coerce_number(row.get(field)) is None and not _is_on_demand_without_price(row):
                         row_missing.append(field)
                     continue
                 if field not in row or _is_blank(row.get(field)):

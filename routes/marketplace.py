@@ -592,7 +592,7 @@ def _get_offer_missing_required_fields(offer):
         missing.append('product-id')
     if _is_blank(offer.get('product-id-type')):
         missing.append('product-id-type')
-    if _coerce_numeric_number(offer.get('price')) is None:
+    if _coerce_numeric_number(offer.get('price')) is None and not _is_on_demand_without_price(offer):
         missing.append('price')
     if _coerce_positive_number(offer.get('quantity')) is None:
         missing.append('quantity')
