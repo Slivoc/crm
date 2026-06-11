@@ -2,114 +2,379 @@
 
 {% block title %}Flightradar24{% endblock %}
 
+{% block extra_css %}
+{{ super() }}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIINfQ8mkCht8E+bz0zgvqPUkR3v1sAikH8="
+      crossorigin="">
+<style>
+    .flightradar-shell {
+        display: grid;
+        grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+        gap: 1rem;
+        min-height: calc(100vh - 140px);
+    }
+
+    .flightradar-panel {
+        min-width: 0;
+    }
+
+    #flight-map {
+        height: calc(100vh - 190px);
+        min-height: 560px;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        background: #eef3f7;
+    }
+
+    .aircraft-marker {
+        align-items: center;
+        background: #0d6efd;
+        border: 2px solid #fff;
+        border-radius: 50%;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+        color: #fff;
+        display: flex;
+        font-size: 14px;
+        height: 30px;
+        justify-content: center;
+        width: 30px;
+    }
+
+    .flight-list {
+        max-height: 330px;
+        overflow-y: auto;
+    }
+
+    .flight-list button {
+        text-align: left;
+    }
+
+    @media (max-width: 992px) {
+        .flightradar-shell {
+            grid-template-columns: 1fr;
+        }
+
+        #flight-map {
+            height: 620px;
+        }
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid py-4">
-    <div class="d-flex align-items-center justify-content-between mb-4">
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
         <div>
             <h1 class="h3 mb-1">Flightradar24</h1>
-            <div class="text-muted">Internal integration console</div>
+            <div class="text-muted">Live operator aircraft positions</div>
         </div>
-        <a href="{{ url_for('settings.settings') }}" class="btn btn-outline-secondary">
-            <i class="bi bi-key me-1"></i>
-            API Settings
-        </a>
-    </div>
-
-    <div class="row g-4">
-        <div class="col-lg-5">
-            <div class="card">
-                <div class="card-header">
-                    <h2 class="h5 mb-0">Authentication</h2>
-                </div>
-                <div class="card-body">
-                    <dl class="row mb-4">
-                        <dt class="col-sm-4">API key</dt>
-                        <dd class="col-sm-8">
-                            {% if has_api_key %}
-                                <span class="badge text-bg-success">Configured</span>
-                            {% else %}
-                                <span class="badge text-bg-warning">Missing</span>
-                            {% endif %}
-                        </dd>
-                        <dt class="col-sm-4">Base URL</dt>
-                        <dd class="col-sm-8"><code>{{ api_base_url }}</code></dd>
-                        <dt class="col-sm-4">API version</dt>
-                        <dd class="col-sm-8"><code>{{ accept_version }}</code></dd>
-                    </dl>
-
-                    <button type="button" id="test-auth-btn" class="btn btn-primary" {% if not has_api_key %}disabled{% endif %}>
-                        <span id="test-auth-spinner" class="spinner-border spinner-border-sm me-2 d-none" aria-hidden="true"></span>
-                        Test Connection
-                    </button>
-                    {% if not has_api_key %}
-                    <div class="form-text mt-2">
-                        Add `FLIGHTRADAR_API_KEY` in Settings, or set it in the app environment.
-                    </div>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
-
-        <div class="col-lg-7">
-            <div class="card">
-                <div class="card-header">
-                    <h2 class="h5 mb-0">Response</h2>
-                </div>
-                <div class="card-body">
-                    <div id="auth-result" class="alert alert-secondary mb-3">
-                        Run the connection test to verify the bearer token against Flightradar24.
-                    </div>
-                    <pre id="auth-json" class="bg-light border rounded p-3 mb-0 small" style="min-height: 220px; white-space: pre-wrap;"></pre>
-                </div>
-            </div>
+        <div class="d-flex gap-2">
+            <button type="button" id="test-auth-btn" class="btn btn-outline-secondary" {% if not has_api_key %}disabled{% endif %}>
+                <span id="test-auth-spinner" class="spinner-border spinner-border-sm me-2 d-none" aria-hidden="true"></span>
+                Test API
+            </button>
+            <a href="{{ url_for('settings.settings') }}" class="btn btn-outline-secondary">
+                <i class="bi bi-key me-1"></i>
+                API Settings
+            </a>
         </div>
     </div>
+
+    <div class="flightradar-shell">
+        <aside class="flightradar-panel">
+            <div class="card mb-3">
+                <div class="card-header">
+                    <h2 class="h5 mb-0">Operator Filter</h2>
+                </div>
+                <div class="card-body">
+                    <form id="flight-filter-form">
+                        <div class="mb-3">
+                            <label class="form-label" for="operator-code">Operator ICAO</label>
+                            <input type="text"
+                                   class="form-control text-uppercase"
+                                   id="operator-code"
+                                   name="operator_code"
+                                   maxlength="80"
+                                   placeholder="BAW,RYR,EZY">
+                            <div class="form-text">Use airline/operator ICAO codes. Comma-separated lists are supported.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label" for="match-mode">Match Mode</label>
+                            <select class="form-select" id="match-mode" name="match_mode">
+                                <option value="operating_as" selected>Operating as</option>
+                                <option value="painted_as">Painted as</option>
+                                <option value="both">Both</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label" for="bounds-input">Bounds</label>
+                            <input type="text"
+                                   class="form-control"
+                                   id="bounds-input"
+                                   name="bounds"
+                                   value="{{ default_bounds }}"
+                                   placeholder="north,south,west,east">
+                            <div class="form-text">Current default covers Europe and nearby regions.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label" for="result-limit">Limit</label>
+                            <input type="number"
+                                   class="form-control"
+                                   id="result-limit"
+                                   name="limit"
+                                   min="1"
+                                   max="30000"
+                                   value="500">
+                        </div>
+
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" role="switch" id="auto-refresh">
+                            <label class="form-check-label" for="auto-refresh">Refresh every 60 seconds</label>
+                        </div>
+
+                        <button type="submit" id="load-flights-btn" class="btn btn-primary w-100" {% if not has_api_key %}disabled{% endif %}>
+                            <span id="load-flights-spinner" class="spinner-border spinner-border-sm me-2 d-none" aria-hidden="true"></span>
+                            Load Aircraft
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <div id="map-status" class="alert alert-secondary">
+                {% if has_api_key %}
+                    Enter an operator code and load live aircraft.
+                {% else %}
+                    Add `FLIGHTRADAR_API_KEY` in Settings before loading aircraft.
+                {% endif %}
+            </div>
+
+            <div class="card">
+                <div class="card-header d-flex align-items-center justify-content-between">
+                    <h2 class="h5 mb-0">Aircraft</h2>
+                    <span id="flight-count" class="badge text-bg-secondary">0</span>
+                </div>
+                <div id="flight-list" class="list-group list-group-flush flight-list"></div>
+            </div>
+        </aside>
+
+        <section>
+            <div id="flight-map"></div>
+        </section>
+    </div>
+
+    <pre id="auth-json" class="d-none"></pre>
 </div>
 {% endblock %}
 
 {% block scripts %}
 {{ super() }}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""></script>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-    const button = document.getElementById('test-auth-btn');
-    const spinner = document.getElementById('test-auth-spinner');
-    const result = document.getElementById('auth-result');
-    const jsonOutput = document.getElementById('auth-json');
+    const authButton = document.getElementById('test-auth-btn');
+    const authSpinner = document.getElementById('test-auth-spinner');
+    const authOutput = document.getElementById('auth-json');
+    const form = document.getElementById('flight-filter-form');
+    const loadButton = document.getElementById('load-flights-btn');
+    const loadSpinner = document.getElementById('load-flights-spinner');
+    const status = document.getElementById('map-status');
+    const flightCount = document.getElementById('flight-count');
+    const flightList = document.getElementById('flight-list');
+    const autoRefresh = document.getElementById('auto-refresh');
+    let markers = [];
+    let refreshTimer = null;
 
-    if (!button) {
-        return;
+    const map = L.map('flight-map', {worldCopyJump: true}).setView([51.5, 0], 4);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 12,
+        attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    const aircraftIcon = L.divIcon({
+        className: '',
+        html: '<div class="aircraft-marker"><i class="bi bi-airplane-fill"></i></div>',
+        iconSize: [30, 30],
+        iconAnchor: [15, 15],
+        popupAnchor: [0, -14]
+    });
+
+    function setStatus(type, message) {
+        status.className = `alert alert-${type}`;
+        status.textContent = message;
     }
 
-    button.addEventListener('click', async function () {
-        button.disabled = true;
-        spinner.classList.remove('d-none');
-        result.className = 'alert alert-info mb-3';
-        result.textContent = 'Testing Flightradar24 credentials...';
-        jsonOutput.textContent = '';
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, function (character) {
+            return {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }[character];
+        });
+    }
+
+    function clearMarkers() {
+        markers.forEach(marker => marker.remove());
+        markers = [];
+        flightList.innerHTML = '';
+        flightCount.textContent = '0';
+    }
+
+    function popupHtml(flight) {
+        const route = [flight.orig_iata || flight.orig_icao, flight.dest_iata || flight.dest_icao]
+            .filter(Boolean)
+            .join(' -> ') || 'Route unknown';
+        return `
+            <div class="small">
+                <strong>${escapeHtml(flight.flight || flight.callsign || flight.reg || flight.fr24_id || 'Aircraft')}</strong><br>
+                ${escapeHtml(route)}<br>
+                ${escapeHtml(flight.reg || 'No reg')} ${flight.type ? `(${escapeHtml(flight.type)})` : ''}<br>
+                Alt: ${escapeHtml(flight.alt ?? 'n/a')} ft | Speed: ${escapeHtml(flight.gspeed ?? 'n/a')} kt<br>
+                Operating: ${escapeHtml(flight.operating_as || 'n/a')} | Painted: ${escapeHtml(flight.painted_as || 'n/a')}<br>
+                Updated: ${escapeHtml(flight.timestamp || 'n/a')}
+            </div>
+        `;
+    }
+
+    function renderFlights(flights) {
+        clearMarkers();
+        const bounds = [];
+
+        flights.forEach((flight, index) => {
+            const lat = Number(flight.lat);
+            const lon = Number(flight.lon);
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+                return;
+            }
+
+            const marker = L.marker([lat, lon], {
+                icon: aircraftIcon,
+                rotationAngle: Number(flight.track) || 0
+            }).addTo(map);
+            marker.bindPopup(popupHtml(flight));
+            markers.push(marker);
+            bounds.push([lat, lon]);
+
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'list-group-item list-group-item-action';
+            item.innerHTML = `
+                <div class="d-flex justify-content-between gap-2">
+                    <strong>${escapeHtml(flight.flight || flight.callsign || flight.reg || 'Unknown')}</strong>
+                    <span class="text-muted">${escapeHtml(flight.type || '')}</span>
+                </div>
+                <div class="small text-muted">${escapeHtml(flight.reg || 'No reg')} &middot; ${escapeHtml(flight.orig_iata || flight.orig_icao || '?')} -> ${escapeHtml(flight.dest_iata || flight.dest_icao || '?')}</div>
+            `;
+            item.addEventListener('click', () => {
+                map.setView([lat, lon], Math.max(map.getZoom(), 7));
+                marker.openPopup();
+            });
+            flightList.appendChild(item);
+        });
+
+        flightCount.textContent = String(markers.length);
+        if (bounds.length) {
+            map.fitBounds(bounds, {padding: [32, 32], maxZoom: 7});
+        }
+    }
+
+    function buildLivePositionsUrl() {
+        const params = new URLSearchParams();
+        const operatorCode = document.getElementById('operator-code').value.trim().toUpperCase();
+        const matchMode = document.getElementById('match-mode').value;
+        const bounds = document.getElementById('bounds-input').value.trim();
+        const limit = document.getElementById('result-limit').value.trim();
+
+        if (operatorCode && (matchMode === 'operating_as' || matchMode === 'both')) {
+            params.set('operating_as', operatorCode);
+        }
+        if (operatorCode && (matchMode === 'painted_as' || matchMode === 'both')) {
+            params.set('painted_as', operatorCode);
+        }
+        if (bounds) {
+            params.set('bounds', bounds);
+        }
+        if (limit) {
+            params.set('limit', limit);
+        }
+        return `{{ url_for("flightradar.live_positions") }}?${params.toString()}`;
+    }
+
+    async function loadFlights() {
+        loadButton.disabled = true;
+        loadSpinner.classList.remove('d-none');
+        setStatus('info', 'Loading live aircraft positions...');
 
         try {
-            const response = await fetch('{{ url_for("flightradar.auth_test") }}', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'}
-            });
+            const response = await fetch(buildLivePositionsUrl());
             const payload = await response.json();
-            jsonOutput.textContent = JSON.stringify(payload, null, 2);
-
-            if (response.ok && payload.ok) {
-                result.className = 'alert alert-success mb-3';
-                result.textContent = 'Connection successful. Flightradar24 accepted the bearer token.';
-            } else {
-                result.className = 'alert alert-danger mb-3';
-                result.textContent = payload.error || 'Flightradar24 connection failed.';
+            if (!response.ok || !payload.ok) {
+                throw new Error(payload.error || 'Unable to load live aircraft.');
             }
+            renderFlights(payload.flights || []);
+            setStatus('success', `Loaded ${payload.count || 0} live aircraft.`);
         } catch (error) {
-            result.className = 'alert alert-danger mb-3';
-            result.textContent = error.message || 'Unable to test Flightradar24 credentials.';
+            clearMarkers();
+            setStatus('danger', error.message || 'Unable to load live aircraft.');
         } finally {
-            spinner.classList.add('d-none');
-            button.disabled = false;
+            loadSpinner.classList.add('d-none');
+            loadButton.disabled = false;
         }
+    }
+
+    function resetRefreshTimer() {
+        if (refreshTimer) {
+            window.clearInterval(refreshTimer);
+            refreshTimer = null;
+        }
+        if (autoRefresh.checked) {
+            refreshTimer = window.setInterval(loadFlights, 60000);
+        }
+    }
+
+    form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        loadFlights();
+        resetRefreshTimer();
     });
+
+    autoRefresh.addEventListener('change', resetRefreshTimer);
+
+    if (authButton) {
+        authButton.addEventListener('click', async function () {
+            authButton.disabled = true;
+            authSpinner.classList.remove('d-none');
+            setStatus('info', 'Testing Flightradar24 credentials...');
+
+            try {
+                const response = await fetch('{{ url_for("flightradar.auth_test") }}', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                const payload = await response.json();
+                authOutput.textContent = JSON.stringify(payload, null, 2);
+
+                if (response.ok && payload.ok) {
+                    setStatus('success', 'Connection successful. Flightradar24 accepted the bearer token.');
+                } else {
+                    setStatus('danger', payload.error || 'Flightradar24 connection failed.');
+                }
+            } catch (error) {
+                setStatus('danger', error.message || 'Unable to test Flightradar24 credentials.');
+            } finally {
+                authSpinner.classList.add('d-none');
+                authButton.disabled = false;
+            }
+        });
+    }
 });
 </script>
 {% endblock %}
