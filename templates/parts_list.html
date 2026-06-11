@@ -497,6 +497,9 @@
                 <button id="open-project-parts-list-modal-btn" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#projectPartsListModal">
                     <i class="bi bi-diagram-3 me-1"></i> New Project Parts List
                 </button>
+                <button id="open-quick-check-modal-btn" class="btn btn-sm btn-outline-success" data-bs-toggle="modal" data-bs-target="#quickCheckModal">
+                    <i class="bi bi-file-earmark-spreadsheet me-1"></i> Quick Backend Check
+                </button>
                 <a href="{{ url_for('parts_list.view_parts_lists') }}" class="btn btn-sm btn-outline-secondary">
                     <i class="bi bi-collection me-1"></i> View Saved Lists
                 </a>
@@ -785,6 +788,59 @@ AN960-416L"></textarea>
                     <i class="bi bi-diagram-2"></i> Open Supplier Mapping Tool
                 </a>
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="quickCheckModal" tabindex="-1" aria-labelledby="quickCheckModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="quickCheckModalLabel">
+                    <i class="bi bi-file-earmark-spreadsheet me-2 text-success"></i>
+                    Quick Backend Check
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info py-2">
+                    Upload a CSV/XLS/XLSX file, map the part number and quantity columns, then download an Excel report showing stock availability and sales history without creating a project or parts list.
+                </div>
+
+                <div class="row g-3 mb-3">
+                    <div class="col-md-4">
+                        <label for="quick-check-lookback-days" class="form-label">Sales lookback period</label>
+                        <div class="input-group">
+                            <input type="number" class="form-control" id="quick-check-lookback-days" min="1" max="3650" value="365">
+                            <span class="input-group-text">days</span>
+                        </div>
+                    </div>
+                    <div class="col-md-8">
+                        <label class="form-label">Upload spreadsheet</label>
+                        <div class="project-import-drop-zone" id="quick-check-drop-zone">
+                            <div class="fw-medium">Drop Excel or CSV file here</div>
+                            <div class="text-muted small">or click to browse · only part number is required</div>
+                            <input type="file" id="quick-check-file-input" accept=".xlsx,.xls,.csv" class="d-none">
+                        </div>
+                    </div>
+                </div>
+
+                <div id="quick-check-file-summary" class="text-muted small mb-3">No file selected.</div>
+                <div id="quick-check-column-mappings" class="d-none"></div>
+                <div id="quick-check-status" class="alert alert-secondary py-2 mb-0 d-none"></div>
+            </div>
+            <div class="modal-footer justify-content-between">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="quick-check-has-header-row" checked>
+                    <label class="form-check-label" for="quick-check-has-header-row">First row contains headers (skip it)</label>
+                </div>
+                <div class="d-flex gap-2">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-success" id="quick-check-export-btn" disabled>
+                        <i class="bi bi-download me-1"></i>Download Check Spreadsheet
+                    </button>
+                </div>
             </div>
         </div>
     </div>

@@ -3630,6 +3630,246 @@ function initializeProjectPartsListModal() {
     }
 }
 
+
+let quickCheckPendingFileData = [];
+let quickCheckPendingFileHeaders = [];
+
+function inferQuickCheckMapping(headerName) {
+    const normalized = String(headerName || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+    if (['partnumber', 'partno', 'pn', 'customerpn', 'customerpartnumber', 'mpn', 'item'].includes(normalized)) {
+        return 'part_number';
+    }
+    if (['qty', 'quantity', 'orderqty', 'requiredqty', 'requestqty', 'requestedqty'].includes(normalized)) {
+        return 'quantity';
+    }
+    return '';
+}
+
+function setQuickCheckStatus(message, type = 'secondary') {
+    const statusEl = document.getElementById('quick-check-status');
+    if (!statusEl) return;
+    if (!message) {
+        statusEl.className = 'alert alert-secondary py-2 mb-0 d-none';
+        statusEl.textContent = '';
+        return;
+    }
+    statusEl.className = `alert alert-${type} py-2 mb-0`;
+    statusEl.textContent = message;
+}
+
+function renderQuickCheckMapping() {
+    const container = document.getElementById('quick-check-column-mappings');
+    const exportBtn = document.getElementById('quick-check-export-btn');
+    if (!container) return;
+
+    if (!quickCheckPendingFileHeaders.length) {
+        container.classList.add('d-none');
+        if (exportBtn) exportBtn.disabled = true;
+        return;
+    }
+
+    const fields = [
+        { key: 'part_number', title: 'Part Number (required)' },
+        { key: 'quantity', title: 'Quantity (optional)' }
+    ];
+
+    container.innerHTML = `
+        <div class="fw-semibold mb-2">Map columns</div>
+        <div class="text-muted small mb-2">Choose which uploaded columns contain part numbers and quantities.</div>
+    `;
+
+    quickCheckPendingFileHeaders.forEach(header => {
+        const row = document.createElement('div');
+        row.className = 'column-mapping-row d-grid gap-2 align-items-center mb-2';
+        row.style.gridTemplateColumns = 'minmax(0, 1fr) auto minmax(180px, 220px) minmax(0, 1fr)';
+
+        const nameEl = document.createElement('div');
+        nameEl.className = 'fw-medium text-truncate';
+        nameEl.title = header.name;
+        nameEl.textContent = header.name;
+
+        const arrowEl = document.createElement('div');
+        arrowEl.className = 'text-muted';
+        arrowEl.textContent = '→';
+
+        const select = document.createElement('select');
+        select.className = 'form-select mapping-select';
+        select.dataset.fileIndex = header.index;
+        const inferred = inferQuickCheckMapping(header.name);
+        select.innerHTML = `
+            <option value="">-- Skip this column --</option>
+            ${fields.map(field => `
+                <option value="${field.key}" ${inferred === field.key ? 'selected' : ''}>${field.title}</option>
+            `).join('')}
+        `;
+
+        const previewEl = document.createElement('div');
+        previewEl.className = 'preview-value text-muted small text-truncate';
+        previewEl.title = header.sample || '';
+        previewEl.textContent = header.sample ? `Sample: ${header.sample}` : 'Sample: (empty)';
+
+        row.appendChild(nameEl);
+        row.appendChild(arrowEl);
+        row.appendChild(select);
+        row.appendChild(previewEl);
+        container.appendChild(row);
+    });
+
+    container.classList.remove('d-none');
+    if (exportBtn) exportBtn.disabled = false;
+}
+
+function processQuickCheckFile(file) {
+    const summaryEl = document.getElementById('quick-check-file-summary');
+    const reader = new FileReader();
+    reader.onload = event => {
+        try {
+            const data = new Uint8Array(event.target.result);
+            const workbook = XLSX.read(data, { type: 'array' });
+            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+            const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '' });
+
+            if (!jsonData.length) {
+                throw new Error('The file appears to be empty.');
+            }
+
+            quickCheckPendingFileData = jsonData;
+            quickCheckPendingFileHeaders = jsonData[0].map((header, index) => ({
+                index,
+                name: header ? String(header).trim() : `Column ${index + 1}`,
+                sample: jsonData.length > 1 ? String(jsonData[1][index] || '').substring(0, 80) : ''
+            }));
+
+            if (summaryEl) {
+                summaryEl.textContent = `${file.name} loaded with ${Math.max(jsonData.length - 1, 0)} data row${jsonData.length === 2 ? '' : 's'}.`;
+            }
+            setQuickCheckStatus('Map the uploaded columns, then download the check spreadsheet.', 'info');
+            renderQuickCheckMapping();
+        } catch (error) {
+            quickCheckPendingFileData = [];
+            quickCheckPendingFileHeaders = [];
+            renderQuickCheckMapping();
+            setQuickCheckStatus(`Error reading file: ${error.message}`, 'danger');
+        }
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+function buildQuickCheckRowsFromMapping() {
+    const mappings = {};
+    document.querySelectorAll('#quick-check-column-mappings .mapping-select').forEach(select => {
+        if (select.value) {
+            mappings[select.value] = parseInt(select.dataset.fileIndex, 10);
+        }
+    });
+
+    if (mappings.part_number === undefined) {
+        throw new Error('Please map a part number column.');
+    }
+
+    const hasHeader = document.getElementById('quick-check-has-header-row')?.checked !== false;
+    const startRow = hasHeader ? 1 : 0;
+    const rows = [];
+    for (let i = startRow; i < quickCheckPendingFileData.length; i++) {
+        const fileRow = quickCheckPendingFileData[i] || [];
+        const partNumber = String(fileRow[mappings.part_number] || '').trim();
+        if (!partNumber) continue;
+        rows.push({
+            part_number: partNumber,
+            quantity: mappings.quantity !== undefined ? String(fileRow[mappings.quantity] || '').trim() : '1'
+        });
+    }
+    return rows;
+}
+
+async function exportQuickCheckSpreadsheet(button) {
+    const originalHtml = button.innerHTML;
+    try {
+        const rows = buildQuickCheckRowsFromMapping();
+        if (!rows.length) {
+            throw new Error('No rows had a part number after applying the mapping.');
+        }
+        const lookbackDays = parseInt(document.getElementById('quick-check-lookback-days')?.value || '365', 10);
+        if (!Number.isFinite(lookbackDays) || lookbackDays <= 0 || lookbackDays > 3650) {
+            throw new Error('Sales lookback period must be between 1 and 3650 days.');
+        }
+
+        button.disabled = true;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Checking...';
+        setQuickCheckStatus(`Checking ${rows.length} part${rows.length === 1 ? '' : 's'} against stock and sales history...`, 'info');
+
+        const response = await fetch('/parts_list/quick-check/export', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rows, lookback_days: lookbackDays })
+        });
+
+        if (!response.ok) {
+            let message = 'Quick check export failed.';
+            try {
+                const data = await response.json();
+                message = data.message || message;
+            } catch (_) {}
+            throw new Error(message);
+        }
+
+        const blob = await response.blob();
+        const disposition = response.headers.get('Content-Disposition') || '';
+        const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+        const filename = filenameMatch ? filenameMatch[1] : `parts_quick_check_${new Date().toISOString().slice(0, 10)}.xlsx`;
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        setQuickCheckStatus('Quick check spreadsheet downloaded.', 'success');
+    } catch (error) {
+        console.error(error);
+        setQuickCheckStatus(error.message || 'Quick check export failed.', 'danger');
+        alert(error.message || 'Quick check export failed.');
+    } finally {
+        button.disabled = quickCheckPendingFileHeaders.length === 0;
+        button.innerHTML = originalHtml;
+    }
+}
+
+function initializeQuickCheckModal() {
+    const dropZone = document.getElementById('quick-check-drop-zone');
+    const fileInput = document.getElementById('quick-check-file-input');
+    const exportBtn = document.getElementById('quick-check-export-btn');
+    if (!dropZone || !fileInput || !exportBtn) return;
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    ['dragover', 'dragenter'].forEach(eventName => {
+        dropZone.addEventListener(eventName, event => {
+            event.preventDefault();
+            dropZone.classList.add('drag-over');
+        });
+    });
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, event => {
+            event.preventDefault();
+            dropZone.classList.remove('drag-over');
+        });
+    });
+    dropZone.addEventListener('drop', event => {
+        const files = event.dataTransfer?.files;
+        if (files && files.length > 0) {
+            processQuickCheckFile(files[0]);
+        }
+    });
+    fileInput.addEventListener('change', event => {
+        if (event.target.files.length > 0) {
+            processQuickCheckFile(event.target.files[0]);
+            fileInput.value = '';
+        }
+    });
+    exportBtn.addEventListener('click', () => exportQuickCheckSpreadsheet(exportBtn));
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     const partsInput = document.getElementById('parts-input');
     const partsCount = document.getElementById('parts-count');
@@ -3644,6 +3884,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     initializeEscapedRowActionsDropdowns();
+    initializeQuickCheckModal();
 
     document.addEventListener('click', function(event) {
         const copyButton = event.target.closest('.copy-part-number-btn');
