@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% block title %}Flightradar24{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex align-items-center justify-content-between mb-4">
+        <div>
+            <h1 class="h3 mb-1">Flightradar24</h1>
+            <div class="text-muted">Internal integration console</div>
+        </div>
+        <a href="{{ url_for('settings.settings') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-key me-1"></i>
+            API Settings
+        </a>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-lg-5">
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="h5 mb-0">Authentication</h2>
+                </div>
+                <div class="card-body">
+                    <dl class="row mb-4">
+                        <dt class="col-sm-4">API key</dt>
+                        <dd class="col-sm-8">
+                            {% if has_api_key %}
+                                <span class="badge text-bg-success">Configured</span>
+                            {% else %}
+                                <span class="badge text-bg-warning">Missing</span>
+                            {% endif %}
+                        </dd>
+                        <dt class="col-sm-4">Base URL</dt>
+                        <dd class="col-sm-8"><code>{{ api_base_url }}</code></dd>
+                        <dt class="col-sm-4">API version</dt>
+                        <dd class="col-sm-8"><code>{{ accept_version }}</code></dd>
+                    </dl>
+
+                    <button type="button" id="test-auth-btn" class="btn btn-primary" {% if not has_api_key %}disabled{% endif %}>
+                        <span id="test-auth-spinner" class="spinner-border spinner-border-sm me-2 d-none" aria-hidden="true"></span>
+                        Test Connection
+                    </button>
+                    {% if not has_api_key %}
+                    <div class="form-text mt-2">
+                        Add `FLIGHTRADAR_API_KEY` in Settings, or set it in the app environment.
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-7">
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="h5 mb-0">Response</h2>
+                </div>
+                <div class="card-body">
+                    <div id="auth-result" class="alert alert-secondary mb-3">
+                        Run the connection test to verify the bearer token against Flightradar24.
+                    </div>
+                    <pre id="auth-json" class="bg-light border rounded p-3 mb-0 small" style="min-height: 220px; white-space: pre-wrap;"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const button = document.getElementById('test-auth-btn');
+    const spinner = document.getElementById('test-auth-spinner');
+    const result = document.getElementById('auth-result');
+    const jsonOutput = document.getElementById('auth-json');
+
+    if (!button) {
+        return;
+    }
+
+    button.addEventListener('click', async function () {
+        button.disabled = true;
+        spinner.classList.remove('d-none');
+        result.className = 'alert alert-info mb-3';
+        result.textContent = 'Testing Flightradar24 credentials...';
+        jsonOutput.textContent = '';
+
+        try {
+            const response = await fetch('{{ url_for("flightradar.auth_test") }}', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'}
+            });
+            const payload = await response.json();
+            jsonOutput.textContent = JSON.stringify(payload, null, 2);
+
+            if (response.ok && payload.ok) {
+                result.className = 'alert alert-success mb-3';
+                result.textContent = 'Connection successful. Flightradar24 accepted the bearer token.';
+            } else {
+                result.className = 'alert alert-danger mb-3';
+                result.textContent = payload.error || 'Flightradar24 connection failed.';
+            }
+        } catch (error) {
+            result.className = 'alert alert-danger mb-3';
+            result.textContent = error.message || 'Unable to test Flightradar24 credentials.';
+        } finally {
+            spinner.classList.add('d-none');
+            button.disabled = false;
+        }
+    });
+});
+</script>
+{% endblock %}

@@ -72,6 +72,7 @@ from routes.supplier_portal import supplier_portal_bp
 from routes.notifications import notifications_bp
 from routes.team_tracker import team_tracker_bp
 from routes.partsbase import partsbase_bp
+from routes.flightradar import flightradar_bp
 
 scheduler = APScheduler()
 
@@ -93,6 +94,9 @@ app.config['TICKETS_HUB_API_KEY'] = os.getenv('TICKETS_HUB_API_KEY', '')
 app.config['TICKETS_BASE_URL'] = os.getenv('TICKETS_BASE_URL', '')
 app.config['APOLLO_BASE_URL'] = 'https://api.apollo.io/v1'  # It's good to keep the base URL in config too
 app.config['EXCHANGE_RATE_API_KEY'] = os.getenv('EXCHANGE_RATE_API_KEY', '')
+app.config['FLIGHTRADAR_API_KEY'] = os.getenv('FLIGHTRADAR_API_KEY', '')
+app.config['FLIGHTRADAR_API_BASE_URL'] = os.getenv('FLIGHTRADAR_API_BASE_URL', 'https://fr24api.flightradar24.com')
+app.config['FLIGHTRADAR_ACCEPT_VERSION'] = os.getenv('FLIGHTRADAR_ACCEPT_VERSION', 'v1')
 app.config['SESSION_TYPE'] = 'filesystem'  # Store sessions in files
 app.config['SESSION_FILE_DIR'] = './flask_session'  # Session folder
 app.config['ALLOW_PUBLIC_REGISTRATION'] = os.getenv('ALLOW_PUBLIC_REGISTRATION', '').lower() in ('1', 'true', 'yes', 'on')
@@ -108,10 +112,12 @@ def _load_api_key_overrides_from_db():
         'HUBSPOT_API_KEY',
         'TICKETS_HUB_API_KEY',
         'EXCHANGE_RATE_API_KEY',
+        'FLIGHTRADAR_API_KEY',
     )
     try:
+        placeholders = ', '.join(['?'] * len(tracked_keys))
         rows = db_execute(
-            "SELECT key, value FROM app_settings WHERE key IN (?, ?, ?, ?, ?, ?, ?)",
+            f"SELECT key, value FROM app_settings WHERE key IN ({placeholders})",
             tracked_keys,
             fetch='all'
         ) or []
@@ -306,6 +312,7 @@ app.register_blueprint(supplier_portal_bp, url_prefix='/supplier-portal')
 app.register_blueprint(notifications_bp)
 app.register_blueprint(team_tracker_bp)
 app.register_blueprint(partsbase_bp)
+app.register_blueprint(flightradar_bp)
 
 def bit_and(value, other):
     return value & other
