@@ -12,6 +12,8 @@ import re
 import copy
 import csv
 import pandas as pd
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
 from flask_login import current_user
 import tempfile
 import extract_msg
@@ -2367,6 +2369,237 @@ def parse_extracted_parts_data(extracted_data):
 
 # UPDATED analyze_parts_list ROUTE WITH WILDCARD SUPPORT
 # Replace your existing analyze_parts_list route with this version
+
+
+def _coerce_quick_check_quantity(value):
+    """Return a clean numeric quantity for quick-check uploads."""
+    if value is None or value == '':
+        return 1
+    try:
+        numeric_value = float(str(value).replace(',', '').strip())
+        if numeric_value <= 0:
+            return 1
+        return int(numeric_value) if numeric_value.is_integer() else numeric_value
+    except (TypeError, ValueError):
+        return 1
+
+
+def _chunked(values, size=500):
+    for index in range(0, len(values), size):
+        yield values[index:index + size]
+
+
+def _format_quick_check_date(value):
+    if not value:
+        return ''
+    if isinstance(value, (datetime, date)):
+        return value.strftime('%Y-%m-%d')
+    return str(value)[:10]
+
+
+def _quick_check_excel_number(value, default=None):
+    if value is None:
+        return default
+    if isinstance(value, Decimal):
+        return float(value)
+    return value
+
+
+@parts_list_bp.route('/quick-check/export', methods=['POST'])
+def quick_check_parts_export():
+    """Upload-mapped backend check that exports stock and sales history without saving a parts list."""
+    try:
+        payload = request.get_json() or {}
+        rows = payload.get('rows') or []
+        lookback_days = payload.get('lookback_days', 365)
+
+        try:
+            lookback_days = int(lookback_days)
+        except (TypeError, ValueError):
+            return jsonify(success=False, message='Sales lookback period must be a number of days.'), 400
+
+        if lookback_days <= 0 or lookback_days > 3650:
+            return jsonify(success=False, message='Sales lookback period must be between 1 and 3650 days.'), 400
+
+        if not isinstance(rows, list) or not rows:
+            return jsonify(success=False, message='No parts were provided for quick check.'), 400
+
+        processed_rows = []
+        base_numbers = []
+        for row_index, row in enumerate(rows, start=1):
+            part_number = str((row or {}).get('part_number') or '').strip()
+            if not part_number:
+                continue
+            base_part_number = create_base_part_number(part_number)
+            quantity = _coerce_quick_check_quantity((row or {}).get('quantity'))
+            processed_rows.append({
+                'line_number': row_index,
+                'part_number': part_number,
+                'base_part_number': base_part_number,
+                'quantity': quantity,
+            })
+            base_numbers.append(base_part_number)
+
+        if not processed_rows:
+            return jsonify(success=False, message='No rows had a part number after mapping.'), 400
+
+        unique_base_numbers = sorted(set(base_numbers))
+        stock_by_part = {}
+        lookback_sales_by_part = {}
+        lifetime_sales_by_part = {}
+        cutoff_date = (datetime.utcnow() - timedelta(days=lookback_days)).date().isoformat()
+
+        with db_cursor() as cursor:
+            for chunk in _chunked(unique_base_numbers):
+                placeholders = ','.join('?' for _ in chunk)
+
+                stock_rows = _execute_with_cursor(cursor, f"""
+                    SELECT
+                        sm.base_part_number,
+                        SUM(sm.available_quantity) AS available_quantity,
+                        COUNT(*) AS stock_lot_count,
+                        MIN(sm.cost_per_unit) AS lowest_stock_cost,
+                        MAX(sm.movement_date) AS latest_receipt_date,
+                        STRING_AGG(DISTINCT NULLIF(sm.reference, ''), ', ') AS stock_references
+                    FROM stock_movements sm
+                    WHERE sm.base_part_number IN ({placeholders})
+                      AND sm.movement_type = 'IN'
+                      AND sm.available_quantity > 0
+                    GROUP BY sm.base_part_number
+                """, tuple(chunk)).fetchall()
+
+                for stock_row in stock_rows:
+                    stock_by_part[stock_row['base_part_number']] = dict(stock_row)
+
+                lookback_rows = _execute_with_cursor(cursor, f"""
+                    SELECT
+                        sol.base_part_number,
+                        COUNT(*) AS sales_line_count,
+                        COALESCE(SUM(sol.quantity), 0) AS sold_quantity,
+                        COUNT(DISTINCT so.customer_id) AS unique_customer_count,
+                        MAX(so.date_entered) AS last_sold_date,
+                        (ARRAY_AGG(so.sales_order_ref ORDER BY so.date_entered DESC NULLS LAST, so.id DESC))[1] AS last_sales_order_ref,
+                        (ARRAY_AGG(c.name ORDER BY so.date_entered DESC NULLS LAST, so.id DESC))[1] AS last_customer_name,
+                        (ARRAY_AGG(sol.price ORDER BY so.date_entered DESC NULLS LAST, so.id DESC))[1] AS last_sale_price,
+                        (ARRAY_AGG(curr.currency_code ORDER BY so.date_entered DESC NULLS LAST, so.id DESC))[1] AS last_sale_currency
+                    FROM sales_order_lines sol
+                    JOIN sales_orders so ON sol.sales_order_id = so.id
+                    LEFT JOIN customers c ON so.customer_id = c.id
+                    LEFT JOIN currencies curr ON so.currency_id = curr.id
+                    WHERE sol.base_part_number IN ({placeholders})
+                      AND so.date_entered >= ?
+                    GROUP BY sol.base_part_number
+                """, tuple(chunk) + (cutoff_date,)).fetchall()
+
+                for sales_row in lookback_rows:
+                    lookback_sales_by_part[sales_row['base_part_number']] = dict(sales_row)
+
+                lifetime_rows = _execute_with_cursor(cursor, f"""
+                    SELECT
+                        sol.base_part_number,
+                        COUNT(*) AS lifetime_sales_line_count,
+                        COALESCE(SUM(sol.quantity), 0) AS lifetime_sold_quantity,
+                        MAX(so.date_entered) AS lifetime_last_sold_date
+                    FROM sales_order_lines sol
+                    JOIN sales_orders so ON sol.sales_order_id = so.id
+                    WHERE sol.base_part_number IN ({placeholders})
+                    GROUP BY sol.base_part_number
+                """, tuple(chunk)).fetchall()
+
+                for sales_row in lifetime_rows:
+                    lifetime_sales_by_part[sales_row['base_part_number']] = dict(sales_row)
+
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = 'Quick Check'
+        headers = [
+            'Line #',
+            'Uploaded Part Number',
+            'Base Part Number',
+            'Requested Qty',
+            'In Stock?',
+            'Available Qty',
+            'Stock Lots',
+            'Lowest Stock Cost',
+            'Latest Receipt Date',
+            'Stock References',
+            f'Sold in Last {lookback_days} Days?',
+            f'Sales Lines Last {lookback_days} Days',
+            f'Qty Sold Last {lookback_days} Days',
+            f'Customers Last {lookback_days} Days',
+            'Last Sold Date',
+            'Last Sales Order',
+            'Last Customer',
+            'Last Sale Price',
+            'Last Sale Currency',
+            'Ever Sold?',
+            'Lifetime Sales Lines',
+            'Lifetime Qty Sold',
+            'Lifetime Last Sold Date',
+        ]
+        worksheet.append(headers)
+
+        header_fill = PatternFill(fill_type='solid', fgColor='1F4E78')
+        for cell in worksheet[1]:
+            cell.font = Font(color='FFFFFF', bold=True)
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal='center')
+
+        for row in processed_rows:
+            base_part_number = row['base_part_number']
+            stock = stock_by_part.get(base_part_number, {})
+            lookback_sales = lookback_sales_by_part.get(base_part_number, {})
+            lifetime_sales = lifetime_sales_by_part.get(base_part_number, {})
+            available_quantity = stock.get('available_quantity') or 0
+            lookback_count = lookback_sales.get('sales_line_count') or 0
+            lifetime_count = lifetime_sales.get('lifetime_sales_line_count') or 0
+
+            worksheet.append([
+                row['line_number'],
+                row['part_number'],
+                base_part_number,
+                row['quantity'],
+                'Yes' if available_quantity > 0 else 'No',
+                _quick_check_excel_number(available_quantity, 0),
+                stock.get('stock_lot_count') or 0,
+                _quick_check_excel_number(stock.get('lowest_stock_cost')),
+                _format_quick_check_date(stock.get('latest_receipt_date')),
+                stock.get('stock_references') or '',
+                'Yes' if lookback_count > 0 else 'No',
+                lookback_count,
+                _quick_check_excel_number(lookback_sales.get('sold_quantity'), 0) or 0,
+                lookback_sales.get('unique_customer_count') or 0,
+                _format_quick_check_date(lookback_sales.get('last_sold_date')),
+                lookback_sales.get('last_sales_order_ref') or '',
+                lookback_sales.get('last_customer_name') or '',
+                _quick_check_excel_number(lookback_sales.get('last_sale_price')),
+                lookback_sales.get('last_sale_currency') or '',
+                'Yes' if lifetime_count > 0 else 'No',
+                lifetime_count,
+                _quick_check_excel_number(lifetime_sales.get('lifetime_sold_quantity'), 0) or 0,
+                _format_quick_check_date(lifetime_sales.get('lifetime_last_sold_date')),
+            ])
+
+        worksheet.freeze_panes = 'A2'
+        worksheet.auto_filter.ref = worksheet.dimensions
+        widths = [10, 24, 24, 14, 12, 14, 12, 16, 18, 32, 24, 24, 22, 22, 16, 18, 28, 16, 16, 12, 18, 18, 22]
+        for index, width in enumerate(widths, start=1):
+            worksheet.column_dimensions[worksheet.cell(row=1, column=index).column_letter].width = width
+
+        output = io.BytesIO()
+        workbook.save(output)
+        output.seek(0)
+        filename = f"parts_quick_check_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        return Response(
+            output.getvalue(),
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+        )
+
+    except Exception as e:
+        logging.exception('Error creating parts quick-check export')
+        return jsonify(success=False, message=str(e)), 500
+
 
 @parts_list_bp.route('/analyze', methods=['POST'])
 def analyze_parts_list():
