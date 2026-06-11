@@ -48,14 +48,57 @@
     }
 
     #flight-map .leaflet-pane,
-    #flight-map .leaflet-top,
-    #flight-map .leaflet-bottom {
-        z-index: auto;
+    #flight-map .leaflet-map-pane,
+    #flight-map .leaflet-tile-pane,
+    #flight-map .leaflet-overlay-pane,
+    #flight-map .leaflet-marker-pane,
+    #flight-map .leaflet-shadow-pane,
+    #flight-map .leaflet-tooltip-pane,
+    #flight-map .leaflet-popup-pane {
+        left: 0;
+        position: absolute;
+        top: 0;
+    }
+
+    #flight-map .leaflet-pane {
+        z-index: 1;
+    }
+
+    #flight-map .leaflet-tile-pane {
+        z-index: 2;
+    }
+
+    #flight-map .leaflet-overlay-pane {
+        z-index: 4;
+    }
+
+    #flight-map .leaflet-marker-pane {
+        z-index: 6;
+    }
+
+    #flight-map .leaflet-popup-pane {
+        z-index: 7;
+    }
+
+    #flight-map .leaflet-tile-container,
+    #flight-map .leaflet-tile,
+    #flight-map .leaflet-marker-icon,
+    #flight-map .leaflet-marker-shadow {
+        left: 0;
+        position: absolute;
+        top: 0;
+    }
+
+    #flight-map .leaflet-tile {
+        height: 256px !important;
+        max-height: none !important;
+        max-width: none !important;
+        width: 256px !important;
     }
 
     #flight-map .leaflet-control-container {
         position: relative;
-        z-index: 3;
+        z-index: 8;
     }
 
     .aircraft-marker {
