@@ -288,6 +288,7 @@
                 <table class="table table-hover align-middle mb-0" id="partsListsTable">
                     <thead>
     <tr>
+        <th class="text-nowrap">List #</th>
         <th>Name</th>
         <th>Customer</th>
         <th>Project</th>
@@ -304,6 +305,7 @@
                     <tbody>
                         {% for list in lists %}
                        <tr style="cursor: pointer;" onclick="window.location='{{ url_for('parts_list.view_parts_list', list_id=list.id) }}';">
+    <td class="text-nowrap fw-semibold text-muted">#{{ list.id }}</td>
     <td>
         <span class="text-decoration-none fw-semibold">
             {{ list.name }}
@@ -629,8 +631,8 @@ function applyListTextFilter(term) {
     if (!table) return;
     const rows = table.querySelectorAll('tbody tr');
     rows.forEach(row => {
-        const nameCell = row.cells[0];
-        const customerCell = row.cells[1];
+        const nameCell = row.cells[1];
+        const customerCell = row.cells[2];
         const nameText = nameCell ? nameCell.textContent.toLowerCase() : '';
         const customerText = customerCell ? customerCell.textContent.toLowerCase() : '';
         row.style.display = nameText.includes(normalized) || customerText.includes(normalized) ? '' : 'none';
@@ -972,13 +974,13 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!partsListTextFilter) {
                 return true;
             }
-            const nameText = (data[0] || '').toLowerCase();
-            const customerText = (data[1] || '').toLowerCase();
+            const nameText = (data[1] || '').toLowerCase();
+            const customerText = (data[2] || '').toLowerCase();
             return nameText.includes(partsListTextFilter) || customerText.includes(partsListTextFilter);
         });
 
         partsListDataTable = $('#partsListsTable').DataTable({
-            order: [[9, 'desc']],
+            order: [[10, 'desc']],
             pageLength: 25,
             language: {
                 search: "Search lists:"
