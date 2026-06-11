@@ -12,19 +12,50 @@
         display: grid;
         grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
         gap: 1rem;
+        isolation: isolate;
         min-height: calc(100vh - 140px);
+        position: relative;
     }
 
     .flightradar-panel {
+        grid-column: 1;
         min-width: 0;
+        position: relative;
+        z-index: 2;
+    }
+
+    .flightradar-map-panel {
+        grid-column: 2;
+        min-width: 0;
+        position: relative;
+        z-index: 1;
     }
 
     #flight-map {
-        height: calc(100vh - 190px);
-        min-height: 560px;
+        contain: layout paint;
+        height: min(720px, calc(100vh - 190px));
+        min-height: 520px;
+        overflow: hidden;
+        position: relative;
+        z-index: 0;
         border: 1px solid #dee2e6;
         border-radius: 8px;
         background: #eef3f7;
+    }
+
+    #flight-map.leaflet-container {
+        z-index: 0;
+    }
+
+    #flight-map .leaflet-pane,
+    #flight-map .leaflet-top,
+    #flight-map .leaflet-bottom {
+        z-index: auto;
+    }
+
+    #flight-map .leaflet-control-container {
+        position: relative;
+        z-index: 3;
     }
 
     .aircraft-marker {
@@ -53,6 +84,11 @@
     @media (max-width: 992px) {
         .flightradar-shell {
             grid-template-columns: 1fr;
+        }
+
+        .flightradar-panel,
+        .flightradar-map-panel {
+            grid-column: 1;
         }
 
         #flight-map {
@@ -161,7 +197,7 @@
             </div>
         </aside>
 
-        <section>
+        <section class="flightradar-map-panel">
             <div id="flight-map"></div>
         </section>
     </div>
@@ -202,6 +238,23 @@ document.addEventListener('DOMContentLoaded', function () {
         iconSize: [30, 30],
         iconAnchor: [15, 15],
         popupAnchor: [0, -14]
+    });
+
+    function invalidateMapSize() {
+        window.requestAnimationFrame(() => {
+            map.invalidateSize(false);
+        });
+    }
+
+    map.whenReady(() => {
+        invalidateMapSize();
+        window.setTimeout(invalidateMapSize, 250);
+        window.setTimeout(invalidateMapSize, 750);
+    });
+    window.addEventListener('load', invalidateMapSize);
+    window.addEventListener('resize', invalidateMapSize);
+    document.getElementById('sidebarCollapseToggle')?.addEventListener('click', () => {
+        window.setTimeout(invalidateMapSize, 350);
     });
 
     function setStatus(type, message) {
@@ -282,6 +335,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
         flightCount.textContent = String(markers.length);
         if (bounds.length) {
+            invalidateMapSize();
             map.fitBounds(bounds, {padding: [32, 32], maxZoom: 7});
         }
     }
