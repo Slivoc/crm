@@ -163,6 +163,23 @@ def get_local_airline_operator(icao: str):
     return None
 
 
+def _flightradar_error_response(exc: FlightradarError):
+    hints = {
+        'invalid_api_key': 'Check the Flightradar24 API key in Settings.',
+        'subscription_or_credit_required': 'This Flightradar24 endpoint may not be included in the current plan, or the account may be out of credits.',
+        'endpoint_forbidden': 'The current Flightradar24 plan may not allow this endpoint.',
+        'rate_limited': 'Flightradar24 rate-limited the request. Try again later.',
+        'not_found': 'Flightradar24 did not find a matching record.',
+    }
+    status = exc.status_code if exc.status_code in (400, 401, 402, 403, 404, 429) else 502
+    return jsonify({
+        'ok': False,
+        'error': str(exc),
+        'reason': exc.reason,
+        'hint': hints.get(exc.reason, 'Flightradar24 returned an error.'),
+    }), status
+
+
 def _can_view_customer(customer_id: int) -> bool:
     customer = get_customer_by_id(customer_id)
     if not customer:
@@ -322,14 +339,14 @@ def lookup_airline_by_icao_with_local_fallback(icao: str) -> dict:
     normalized = _normalize_icao_list(icao)
     if not normalized or ',' in normalized:
         raise ValueError('Provide one airline/operator ICAO code.')
+    local = get_local_airline_operator(normalized)
     try:
         airline = _build_client().get_airline_light(normalized)
         airline['source'] = 'flightradar'
         return airline
-    except FlightradarError:
-        local = get_local_airline_operator(normalized)
+    except FlightradarError as exc:
         if local:
-            return {
+            result = {
                 'name': local.get('name'),
                 'iata': local.get('iata'),
                 'icao': local.get('icao'),
@@ -337,6 +354,9 @@ def lookup_airline_by_icao_with_local_fallback(icao: str) -> dict:
                 'country': local.get('country'),
                 'source': 'airlines.dat',
             }
+            if exc.reason in ('invalid_api_key', 'subscription_or_credit_required', 'endpoint_forbidden'):
+                result['validation_warning'] = str(exc)
+            return result
         raise
 
 
@@ -364,7 +384,7 @@ def auth_test():
         usage = _build_client().get_usage(period='24h')
         return jsonify({'ok': True, 'usage': usage})
     except FlightradarError as exc:
-        return jsonify({'ok': False, 'error': str(exc)}), 502
+        return _flightradar_error_response(exc)
     except Exception as exc:
         current_app.logger.exception('Unexpected Flightradar auth test error')
         return jsonify({'ok': False, 'error': f'Unexpected Flightradar error: {exc}'}), 500
@@ -380,7 +400,7 @@ def airline_lookup():
     except ValueError as exc:
         return jsonify({'ok': False, 'error': str(exc)}), 400
     except FlightradarError as exc:
-        return jsonify({'ok': False, 'error': str(exc)}), 502
+        return _flightradar_error_response(exc)
     except Exception as exc:
         current_app.logger.exception('Unexpected Flightradar airline lookup error')
         return jsonify({'ok': False, 'error': f'Unexpected Flightradar error: {exc}'}), 500
@@ -433,7 +453,7 @@ def live_positions():
     except ValueError as exc:
         return jsonify({'ok': False, 'error': str(exc)}), 400
     except FlightradarError as exc:
-        return jsonify({'ok': False, 'error': str(exc)}), 502
+        return _flightradar_error_response(exc)
     except Exception as exc:
         current_app.logger.exception('Unexpected Flightradar live positions error')
         return jsonify({'ok': False, 'error': f'Unexpected Flightradar error: {exc}'}), 500
@@ -514,7 +534,7 @@ def customer_live_active_flights(customer_id):
     except ValueError as exc:
         return jsonify({'ok': False, 'error': str(exc)}), 400
     except FlightradarError as exc:
-        return jsonify({'ok': False, 'error': str(exc)}), 502
+        return _flightradar_error_response(exc)
     except Exception as exc:
         current_app.logger.exception('Unexpected customer Flightradar live flight error')
         return jsonify({'ok': False, 'error': f'Unexpected Flightradar error: {exc}'}), 500

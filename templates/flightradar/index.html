@@ -458,7 +458,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const response = await fetch(buildLivePositionsUrl());
             const payload = await response.json();
             if (!response.ok || !payload.ok) {
-                throw new Error(payload.error || 'Unable to load live aircraft.');
+                throw new Error(payload.hint || payload.error || 'Unable to load live aircraft.');
             }
             renderFlights(payload.flights || []);
             setStatus('success', `Loaded ${payload.count || 0} live aircraft.`);
@@ -506,7 +506,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 if (response.ok && payload.ok) {
                     setStatus('success', 'Connection successful. Flightradar24 accepted the bearer token.');
                 } else {
-                    setStatus('danger', payload.error || 'Flightradar24 connection failed.');
+                    setStatus('danger', payload.hint || payload.error || 'Flightradar24 connection failed.');
                 }
             } catch (error) {
                 setStatus('danger', error.message || 'Unable to test Flightradar24 credentials.');

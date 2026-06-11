@@ -7,6 +7,11 @@ import requests
 class FlightradarError(RuntimeError):
     """Raised when Flightradar24 returns an error response."""
 
+    def __init__(self, message: str, *, status_code: Optional[int] = None, reason: str = 'api_error') -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.reason = reason
+
 
 @dataclass
 class FlightradarConfig:
@@ -60,8 +65,11 @@ class FlightradarClient:
             timeout=self.config.timeout,
         )
         if response.status_code >= 400:
+            reason = self._error_reason(response)
             raise FlightradarError(
-                f'Flightradar24 {method} {path} failed: {response.status_code} {self._safe_error(response)}'
+                self._friendly_error(response, method, path),
+                status_code=response.status_code,
+                reason=reason,
             )
         if not response.content:
             return {}
@@ -81,3 +89,28 @@ class FlightradarClient:
         if message:
             return str(message)
         return str(body)[:500]
+
+    @classmethod
+    def _friendly_error(cls, response: requests.Response, method: str, path: str) -> str:
+        detail = cls._safe_error(response)
+        if response.status_code == 401:
+            return f'Flightradar24 rejected the API key: {detail}'
+        if response.status_code == 402:
+            return f'Flightradar24 plan or credit limit blocked this request: {detail}'
+        if response.status_code == 403:
+            return f'Flightradar24 access is not allowed for this endpoint: {detail}'
+        return f'Flightradar24 {method} {path} failed: {response.status_code} {detail}'
+
+    @staticmethod
+    def _error_reason(response: requests.Response) -> str:
+        if response.status_code == 401:
+            return 'invalid_api_key'
+        if response.status_code == 402:
+            return 'subscription_or_credit_required'
+        if response.status_code == 403:
+            return 'endpoint_forbidden'
+        if response.status_code == 404:
+            return 'not_found'
+        if response.status_code == 429:
+            return 'rate_limited'
+        return 'api_error'
