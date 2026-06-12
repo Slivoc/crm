@@ -259,12 +259,12 @@ def _upsert_customer_flight(customer_id: int, link_id: int, flight: dict) -> boo
 def _normalize_summary_window(date_from: str, date_to: str):
     now = datetime.now(timezone.utc)
     end = _parse_iso_datetime(date_to) or now
-    start = _parse_iso_datetime(date_from) or (end - timedelta(days=14))
+    start = _parse_iso_datetime(date_from) or (end - timedelta(days=2))
     if end > now:
         end = now
     if start > end:
         raise ValueError('Start date must be before end date.')
-    max_start = end - timedelta(days=14)
+    max_start = end - timedelta(days=2)
     if start < max_start:
         start = max_start
     return start, end
@@ -1800,7 +1800,7 @@ def customer_activity_summary(customer_id):
                 'window': {
                     'from': _format_fr24_datetime(start),
                     'to': _format_fr24_datetime(end),
-                    'max_days': 14,
+                    'max_days': 2,
                 },
                 'links': [],
                 'flights': [],
@@ -1852,7 +1852,7 @@ def customer_activity_summary(customer_id):
             'window': {
                 'from': _format_fr24_datetime(start),
                 'to': _format_fr24_datetime(end),
-                'max_days': 14,
+                'max_days': 2,
             },
             'links': links,
             'logged_flight_count': logged_flight_count,

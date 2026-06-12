@@ -590,7 +590,7 @@ def scheduled_flightradar_activity_sync():
             if os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_ENABLED', 'true').lower() not in ('1', 'true', 'yes', 'on'):
                 return
             result = sync_flightradar_activity_incremental(
-                lookback_hours=int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_WINDOW_HOURS', '336')),
+                lookback_hours=int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_WINDOW_HOURS', '48')),
                 chunk_hours=int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_CHUNK_HOURS', '6')),
                 max_requests=int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_MAX_REQUESTS', '20')),
                 limit=int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_LIMIT', '500')),

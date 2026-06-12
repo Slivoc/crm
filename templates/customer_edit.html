@@ -918,7 +918,7 @@
                    <div class="card border">
                      <div class="card-header d-flex align-items-center justify-content-between gap-3">
                        <div>
-                         <h6 class="mb-0">14-Day Activity Summary</h6>
+                         <h6 class="mb-0">2-Day Activity Summary</h6>
                          <div class="text-muted small">Uses flight summary data when available on your plan.</div>
                        </div>
                        <button type="button"
@@ -932,7 +932,7 @@
                      <div class="card-body">
                        <div id="flightradar-activity-status" class="alert alert-secondary mb-3">
                          {% if flightradar_links %}
-                           Load the latest 14-day activity summary.
+                           Load the latest 2-day activity summary.
                          {% else %}
                            Link at least one operator before loading activity.
                          {% endif %}
@@ -2380,7 +2380,7 @@ document.addEventListener('DOMContentLoaded', function() {
     activityButton?.addEventListener('click', async function() {
         activityButton.disabled = true;
         activitySpinner.classList.remove('d-none');
-        setActivityStatus('info', 'Loading 14-day Flightradar24 activity summary...');
+        setActivityStatus('info', 'Loading 2-day Flightradar24 activity summary...');
 
         try {
             const response = await fetch(activityEndpoint, {
@@ -2394,7 +2394,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             renderActivitySummary(payload);
-            setActivityStatus('success', `Loaded ${payload.summary?.flight_count || 0} flights from the latest 14-day window.`);
+            setActivityStatus('success', `Loaded ${payload.summary?.flight_count || 0} flights from the latest 2-day window.`);
         } catch (error) {
             setActivityStatus('danger', error.message || 'Unable to load Flightradar24 activity summary.');
         } finally {

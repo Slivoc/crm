@@ -91,7 +91,7 @@
             <button type="button" class="btn btn-outline-primary" id="sync-activity-btn">
                 <span id="sync-activity-spinner" class="spinner-border spinner-border-sm me-2 d-none" aria-hidden="true"></span>
                 <i class="bi bi-arrow-repeat me-1"></i>
-                Sync Last 14 Days
+                Sync Last 2 Days
             </button>
             <a href="{{ url_for('flightradar.flightradar_home') }}" class="btn btn-outline-secondary">
                 <i class="bi bi-radar me-1"></i>
@@ -782,18 +782,18 @@ document.addEventListener('DOMContentLoaded', function () {
         syncSpinner.classList.remove('d-none');
         const selectedCustomerId = document.getElementById('customer-filter').value;
         setStatus('info', selectedCustomerId
-            ? 'Syncing the selected customer for the last 14 days...'
-            : 'Syncing all active Flightradar links for the last 14 days...');
+            ? 'Syncing the selected customer for the last 2 days...'
+            : 'Syncing all active Flightradar links for the last 2 days...');
 
         try {
             const response = await fetch('{{ url_for("flightradar.activity_sync") }}', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
-                    window_hours: 336,
+                    window_hours: 48,
                     limit: 20000,
                     customer_id: selectedCustomerId || null,
-                    chunk_hours: selectedCustomerId ? 6 : 336
+                    chunk_hours: selectedCustomerId ? 6 : 48
                 })
             });
             const payload = await response.json();
