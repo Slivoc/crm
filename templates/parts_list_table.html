@@ -646,6 +646,89 @@ function updateStats() {
     document.getElementById('supplierQuotesCount').innerHTML = `<i class="bi bi-people"></i> Suppliers: ${supplierColumns.length}`;
 }
 
+
+function csvEscape(value) {
+    if (value === null || value === undefined) return '';
+    const text = Array.isArray(value) ? value.join('; ') : String(value);
+    if (/[",\n\r]/.test(text)) {
+        return `"${text.replace(/"/g, '""')}"`;
+    }
+    return text;
+}
+
+function supplierExportLabel(supplier, fieldLabel) {
+    const supplierName = supplier.supplierName || 'Supplier';
+    const quoteRef = supplier.quoteRef ? ` (${supplier.quoteRef})` : '';
+    return `${supplierName}${quoteRef} - ${fieldLabel}`;
+}
+
+function formatSupplierPriceForExport(row, supplier) {
+    if (row[`supplier_${supplier.id}_no_bid`]) return 'No Bid';
+    return row[`supplier_${supplier.id}_price`] ?? '';
+}
+
+function formatStockLotsForExport(stockDetails) {
+    if (!Array.isArray(stockDetails) || stockDetails.length === 0) return '';
+    return stockDetails.map(lot => {
+        const qty = lot.available_quantity ?? 0;
+        const cost = lot.cost_per_unit ?? '';
+        const datecode = lot.datecode ? ` DC ${lot.datecode}` : '';
+        const reference = lot.reference ? ` Ref ${lot.reference}` : '';
+        return `${qty} @ ${cost}${datecode}${reference}`;
+    }).join('; ');
+}
+
+function exportPartsListForExcel() {
+    const exportColumns = [
+        { header: 'Line #', value: row => row.line_number },
+        { header: 'Part Number', value: row => row.part_number },
+        { header: 'Revision', value: row => row.revision },
+        { header: 'Base Part', value: row => row.base_part_number },
+        { header: 'QPL Approval Count', value: row => row.qpl_approval_count },
+        { header: 'QPL Approvals', value: row => row.qpl_approvals_display },
+        { header: 'Contacted Suppliers', value: row => row.contacted_suppliers_display },
+        { header: 'No Bid Suppliers', value: row => row.no_bid_suppliers_display },
+        { header: 'Qty', value: row => row.quantity },
+        { header: 'Stock', value: row => row.total_available_stock },
+        { header: 'Stock Lots', value: row => formatStockLotsForExport(row.stock_details) }
+    ];
+
+    supplierColumns.forEach(supplier => {
+        exportColumns.push(
+            { header: supplierExportLabel(supplier, 'Qty'), value: row => row[`supplier_${supplier.id}_qty`] },
+            { header: supplierExportLabel(supplier, 'Price'), value: row => formatSupplierPriceForExport(row, supplier) },
+            { header: supplierExportLabel(supplier, 'Lead'), value: row => row[`supplier_${supplier.id}_lead`] },
+            { header: supplierExportLabel(supplier, 'No Bid'), value: row => row[`supplier_${supplier.id}_no_bid`] ? 'Yes' : '' }
+        );
+    });
+
+    exportColumns.push(
+        { header: 'Chosen Cost', value: row => row.chosen_cost },
+        { header: 'Chosen Supplier', value: row => row.chosen_supplier_name },
+        { header: 'Notes', value: row => row.notes }
+    );
+
+    const currentData = partsListHot ? partsListHot.getSourceData() : filteredData;
+    const csvRows = [exportColumns.map(column => csvEscape(column.header)).join(',')];
+
+    currentData.forEach(row => {
+        csvRows.push(exportColumns.map(column => csvEscape(column.value(row))).join(','));
+    });
+
+    const csvContent = `\ufeff${csvRows.join('\n')}`;
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.href = url;
+    link.download = `parts_list_export_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    showPartsListAlert('Exporting to Excel-compatible CSV with supplier names in offer headers...', 'info');
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     showPartsListSpinner();
 
@@ -926,13 +1009,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     document.getElementById('exportPartsListBtn').addEventListener('click', function() {
-        const exportPlugin = partsListHot.getPlugin('exportFile');
-        exportPlugin.downloadFile('csv', {
-            filename: 'parts_list_export_' + new Date().toISOString().split('T')[0],
-            columnHeaders: true,
-            rowHeaders: true
-        });
-        showPartsListAlert('Exporting to CSV...', 'info');
+        exportPartsListForExcel();
     });
 
     document.getElementById('saveAllBtn').addEventListener('click', function() {
