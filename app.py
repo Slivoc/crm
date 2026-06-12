@@ -590,7 +590,7 @@ def scheduled_flightradar_activity_sync():
             if os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_ENABLED', 'true').lower() not in ('1', 'true', 'yes', 'on'):
                 return
             result = sync_flightradar_activity_window(
-                window_hours=int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_WINDOW_HOURS', '48')),
+                window_hours=int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_WINDOW_HOURS', '336')),
                 limit=int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_LIMIT', '500')),
             )
             current_app.logger.info(

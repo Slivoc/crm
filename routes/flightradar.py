@@ -1108,7 +1108,8 @@ def aircraft_analytics_data():
                    COUNT(DISTINCT f.customer_id) AS customer_count,
                    COALESCE(SUM(f.estimated_flight_hours), 0) AS estimated_flight_hours,
                    COALESCE(SUM(f.cycle_count), 0) AS cycle_count,
-                   COALESCE(SUM(f.actual_distance_km), 0) AS actual_distance_km
+                   COALESCE(SUM(f.actual_distance_km), 0) AS actual_distance_km,
+                   MAX(COALESCE(f.last_seen, f.datetime_landed, f.first_seen, f.datetime_takeoff, f.created_at)) AS latest_logged_at
             FROM customer_flightradar_flights f
             JOIN customers c ON c.id = f.customer_id
             WHERE 1 = 1

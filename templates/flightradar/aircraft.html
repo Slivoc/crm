@@ -87,10 +87,17 @@
             <h1 class="h3 mb-1">Aircraft Traffic</h1>
             <div class="text-muted">Logged Flightradar flight history by aircraft, customer, type, and model</div>
         </div>
-        <a href="{{ url_for('flightradar.flightradar_home') }}" class="btn btn-outline-secondary">
-            <i class="bi bi-radar me-1"></i>
-            Live Map
-        </a>
+        <div class="d-flex gap-2">
+            <button type="button" class="btn btn-outline-primary" id="sync-activity-btn">
+                <span id="sync-activity-spinner" class="spinner-border spinner-border-sm me-2 d-none" aria-hidden="true"></span>
+                <i class="bi bi-arrow-repeat me-1"></i>
+                Sync Last 14 Days
+            </button>
+            <a href="{{ url_for('flightradar.flightradar_home') }}" class="btn btn-outline-secondary">
+                <i class="bi bi-radar me-1"></i>
+                Live Map
+            </a>
+        </div>
     </div>
 
     <div class="card mb-3">
@@ -216,7 +223,7 @@
     <div class="card mb-3">
         <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
             <h2 class="h5 mb-0">Traffic History</h2>
-            <span class="text-muted small">Daily activity for the top matching groups</span>
+            <span id="traffic-history-caption" class="text-muted small">Daily activity for the top matching groups</span>
         </div>
         <div class="card-body">
             <div class="chart-frame">
@@ -367,6 +374,8 @@ document.addEventListener('DOMContentLoaded', function () {
     const form = document.getElementById('aircraft-filter-form');
     const loadButton = document.getElementById('load-aircraft-btn');
     const spinner = document.getElementById('load-aircraft-spinner');
+    const syncButton = document.getElementById('sync-activity-btn');
+    const syncSpinner = document.getElementById('sync-activity-spinner');
     const status = document.getElementById('aircraft-status');
     const resetButton = document.getElementById('reset-filters-btn');
     const aircraftBody = document.getElementById('aircraft-table-body');
@@ -375,6 +384,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const chartMetricInput = document.getElementById('chart-metric-filter');
     const chartModeInput = document.getElementById('chart-mode-filter');
     const granularityInput = document.getElementById('granularity-filter');
+    const trafficHistoryCaption = document.getElementById('traffic-history-caption');
     const customerBreakdownBody = document.getElementById('customer-breakdown-body');
     const modelBreakdownBody = document.getElementById('model-breakdown-body');
     const typeBreakdownBody = document.getElementById('type-breakdown-body');
@@ -608,6 +618,13 @@ document.addEventListener('DOMContentLoaded', function () {
         const labels = bucketLabelsFromFilters(historyRows);
         const metric = chartMetricInput.value;
         const mode = chartModeInput.value;
+        const chartType = mode === 'cumulative' ? 'line' : 'bar';
+        const bucketLabel = {
+            day: 'Daily',
+            week: 'Weekly',
+            month: 'Monthly'
+        }[granularityInput.value] || 'Daily';
+        trafficHistoryCaption.textContent = `${bucketLabel} ${mode === 'cumulative' ? 'cumulative' : 'period'} activity for the top matching groups`;
         const metricLabel = {
             flight_count: 'flights',
             estimated_flight_hours: 'flight hours',
@@ -637,10 +654,16 @@ document.addEventListener('DOMContentLoaded', function () {
                 label: groupName,
                 data,
                 borderColor: palette[index % palette.length],
-                backgroundColor: palette[index % palette.length],
-                tension: 0.25,
-                pointRadius: 2,
-                borderWidth: 2
+                backgroundColor: mode === 'cumulative'
+                    ? palette[index % palette.length]
+                    : `${palette[index % palette.length]}cc`,
+                tension: 0,
+                stepped: mode === 'cumulative',
+                pointRadius: mode === 'cumulative' ? 2 : 0,
+                borderWidth: mode === 'cumulative' ? 2 : 0,
+                borderRadius: mode === 'cumulative' ? 0 : 3,
+                barPercentage: 0.82,
+                categoryPercentage: 0.72
             };
         });
 
@@ -648,7 +671,7 @@ document.addEventListener('DOMContentLoaded', function () {
             trafficChart.destroy();
         }
         trafficChart = new Chart(chartCanvas, {
-            type: 'line',
+            type: chartType,
             data: {labels, datasets},
             options: {
                 responsive: true,
@@ -687,12 +710,42 @@ document.addEventListener('DOMContentLoaded', function () {
             renderBreakdowns(payload.breakdowns || {});
             renderAircraft(payload.aircraft || []);
             renderFlights(payload.flights || []);
-            setStatus('success', `Loaded ${formatNumber(payload.summary?.flight_count || 0)} logged flights.`);
+            const latestLogged = payload.summary?.latest_logged_at
+                ? ` Latest logged flight: ${formatDate(payload.summary.latest_logged_at)}.`
+                : '';
+            setStatus('success', `Loaded ${formatNumber(payload.summary?.flight_count || 0)} logged flights.${latestLogged}`);
         } catch (error) {
             setStatus('danger', error.message || 'Unable to load aircraft traffic history.');
         } finally {
             spinner.classList.add('d-none');
             loadButton.disabled = false;
+        }
+    }
+
+    async function syncRecentActivity() {
+        syncButton.disabled = true;
+        syncSpinner.classList.remove('d-none');
+        setStatus('info', 'Syncing the last 14 days of Flightradar activity...');
+
+        try {
+            const response = await fetch('{{ url_for("flightradar.activity_sync") }}', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({window_hours: 336, limit: 30000})
+            });
+            const payload = await response.json();
+            if (!response.ok && response.status !== 207) {
+                throw new Error(payload.error || 'Unable to sync Flightradar activity.');
+            }
+            const errors = payload.errors || [];
+            const message = `Synced ${formatNumber(payload.logged_flight_count || 0)} logged flights from ${formatNumber(payload.link_count || 0)} links${errors.length ? ` with ${formatNumber(errors.length)} link errors` : ''}.`;
+            setStatus(errors.length ? 'warning' : 'success', message);
+            await loadData();
+        } catch (error) {
+            setStatus('danger', error.message || 'Unable to sync Flightradar activity.');
+        } finally {
+            syncSpinner.classList.add('d-none');
+            syncButton.disabled = false;
         }
     }
 
@@ -706,6 +759,8 @@ document.addEventListener('DOMContentLoaded', function () {
         setDefaultDates();
         loadData();
     });
+
+    syncButton.addEventListener('click', syncRecentActivity);
 
     chartMetricInput.addEventListener('change', function () {
         if (latestPayload) {
