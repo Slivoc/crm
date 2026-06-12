@@ -72,7 +72,7 @@ from routes.supplier_portal import supplier_portal_bp
 from routes.notifications import notifications_bp
 from routes.team_tracker import team_tracker_bp
 from routes.partsbase import partsbase_bp
-from routes.flightradar import flightradar_bp
+from routes.flightradar import flightradar_bp, sync_flightradar_activity_window
 
 scheduler = APScheduler()
 
@@ -577,6 +577,33 @@ def scheduled_graph_email_cache_sync():
             )
         except Exception as exc:
             current_app.logger.exception("Scheduled Graph Email Cache Sync failed: %s", exc)
+
+
+@scheduler.task(
+    'interval',
+    id='flightradar_activity_sync',
+    minutes=int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_MINUTES', '360')),
+)
+def scheduled_flightradar_activity_sync():
+    with app.app_context():
+        try:
+            if os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_ENABLED', 'true').lower() not in ('1', 'true', 'yes', 'on'):
+                return
+            result = sync_flightradar_activity_window(
+                window_hours=int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_WINDOW_HOURS', '48')),
+                limit=int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_LIMIT', '500')),
+            )
+            current_app.logger.info(
+                "Scheduled Flightradar activity sync: ok=%s links=%s flights=%s logged=%s aircraft=%s errors=%s",
+                result.get('ok'),
+                result.get('link_count', 0),
+                result.get('flight_count', 0),
+                result.get('logged_flight_count', 0),
+                result.get('refreshed_aircraft_count', 0),
+                len(result.get('errors') or []),
+            )
+        except Exception as exc:
+            current_app.logger.exception("Scheduled Flightradar activity sync failed: %s", exc)
 
 
 scheduler.init_app(app)
