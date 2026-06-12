@@ -196,6 +196,7 @@
     </div>
 
     <div id="aircraft-status" class="alert alert-secondary">Loading aircraft traffic history...</div>
+    <div id="sync-diagnostics" class="alert alert-light border d-none"></div>
 
     <div class="metric-grid mb-3">
         <div class="metric-tile">
@@ -377,6 +378,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const syncButton = document.getElementById('sync-activity-btn');
     const syncSpinner = document.getElementById('sync-activity-spinner');
     const status = document.getElementById('aircraft-status');
+    const syncDiagnostics = document.getElementById('sync-diagnostics');
     const resetButton = document.getElementById('reset-filters-btn');
     const aircraftBody = document.getElementById('aircraft-table-body');
     const flightBody = document.getElementById('flight-log-table-body');
@@ -693,10 +695,59 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
-    async function loadData() {
+    function renderSyncDiagnostics(payload) {
+        const links = payload.links || [];
+        if (!links.length) {
+            syncDiagnostics.classList.add('d-none');
+            syncDiagnostics.innerHTML = '';
+            return;
+        }
+        const sortedLinks = [...links].sort((a, b) => {
+            const aCount = Number(a.returned_flight_count || 0);
+            const bCount = Number(b.returned_flight_count || 0);
+            if (aCount !== bCount) return bCount - aCount;
+            return String(a.customer_name || '').localeCompare(String(b.customer_name || ''));
+        });
+        syncDiagnostics.className = 'alert alert-light border';
+        syncDiagnostics.innerHTML = `
+            <div class="fw-semibold mb-2">Sync diagnostics for ${escapeHtml(payload.window?.from || '-')} to ${escapeHtml(payload.window?.to || '-')}</div>
+            <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>Customer</th>
+                            <th>Operator</th>
+                            <th>Mode</th>
+                            <th class="text-end">Returned</th>
+                            <th class="text-end">Logged</th>
+                            <th>Returned Range</th>
+                            <th>Error</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${sortedLinks.map(link => `
+                            <tr>
+                                <td>${escapeHtml(link.customer_name || link.customer_id || '-')}</td>
+                                <td>${escapeHtml(link.airline_name || link.airline_icao || '-')}</td>
+                                <td>${escapeHtml(link.match_mode || '-')}</td>
+                                <td class="text-end">${formatNumber(link.returned_flight_count || 0)}</td>
+                                <td class="text-end">${formatNumber(link.logged_flight_count || 0)}</td>
+                                <td class="small">${escapeHtml(link.first_returned_at ? `${formatDate(link.first_returned_at)} to ${formatDate(link.last_returned_at)}` : '-')}</td>
+                                <td class="small text-danger">${escapeHtml(link.error || '')}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    }
+
+    async function loadData(options = {}) {
         loadButton.disabled = true;
         spinner.classList.remove('d-none');
-        setStatus('info', 'Loading aircraft traffic history...');
+        if (!options.keepStatus) {
+            setStatus('info', 'Loading aircraft traffic history...');
+        }
 
         try {
             const response = await fetch(buildUrl());
@@ -713,7 +764,9 @@ document.addEventListener('DOMContentLoaded', function () {
             const latestLogged = payload.summary?.latest_logged_at
                 ? ` Latest logged flight: ${formatDate(payload.summary.latest_logged_at)}.`
                 : '';
-            setStatus('success', `Loaded ${formatNumber(payload.summary?.flight_count || 0)} logged flights.${latestLogged}`);
+            if (!options.keepStatus) {
+                setStatus('success', `Loaded ${formatNumber(payload.summary?.flight_count || 0)} logged flights.${latestLogged}`);
+            }
         } catch (error) {
             setStatus('danger', error.message || 'Unable to load aircraft traffic history.');
         } finally {
@@ -740,7 +793,8 @@ document.addEventListener('DOMContentLoaded', function () {
             const errors = payload.errors || [];
             const message = `Synced ${formatNumber(payload.logged_flight_count || 0)} logged flights from ${formatNumber(payload.link_count || 0)} links${errors.length ? ` with ${formatNumber(errors.length)} link errors` : ''}.`;
             setStatus(errors.length ? 'warning' : 'success', message);
-            await loadData();
+            renderSyncDiagnostics(payload);
+            await loadData({keepStatus: true});
         } catch (error) {
             setStatus('danger', error.message || 'Unable to sync Flightradar activity.');
         } finally {
