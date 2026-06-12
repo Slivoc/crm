@@ -778,21 +778,31 @@ document.addEventListener('DOMContentLoaded', function () {
     async function syncRecentActivity() {
         syncButton.disabled = true;
         syncSpinner.classList.remove('d-none');
-        setStatus('info', 'Syncing the last 14 days of Flightradar activity...');
+        const selectedCustomerId = document.getElementById('customer-filter').value;
+        setStatus('info', selectedCustomerId
+            ? 'Syncing the selected customer for the last 14 days...'
+            : 'Syncing all active Flightradar links for the last 14 days...');
 
         try {
             const response = await fetch('{{ url_for("flightradar.activity_sync") }}', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({window_hours: 336, limit: 30000})
+                body: JSON.stringify({
+                    window_hours: 336,
+                    limit: 20000,
+                    customer_id: selectedCustomerId || null
+                })
             });
             const payload = await response.json();
             if (!response.ok && response.status !== 207) {
                 throw new Error(payload.error || 'Unable to sync Flightradar activity.');
             }
             const errors = payload.errors || [];
-            const message = `Synced ${formatNumber(payload.logged_flight_count || 0)} logged flights from ${formatNumber(payload.link_count || 0)} links${errors.length ? ` with ${formatNumber(errors.length)} link errors` : ''}.`;
-            setStatus(errors.length ? 'warning' : 'success', message);
+            const stoppedReason = payload.stopped_reason === 'rate_limited'
+                ? ' Sync stopped after Flightradar rate-limited the request.'
+                : '';
+            const message = `Synced ${formatNumber(payload.logged_flight_count || 0)} logged flights from ${formatNumber(payload.link_count || 0)} links${errors.length ? ` with ${formatNumber(errors.length)} link errors` : ''}.${stoppedReason}`;
+            setStatus(errors.length || stoppedReason ? 'warning' : 'success', message);
             renderSyncDiagnostics(payload);
             await loadData({keepStatus: true});
         } catch (error) {

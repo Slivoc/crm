@@ -2,6 +2,7 @@ import os
 import re
 import json
 import csv
+import time
 from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
@@ -72,7 +73,7 @@ def _normalize_limit(value: str) -> int:
         limit = int(value or 500)
     except (TypeError, ValueError):
         raise ValueError('Limit must be a number.')
-    return max(1, min(limit, 30000))
+    return max(1, min(limit, 20000))
 
 
 def _parse_iso_datetime(value: str):
@@ -461,9 +462,15 @@ def _get_customer_flightradar_links(customer_id: int, *, active_only: bool = Tru
     return [dict(row) for row in rows]
 
 
-def _get_active_flightradar_links():
+def _get_active_flightradar_links(customer_id=None):
+    customer_filter = ''
+    params = []
+    if customer_id:
+        customer_filter = 'AND l.customer_id = ?'
+        params.append(customer_id)
+
     rows = db_execute(
-        """
+        f"""
         SELECT id,
                customer_id,
                customer_name,
@@ -488,9 +495,11 @@ def _get_active_flightradar_links():
             FROM customer_flightradar_links l
             JOIN customers c ON c.id = l.customer_id
             WHERE l.is_active = TRUE
+              {customer_filter}
         ) active_links
         ORDER BY customer_name, airline_name NULLS LAST, airline_icao, match_mode
         """,
+        tuple(params),
         fetch='all',
     ) or []
     return [dict(row) for row in rows]
@@ -640,12 +649,13 @@ def refresh_flightradar_utilization(customer_ids=None, registrations=None):
     return refreshed
 
 
-def sync_flightradar_activity_window(*, window_hours: int = 48, limit: int = 500):
+def sync_flightradar_activity_window(*, window_hours: int = 48, limit: int = 500, customer_id=None):
     end = datetime.now(timezone.utc)
     start = end - timedelta(hours=max(1, min(int(window_hours or 48), 336)))
-    limit = max(1, min(int(limit or 500), 30000))
+    limit = max(1, min(int(limit or 500), 20000))
+    request_delay_seconds = max(0.0, float(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_DELAY_SECONDS', '0.25') or 0))
     client = _build_client()
-    links = _get_active_flightradar_links()
+    links = _get_active_flightradar_links(customer_id=customer_id)
     seen_keys = set()
     affected_tails = set()
     result = {
@@ -660,9 +670,13 @@ def sync_flightradar_activity_window(*, window_hours: int = 48, limit: int = 500
         'refreshed_aircraft_count': 0,
         'links': [],
         'errors': [],
+        'stopped_reason': None,
     }
 
     for link in links:
+        if result['stopped_reason']:
+            break
+
         link_id = link.get('id')
         link_result = {
             'link_id': link_id,
@@ -744,6 +758,8 @@ def sync_flightradar_activity_window(*, window_hours: int = 48, limit: int = 500
                 exc.reason,
                 exc,
             )
+            if exc.reason == 'rate_limited':
+                result['stopped_reason'] = 'rate_limited'
         except Exception as exc:
             error = str(exc)
             result['errors'].append({
@@ -761,6 +777,8 @@ def sync_flightradar_activity_window(*, window_hours: int = 48, limit: int = 500
             )
         finally:
             result['links'].append(link_result)
+            if request_delay_seconds and not result['stopped_reason']:
+                time.sleep(request_delay_seconds)
 
     for customer_id, registration in affected_tails:
         if _refresh_aircraft_utilization(customer_id, registration):
@@ -1326,9 +1344,11 @@ def activity_sync():
 
     try:
         payload = request.get_json(silent=True) or {}
+        customer_id = payload.get('customer_id') or None
         result = sync_flightradar_activity_window(
             window_hours=int(payload.get('window_hours') or 48),
             limit=int(payload.get('limit') or 500),
+            customer_id=int(customer_id) if customer_id else None,
         )
         status = 200 if result.get('ok') else 207
         return jsonify(result), status
