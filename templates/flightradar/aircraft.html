@@ -157,6 +157,21 @@
                                 <option value="cycle_count">Cycles</option>
                             </select>
                         </div>
+                        <div>
+                            <label class="form-label" for="granularity-filter">Bucket</label>
+                            <select class="form-select" id="granularity-filter" name="granularity">
+                                <option value="day" selected>Daily</option>
+                                <option value="week">Weekly</option>
+                                <option value="month">Monthly</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="form-label" for="chart-mode-filter">Chart Mode</label>
+                            <select class="form-select" id="chart-mode-filter">
+                                <option value="period" selected>Period values</option>
+                                <option value="cumulative">Cumulative values</option>
+                            </select>
+                        </div>
                     </div>
                     <div class="d-flex gap-2">
                         <button type="button" class="btn btn-outline-secondary" id="reset-filters-btn">
@@ -358,6 +373,8 @@ document.addEventListener('DOMContentLoaded', function () {
     const flightBody = document.getElementById('flight-log-table-body');
     const chartCanvas = document.getElementById('traffic-history-chart');
     const chartMetricInput = document.getElementById('chart-metric-filter');
+    const chartModeInput = document.getElementById('chart-mode-filter');
+    const granularityInput = document.getElementById('granularity-filter');
     const customerBreakdownBody = document.getElementById('customer-breakdown-body');
     const modelBreakdownBody = document.getElementById('model-breakdown-body');
     const typeBreakdownBody = document.getElementById('type-breakdown-body');
@@ -419,6 +436,75 @@ document.addEventListener('DOMContentLoaded', function () {
     function setStatus(type, message) {
         status.className = `alert alert-${type}`;
         status.textContent = message;
+    }
+
+    function isoDate(date) {
+        return date.toISOString().slice(0, 10);
+    }
+
+    function parseDateInput(id) {
+        const value = document.getElementById(id).value;
+        if (!value) {
+            return null;
+        }
+        const parsed = new Date(`${value}T00:00:00Z`);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+
+    function bucketStart(date, granularity) {
+        const copy = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+        if (granularity === 'week') {
+            const day = copy.getUTCDay() || 7;
+            copy.setUTCDate(copy.getUTCDate() - day + 1);
+        } else if (granularity === 'month') {
+            copy.setUTCDate(1);
+        }
+        return copy;
+    }
+
+    function addBucket(date, granularity) {
+        const copy = new Date(date.getTime());
+        if (granularity === 'week') {
+            copy.setUTCDate(copy.getUTCDate() + 7);
+        } else if (granularity === 'month') {
+            copy.setUTCMonth(copy.getUTCMonth() + 1);
+        } else {
+            copy.setUTCDate(copy.getUTCDate() + 1);
+        }
+        return copy;
+    }
+
+    function bucketLabelsFromFilters(historyRows) {
+        const granularity = granularityInput.value;
+        let start = parseDateInput('date-from-filter');
+        let end = parseDateInput('date-to-filter');
+        const rowBuckets = historyRows
+            .map(row => String(row.bucket || '').slice(0, 10))
+            .filter(Boolean)
+            .sort();
+
+        if (!start && rowBuckets.length) {
+            start = new Date(`${rowBuckets[0]}T00:00:00Z`);
+        }
+        if (!end) {
+            end = rowBuckets.length
+                ? new Date(`${rowBuckets[rowBuckets.length - 1]}T00:00:00Z`)
+                : new Date();
+        }
+        if (!start) {
+            const fallback = new Date(end.getTime());
+            fallback.setUTCDate(fallback.getUTCDate() - 90);
+            start = fallback;
+        }
+
+        let cursor = bucketStart(start, granularity);
+        const last = bucketStart(end, granularity);
+        const labels = [];
+        while (cursor <= last) {
+            labels.push(isoDate(cursor));
+            cursor = addBucket(cursor, granularity);
+        }
+        return labels;
     }
 
     function buildUrl() {
@@ -519,8 +605,9 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function renderChart(historyRows, groups) {
-        const labels = [...new Set(historyRows.map(row => row.bucket))].sort();
+        const labels = bucketLabelsFromFilters(historyRows);
         const metric = chartMetricInput.value;
+        const mode = chartModeInput.value;
         const metricLabel = {
             flight_count: 'flights',
             estimated_flight_hours: 'flight hours',
@@ -535,11 +622,20 @@ document.addEventListener('DOMContentLoaded', function () {
             const byDate = new Map(
                 historyRows
                     .filter(row => row.group_name === groupName)
-                    .map(row => [row.bucket, Number(row[metric] || 0)])
+                    .map(row => [String(row.bucket || '').slice(0, 10), Number(row[metric] || 0)])
             );
+            let runningTotal = 0;
+            const data = labels.map(label => {
+                const value = byDate.get(label) || 0;
+                if (mode === 'cumulative') {
+                    runningTotal += value;
+                    return runningTotal;
+                }
+                return value;
+            });
             return {
                 label: groupName,
-                data: labels.map(label => byDate.get(label) || 0),
+                data,
                 borderColor: palette[index % palette.length],
                 backgroundColor: palette[index % palette.length],
                 tension: 0.25,
@@ -616,6 +712,14 @@ document.addEventListener('DOMContentLoaded', function () {
             renderChart(latestPayload.history || [], latestPayload.groups || []);
         }
     });
+
+    chartModeInput.addEventListener('change', function () {
+        if (latestPayload) {
+            renderChart(latestPayload.history || [], latestPayload.groups || []);
+        }
+    });
+
+    granularityInput.addEventListener('change', loadData);
 
     document.querySelectorAll('input[name="breakdown_metric"]').forEach(input => {
         input.addEventListener('change', function () {

@@ -1078,6 +1078,14 @@ def _load_aircraft_breakdown(group_by, where_sql, params, *, limit=25):
     return [_row_to_json(row) for row in rows]
 
 
+def _chart_bucket_expr(granularity):
+    if granularity == 'week':
+        return "DATE_TRUNC('week', COALESCE(f.first_seen, f.datetime_takeoff, f.created_at))::date"
+    if granularity == 'month':
+        return "DATE_TRUNC('month', COALESCE(f.first_seen, f.datetime_takeoff, f.created_at))::date"
+    return "DATE_TRUNC('day', COALESCE(f.first_seen, f.datetime_takeoff, f.created_at))::date"
+
+
 @flightradar_bp.route('/api/aircraft-analytics', methods=['GET'])
 @login_required
 def aircraft_analytics_data():
@@ -1086,7 +1094,11 @@ def aircraft_analytics_data():
         group_by = (request.args.get('group_by') or 'aircraft').strip()
         if group_by not in ('overall', 'aircraft', 'customer', 'aircraft_type', 'aircraft_model'):
             group_by = 'aircraft'
+        granularity = (request.args.get('granularity') or 'day').strip()
+        if granularity not in ('day', 'week', 'month'):
+            granularity = 'day'
         group_expr = _aircraft_group_expr(group_by)
+        bucket_expr = _chart_bucket_expr(granularity)
         model_expr = _aircraft_model_expr('f')
 
         summary = db_execute(
@@ -1127,7 +1139,7 @@ def aircraft_analytics_data():
         if selected_groups:
             history_rows = db_execute(
                 f"""
-                SELECT DATE_TRUNC('day', COALESCE(f.first_seen, f.datetime_takeoff, f.created_at))::date AS bucket,
+                SELECT {bucket_expr} AS bucket,
                        {group_expr} AS group_name,
                        COUNT(*) AS flight_count,
                        COALESCE(SUM(f.estimated_flight_hours), 0) AS estimated_flight_hours,
