@@ -90,6 +90,170 @@ def _format_fr24_datetime(value: datetime) -> str:
     return value.astimezone(timezone.utc).replace(microsecond=0).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
+def _flight_datetime_value(value: str):
+    try:
+        return _parse_iso_datetime(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _flight_datetime_for_db(value: str):
+    parsed = _flight_datetime_value(value)
+    return parsed if parsed else None
+
+
+def _safe_float(value):
+    if value in (None, ''):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _flight_duration_seconds(flight: dict):
+    direct_duration = _safe_float(flight.get('flight_time'))
+    if direct_duration is not None and direct_duration >= 0:
+        return direct_duration
+
+    for start_key, end_key in (
+        ('datetime_takeoff', 'datetime_landed'),
+        ('first_seen', 'last_seen'),
+    ):
+        start = _flight_datetime_value(flight.get(start_key))
+        end = _flight_datetime_value(flight.get(end_key))
+        if start and end and end >= start:
+            return (end - start).total_seconds()
+    return None
+
+
+def _flight_dedupe_key(flight: dict) -> str:
+    fr24_id = str(flight.get('fr24_id') or '').strip()
+    if fr24_id:
+        return f"fr24:{fr24_id}"
+
+    registration = str(flight.get('reg') or '').strip().upper()
+    flight_number = str(flight.get('flight') or '').strip().upper()
+    callsign = str(flight.get('callsign') or '').strip().upper()
+    first_seen = str(flight.get('first_seen') or flight.get('datetime_takeoff') or '').strip()
+    last_seen = str(flight.get('last_seen') or flight.get('datetime_landed') or '').strip()
+    origin = str(flight.get('orig_iata') or flight.get('orig_icao') or '').strip().upper()
+    destination = str(
+        flight.get('dest_iata_actual')
+        or flight.get('dest_iata')
+        or flight.get('dest_icao_actual')
+        or flight.get('dest_icao')
+        or ''
+    ).strip().upper()
+    return '|'.join((registration, flight_number, callsign, first_seen, last_seen, origin, destination))
+
+
+def _upsert_customer_flight(customer_id: int, link_id: int, flight: dict) -> bool:
+    dedupe_key = _flight_dedupe_key(flight)
+    if not dedupe_key or dedupe_key == '||||||':
+        return False
+
+    registration = str(flight.get('reg') or '').strip().upper() or None
+    duration_seconds = _flight_duration_seconds(flight)
+    estimated_hours = round(duration_seconds / 3600, 4) if duration_seconds is not None else None
+    flight_ended = flight.get('flight_ended')
+    datetime_landed = _flight_datetime_for_db(flight.get('datetime_landed'))
+    cycle_count = 1 if flight_ended is True or datetime_landed else 0
+    origin_iata = flight.get('orig_iata')
+    origin_icao = flight.get('orig_icao')
+    destination_iata = flight.get('dest_iata_actual') or flight.get('dest_iata')
+    destination_icao = flight.get('dest_icao_actual') or flight.get('dest_icao')
+    payload_json = json.dumps(flight, default=str)
+
+    db_execute(
+        """
+        INSERT INTO customer_flightradar_flights (
+            customer_id,
+            link_id,
+            flight_dedupe_key,
+            fr24_id,
+            registration,
+            aircraft_type,
+            flight,
+            callsign,
+            operating_as,
+            painted_as,
+            origin_iata,
+            origin_icao,
+            destination_iata,
+            destination_icao,
+            datetime_takeoff,
+            datetime_landed,
+            first_seen,
+            last_seen,
+            flight_time_seconds,
+            estimated_flight_hours,
+            cycle_count,
+            flight_ended,
+            actual_distance_km,
+            circle_distance_km,
+            raw_payload
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)
+        ON CONFLICT (customer_id, flight_dedupe_key)
+        DO UPDATE SET
+            link_id = EXCLUDED.link_id,
+            fr24_id = COALESCE(EXCLUDED.fr24_id, customer_flightradar_flights.fr24_id),
+            registration = COALESCE(EXCLUDED.registration, customer_flightradar_flights.registration),
+            aircraft_type = COALESCE(EXCLUDED.aircraft_type, customer_flightradar_flights.aircraft_type),
+            flight = COALESCE(EXCLUDED.flight, customer_flightradar_flights.flight),
+            callsign = COALESCE(EXCLUDED.callsign, customer_flightradar_flights.callsign),
+            operating_as = COALESCE(EXCLUDED.operating_as, customer_flightradar_flights.operating_as),
+            painted_as = COALESCE(EXCLUDED.painted_as, customer_flightradar_flights.painted_as),
+            origin_iata = COALESCE(EXCLUDED.origin_iata, customer_flightradar_flights.origin_iata),
+            origin_icao = COALESCE(EXCLUDED.origin_icao, customer_flightradar_flights.origin_icao),
+            destination_iata = COALESCE(EXCLUDED.destination_iata, customer_flightradar_flights.destination_iata),
+            destination_icao = COALESCE(EXCLUDED.destination_icao, customer_flightradar_flights.destination_icao),
+            datetime_takeoff = COALESCE(EXCLUDED.datetime_takeoff, customer_flightradar_flights.datetime_takeoff),
+            datetime_landed = COALESCE(EXCLUDED.datetime_landed, customer_flightradar_flights.datetime_landed),
+            first_seen = COALESCE(EXCLUDED.first_seen, customer_flightradar_flights.first_seen),
+            last_seen = COALESCE(EXCLUDED.last_seen, customer_flightradar_flights.last_seen),
+            flight_time_seconds = COALESCE(EXCLUDED.flight_time_seconds, customer_flightradar_flights.flight_time_seconds),
+            estimated_flight_hours = COALESCE(EXCLUDED.estimated_flight_hours, customer_flightradar_flights.estimated_flight_hours),
+            cycle_count = GREATEST(customer_flightradar_flights.cycle_count, EXCLUDED.cycle_count),
+            flight_ended = COALESCE(EXCLUDED.flight_ended, customer_flightradar_flights.flight_ended),
+            actual_distance_km = COALESCE(EXCLUDED.actual_distance_km, customer_flightradar_flights.actual_distance_km),
+            circle_distance_km = COALESCE(EXCLUDED.circle_distance_km, customer_flightradar_flights.circle_distance_km),
+            raw_payload = EXCLUDED.raw_payload,
+            updated_at = NOW()
+        """,
+        (
+            customer_id,
+            link_id,
+            dedupe_key,
+            flight.get('fr24_id'),
+            registration,
+            flight.get('type'),
+            flight.get('flight'),
+            flight.get('callsign'),
+            flight.get('operating_as'),
+            flight.get('painted_as'),
+            origin_iata,
+            origin_icao,
+            destination_iata,
+            destination_icao,
+            _flight_datetime_for_db(flight.get('datetime_takeoff')),
+            datetime_landed,
+            _flight_datetime_for_db(flight.get('first_seen')),
+            _flight_datetime_for_db(flight.get('last_seen')),
+            duration_seconds,
+            estimated_hours,
+            cycle_count,
+            flight_ended,
+            _safe_float(flight.get('actual_distance')),
+            _safe_float(flight.get('circle_distance')),
+            payload_json,
+        ),
+        commit=True,
+    )
+    return True
+
+
 def _normalize_summary_window(date_from: str, date_to: str):
     now = datetime.now(timezone.utc)
     end = _parse_iso_datetime(date_to) or now
@@ -364,6 +528,8 @@ def _summarize_flights(flights):
     routes = {}
     types = {}
     airports = {}
+    flight_hours = 0.0
+    completed_cycles = 0
 
     for flight in flights:
         reg = flight.get('reg')
@@ -389,6 +555,12 @@ def _summarize_flights(flights):
             route = f"{origin or '?'} -> {destination or '?'}"
             routes[route] = routes.get(route, 0) + 1
 
+        duration_seconds = _flight_duration_seconds(flight)
+        if duration_seconds is not None:
+            flight_hours += duration_seconds / 3600
+        if flight.get('flight_ended') is True or flight.get('datetime_landed'):
+            completed_cycles += 1
+
     def top_items(mapping, limit=10):
         return [
             {'name': key, 'count': count}
@@ -399,6 +571,8 @@ def _summarize_flights(flights):
         'flight_count': len(flights),
         'unique_tail_count': len(tails),
         'unique_tails': sorted(tails),
+        'estimated_flight_hours': round(flight_hours, 2),
+        'completed_cycle_count': completed_cycles,
         'top_routes': top_items(routes),
         'top_aircraft_types': top_items(types),
         'top_airports': top_items(airports),
@@ -647,6 +821,7 @@ def customer_activity_summary(customer_id):
         client = _build_client()
         flights = []
         seen_keys = set()
+        logged_flight_count = 0
         for link in links:
             mode = _normalize_match_mode(link.get('match_mode'))
             icao = link.get('airline_icao')
@@ -671,6 +846,8 @@ def customer_activity_summary(customer_id):
                 flight['_customer_flightradar_link_id'] = link.get('id')
                 flight['_customer_flightradar_match_mode'] = mode
                 flights.append(flight)
+                if _upsert_customer_flight(customer_id, link.get('id'), flight):
+                    logged_flight_count += 1
 
         return jsonify({
             'ok': True,
@@ -680,6 +857,7 @@ def customer_activity_summary(customer_id):
                 'max_days': 14,
             },
             'links': links,
+            'logged_flight_count': logged_flight_count,
             'flights': flights,
             'summary': _summarize_flights(flights),
         })
