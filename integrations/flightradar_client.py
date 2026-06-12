@@ -57,12 +57,15 @@ class FlightradarClient:
         operating_as: Optional[str] = None,
         painted_as: Optional[str] = None,
         limit: int = 500,
+        sort: Optional[str] = None,
     ) -> Dict[str, Any]:
         params: Dict[str, Any] = {
             'flight_datetime_from': flight_datetime_from,
             'flight_datetime_to': flight_datetime_to,
             'limit': limit,
         }
+        if sort:
+            params['sort'] = sort
         if operating_as:
             params['operating_as'] = operating_as
         if painted_as:

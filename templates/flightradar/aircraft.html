@@ -718,6 +718,7 @@ document.addEventListener('DOMContentLoaded', function () {
                             <th>Customer</th>
                             <th>Operator</th>
                             <th>Mode</th>
+                            <th class="text-end">Requests</th>
                             <th class="text-end">Returned</th>
                             <th class="text-end">Logged</th>
                             <th>Returned Range</th>
@@ -730,6 +731,7 @@ document.addEventListener('DOMContentLoaded', function () {
                                 <td>${escapeHtml(link.customer_name || link.customer_id || '-')}</td>
                                 <td>${escapeHtml(link.airline_name || link.airline_icao || '-')}</td>
                                 <td>${escapeHtml(link.match_mode || '-')}</td>
+                                <td class="text-end">${formatNumber(link.request_count || 0)}</td>
                                 <td class="text-end">${formatNumber(link.returned_flight_count || 0)}</td>
                                 <td class="text-end">${formatNumber(link.logged_flight_count || 0)}</td>
                                 <td class="small">${escapeHtml(link.first_returned_at ? `${formatDate(link.first_returned_at)} to ${formatDate(link.last_returned_at)}` : '-')}</td>
@@ -790,7 +792,8 @@ document.addEventListener('DOMContentLoaded', function () {
                 body: JSON.stringify({
                     window_hours: 336,
                     limit: 20000,
-                    customer_id: selectedCustomerId || null
+                    customer_id: selectedCustomerId || null,
+                    chunk_hours: selectedCustomerId ? 6 : 336
                 })
             });
             const payload = await response.json();

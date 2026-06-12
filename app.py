@@ -72,7 +72,7 @@ from routes.supplier_portal import supplier_portal_bp
 from routes.notifications import notifications_bp
 from routes.team_tracker import team_tracker_bp
 from routes.partsbase import partsbase_bp
-from routes.flightradar import flightradar_bp, sync_flightradar_activity_window
+from routes.flightradar import flightradar_bp, sync_flightradar_activity_incremental, sync_flightradar_activity_window
 
 scheduler = APScheduler()
 
@@ -589,18 +589,23 @@ def scheduled_flightradar_activity_sync():
         try:
             if os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_ENABLED', 'true').lower() not in ('1', 'true', 'yes', 'on'):
                 return
-            result = sync_flightradar_activity_window(
-                window_hours=int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_WINDOW_HOURS', '336')),
+            result = sync_flightradar_activity_incremental(
+                lookback_hours=int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_WINDOW_HOURS', '336')),
+                chunk_hours=int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_CHUNK_HOURS', '6')),
+                max_requests=int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_MAX_REQUESTS', '20')),
                 limit=int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_LIMIT', '500')),
             )
             current_app.logger.info(
-                "Scheduled Flightradar activity sync: ok=%s links=%s flights=%s logged=%s aircraft=%s errors=%s",
+                "Scheduled Flightradar incremental sync: ok=%s requests=%s processed_links=%s links=%s flights=%s logged=%s aircraft=%s errors=%s stopped=%s",
                 result.get('ok'),
+                result.get('request_count', 0),
+                result.get('processed_link_count', 0),
                 result.get('link_count', 0),
                 result.get('flight_count', 0),
                 result.get('logged_flight_count', 0),
                 result.get('refreshed_aircraft_count', 0),
                 len(result.get('errors') or []),
+                result.get('stopped_reason'),
             )
         except Exception as exc:
             current_app.logger.exception("Scheduled Flightradar activity sync failed: %s", exc)
