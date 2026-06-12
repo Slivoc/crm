@@ -507,7 +507,7 @@ def _refresh_aircraft_utilization(customer_id: int, registration: str):
 
     route_rows = db_execute(
         f"""
-        SELECT CONCAT(COALESCE(origin_iata, origin_icao, '?'), ' -> ', COALESCE(destination_iata, destination_icao, '?')) AS route,
+        SELECT CONCAT(COALESCE(origin_iata, origin_icao, 'Unknown'), ' -> ', COALESCE(destination_iata, destination_icao, 'Unknown')) AS route,
                COUNT(*) AS count
         FROM customer_flightradar_flights
         WHERE customer_id = ?
