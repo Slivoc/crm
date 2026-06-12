@@ -2,9 +2,10 @@ import os
 import re
 import json
 import csv
+from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from flask import Blueprint, current_app, jsonify, render_template, request
 from flask_login import current_user, login_required
@@ -392,6 +393,45 @@ def _can_view_customer(customer_id: int) -> bool:
     return bool(user_salesperson_id and customer.get('salesperson_id') == user_salesperson_id)
 
 
+def _customer_access_sql(customer_alias='c'):
+    if (
+        current_user.is_administrator()
+        or current_user.can(Permission.VIEW_CUSTOMERS)
+        or current_user.can(Permission.EDIT_CUSTOMERS)
+    ):
+        return '', []
+    try:
+        user_salesperson_id = current_user.get_salesperson_id()
+    except Exception:
+        user_salesperson_id = None
+    if not user_salesperson_id:
+        return 'AND 1 = 0', []
+    return f'AND {customer_alias}.salesperson_id = ?', [user_salesperson_id]
+
+
+def _json_value(value):
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
+
+
+def _row_to_json(row):
+    return {key: _json_value(value) for key, value in dict(row).items()}
+
+
+def _aircraft_model_expr(table_alias='f'):
+    return (
+        f"COALESCE(NULLIF({table_alias}.raw_payload->>'model', ''), "
+        f"NULLIF({table_alias}.raw_payload->>'aircraft_model', ''), "
+        f"NULLIF({table_alias}.raw_payload->>'aircraft', ''), "
+        f"{table_alias}.aircraft_type)"
+    )
+
+
 def _get_customer_flightradar_links(customer_id: int, *, active_only: bool = True):
     where_active = 'AND is_active = TRUE' if active_only else ''
     try:
@@ -626,6 +666,254 @@ def flightradar_home():
         or 'v1',
         default_bounds='72.0,25.0,-25.0,45.0',
     )
+
+
+@flightradar_bp.route('/aircraft')
+@login_required
+def aircraft_analytics():
+    access_sql, access_params = _customer_access_sql('c')
+    model_expr = _aircraft_model_expr('f')
+    try:
+        customers = db_execute(
+            f"""
+            SELECT DISTINCT c.id, c.name
+            FROM customer_flightradar_flights f
+            JOIN customers c ON c.id = f.customer_id
+            WHERE 1 = 1
+              {access_sql}
+            ORDER BY c.name
+            """,
+            tuple(access_params),
+            fetch='all',
+        ) or []
+        aircraft_types = db_execute(
+            f"""
+            SELECT DISTINCT f.aircraft_type
+            FROM customer_flightradar_flights f
+            JOIN customers c ON c.id = f.customer_id
+            WHERE f.aircraft_type IS NOT NULL
+              AND f.aircraft_type <> ''
+              {access_sql}
+            ORDER BY f.aircraft_type
+            """,
+            tuple(access_params),
+            fetch='all',
+        ) or []
+        aircraft_models = db_execute(
+            f"""
+            SELECT DISTINCT {model_expr} AS aircraft_model
+            FROM customer_flightradar_flights f
+            JOIN customers c ON c.id = f.customer_id
+            WHERE {model_expr} IS NOT NULL
+              AND {model_expr} <> ''
+              {access_sql}
+            ORDER BY aircraft_model
+            LIMIT 250
+            """,
+            tuple(access_params),
+            fetch='all',
+        ) or []
+    except Exception as exc:
+        current_app.logger.warning('Unable to load aircraft analytics filters: %s', exc)
+        customers = []
+        aircraft_types = []
+        aircraft_models = []
+
+    return render_template(
+        'flightradar/aircraft.html',
+        customers=[_row_to_json(row) for row in customers],
+        aircraft_types=[row['aircraft_type'] for row in aircraft_types],
+        aircraft_models=[row['aircraft_model'] for row in aircraft_models],
+    )
+
+
+def _aircraft_filter_sql(args):
+    access_sql, access_params = _customer_access_sql('c')
+    clauses = [access_sql] if access_sql else []
+    params = list(access_params)
+    model_expr = _aircraft_model_expr('f')
+
+    customer_id = (args.get('customer_id') or '').strip()
+    if customer_id:
+        clauses.append('AND f.customer_id = ?')
+        params.append(int(customer_id))
+
+    registration = (args.get('registration') or '').strip().upper()
+    if registration:
+        clauses.append('AND UPPER(f.registration) = ?')
+        params.append(registration)
+
+    aircraft_type = (args.get('aircraft_type') or '').strip()
+    if aircraft_type:
+        clauses.append('AND f.aircraft_type = ?')
+        params.append(aircraft_type)
+
+    aircraft_model = (args.get('aircraft_model') or '').strip()
+    if aircraft_model:
+        clauses.append(f'AND {model_expr} = ?')
+        params.append(aircraft_model)
+
+    date_from = (args.get('date_from') or '').strip()
+    if date_from:
+        clauses.append("AND COALESCE(f.first_seen, f.datetime_takeoff, f.created_at) >= ?::date")
+        params.append(date_from)
+
+    date_to = (args.get('date_to') or '').strip()
+    if date_to:
+        clauses.append("AND COALESCE(f.first_seen, f.datetime_takeoff, f.created_at) < (?::date + INTERVAL '1 day')")
+        params.append(date_to)
+
+    return '\n'.join(clauses), params
+
+
+def _aircraft_group_expr(group_by):
+    model_expr = _aircraft_model_expr('f')
+    if group_by == 'customer':
+        return "COALESCE(c.name, 'Unknown customer')"
+    if group_by == 'aircraft_type':
+        return "COALESCE(NULLIF(f.aircraft_type, ''), 'Unknown type')"
+    if group_by == 'aircraft_model':
+        return f"COALESCE(NULLIF({model_expr}, ''), 'Unknown model')"
+    if group_by == 'aircraft':
+        return "COALESCE(NULLIF(f.registration, ''), 'Unknown aircraft')"
+    return "'Traffic'"
+
+
+@flightradar_bp.route('/api/aircraft-analytics', methods=['GET'])
+@login_required
+def aircraft_analytics_data():
+    try:
+        where_sql, params = _aircraft_filter_sql(request.args)
+        group_by = (request.args.get('group_by') or 'aircraft').strip()
+        if group_by not in ('overall', 'aircraft', 'customer', 'aircraft_type', 'aircraft_model'):
+            group_by = 'aircraft'
+        group_expr = _aircraft_group_expr(group_by)
+        model_expr = _aircraft_model_expr('f')
+
+        summary = db_execute(
+            f"""
+            SELECT COUNT(*) AS flight_count,
+                   COUNT(DISTINCT f.registration) FILTER (WHERE f.registration IS NOT NULL AND f.registration <> '') AS aircraft_count,
+                   COUNT(DISTINCT f.customer_id) AS customer_count,
+                   COALESCE(SUM(f.estimated_flight_hours), 0) AS estimated_flight_hours,
+                   COALESCE(SUM(f.cycle_count), 0) AS cycle_count,
+                   COALESCE(SUM(f.actual_distance_km), 0) AS actual_distance_km
+            FROM customer_flightradar_flights f
+            JOIN customers c ON c.id = f.customer_id
+            WHERE 1 = 1
+              {where_sql}
+            """,
+            tuple(params),
+            fetch='one',
+        ) or {}
+
+        top_groups = db_execute(
+            f"""
+            SELECT {group_expr} AS group_name,
+                   COUNT(*) AS flight_count
+            FROM customer_flightradar_flights f
+            JOIN customers c ON c.id = f.customer_id
+            WHERE 1 = 1
+              {where_sql}
+            GROUP BY group_name
+            ORDER BY flight_count DESC, group_name
+            LIMIT 8
+            """,
+            tuple(params),
+            fetch='all',
+        ) or []
+        selected_groups = [row['group_name'] for row in top_groups]
+
+        history_rows = []
+        if selected_groups:
+            history_rows = db_execute(
+                f"""
+                SELECT DATE_TRUNC('day', COALESCE(f.first_seen, f.datetime_takeoff, f.created_at))::date AS bucket,
+                       {group_expr} AS group_name,
+                       COUNT(*) AS flight_count,
+                       COALESCE(SUM(f.estimated_flight_hours), 0) AS estimated_flight_hours,
+                       COALESCE(SUM(f.cycle_count), 0) AS cycle_count
+                FROM customer_flightradar_flights f
+                JOIN customers c ON c.id = f.customer_id
+                WHERE 1 = 1
+                  {where_sql}
+                  AND {group_expr} = ANY(?)
+                GROUP BY bucket, group_name
+                ORDER BY bucket, group_name
+                """,
+                tuple(params + [selected_groups]),
+                fetch='all',
+            ) or []
+
+        aircraft_rows = db_execute(
+            f"""
+            SELECT f.registration,
+                   MAX(c.name) AS customer_name,
+                   MAX(f.aircraft_type) AS aircraft_type,
+                   MAX({model_expr}) AS aircraft_model,
+                   COUNT(*) AS flight_count,
+                   COALESCE(SUM(f.estimated_flight_hours), 0) AS estimated_flight_hours,
+                   COALESCE(SUM(f.cycle_count), 0) AS cycle_count,
+                   MIN(COALESCE(f.first_seen, f.datetime_takeoff, f.created_at)) AS first_seen,
+                   MAX(COALESCE(f.last_seen, f.datetime_landed, f.first_seen, f.datetime_takeoff, f.created_at)) AS last_seen
+            FROM customer_flightradar_flights f
+            JOIN customers c ON c.id = f.customer_id
+            WHERE f.registration IS NOT NULL
+              AND f.registration <> ''
+              {where_sql}
+            GROUP BY f.registration
+            ORDER BY flight_count DESC, last_seen DESC
+            LIMIT 100
+            """,
+            tuple(params),
+            fetch='all',
+        ) or []
+
+        flight_rows = db_execute(
+            f"""
+            SELECT f.id,
+                   f.customer_id,
+                   c.name AS customer_name,
+                   f.registration,
+                   f.aircraft_type,
+                   {model_expr} AS aircraft_model,
+                   f.flight,
+                   f.callsign,
+                   f.origin_iata,
+                   f.origin_icao,
+                   f.destination_iata,
+                   f.destination_icao,
+                   f.first_seen,
+                   f.datetime_takeoff,
+                   f.last_seen,
+                   f.datetime_landed,
+                   f.estimated_flight_hours,
+                   f.cycle_count,
+                   f.actual_distance_km
+            FROM customer_flightradar_flights f
+            JOIN customers c ON c.id = f.customer_id
+            WHERE 1 = 1
+              {where_sql}
+            ORDER BY COALESCE(f.first_seen, f.datetime_takeoff, f.created_at) DESC
+            LIMIT 250
+            """,
+            tuple(params),
+            fetch='all',
+        ) or []
+
+        return jsonify({
+            'ok': True,
+            'summary': _row_to_json(summary),
+            'groups': [_row_to_json(row) for row in top_groups],
+            'history': [_row_to_json(row) for row in history_rows],
+            'aircraft': [_row_to_json(row) for row in aircraft_rows],
+            'flights': [_row_to_json(row) for row in flight_rows],
+        })
+    except (TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'Invalid aircraft analytics filter.'}), 400
+    except Exception as exc:
+        current_app.logger.exception('Unable to load aircraft analytics')
+        return jsonify({'ok': False, 'error': f'Unable to load aircraft analytics: {exc}'}), 500
 
 
 @flightradar_bp.route('/api/auth-test', methods=['POST'])

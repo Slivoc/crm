@@ -1,0 +1,452 @@
+{% extends "base.html" %}
+
+{% block title %}Aircraft Traffic{% endblock %}
+
+{% block extra_css %}
+{{ super() }}
+<style>
+    .aircraft-page {
+        max-width: 1680px;
+    }
+
+    .aircraft-filters {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(150px, 1fr));
+        gap: 0.75rem;
+    }
+
+    .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(150px, 1fr));
+        gap: 0.75rem;
+    }
+
+    .metric-tile {
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        padding: 0.9rem;
+        background: #fff;
+    }
+
+    .metric-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        line-height: 1.1;
+    }
+
+    .chart-frame {
+        height: 380px;
+        position: relative;
+    }
+
+    .table-scroll {
+        max-height: 520px;
+        overflow: auto;
+    }
+
+    .table-scroll thead th {
+        background: #f8f9fa;
+        position: sticky;
+        top: 0;
+        z-index: 1;
+    }
+
+    @media (max-width: 1200px) {
+        .aircraft-filters,
+        .metric-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+    }
+
+    @media (max-width: 768px) {
+        .aircraft-filters,
+        .metric-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid aircraft-page py-4">
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+        <div>
+            <h1 class="h3 mb-1">Aircraft Traffic</h1>
+            <div class="text-muted">Logged Flightradar flight history by aircraft, customer, type, and model</div>
+        </div>
+        <a href="{{ url_for('flightradar.flightradar_home') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-radar me-1"></i>
+            Live Map
+        </a>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <form id="aircraft-filter-form">
+                <div class="aircraft-filters">
+                    <div>
+                        <label class="form-label" for="customer-filter">Customer</label>
+                        <select class="form-select" id="customer-filter" name="customer_id">
+                            <option value="">All customers</option>
+                            {% for customer in customers %}
+                                <option value="{{ customer.id }}">{{ customer.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="form-label" for="aircraft-type-filter">Aircraft Type</label>
+                        <select class="form-select" id="aircraft-type-filter" name="aircraft_type">
+                            <option value="">All types</option>
+                            {% for aircraft_type in aircraft_types %}
+                                <option value="{{ aircraft_type }}">{{ aircraft_type }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="form-label" for="aircraft-model-filter">Model</label>
+                        <select class="form-select" id="aircraft-model-filter" name="aircraft_model">
+                            <option value="">All models</option>
+                            {% for aircraft_model in aircraft_models %}
+                                <option value="{{ aircraft_model }}">{{ aircraft_model }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="form-label" for="registration-filter">Aircraft</label>
+                        <input type="text" class="form-control text-uppercase" id="registration-filter" name="registration" placeholder="G-ABCD">
+                    </div>
+                    <div>
+                        <label class="form-label" for="date-from-filter">From</label>
+                        <input type="date" class="form-control" id="date-from-filter" name="date_from">
+                    </div>
+                    <div>
+                        <label class="form-label" for="date-to-filter">To</label>
+                        <input type="date" class="form-control" id="date-to-filter" name="date_to">
+                    </div>
+                </div>
+                <div class="d-flex flex-wrap align-items-end justify-content-between gap-3 mt-3">
+                    <div>
+                        <label class="form-label" for="group-by-filter">Chart Grouping</label>
+                        <select class="form-select" id="group-by-filter" name="group_by">
+                            <option value="aircraft" selected>Aircraft</option>
+                            <option value="customer">Customer</option>
+                            <option value="aircraft_type">Aircraft type</option>
+                            <option value="aircraft_model">Model</option>
+                            <option value="overall">Overall traffic</option>
+                        </select>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-outline-secondary" id="reset-filters-btn">
+                            <i class="bi bi-arrow-counterclockwise me-1"></i>
+                            Reset
+                        </button>
+                        <button type="submit" class="btn btn-primary" id="load-aircraft-btn">
+                            <span id="load-aircraft-spinner" class="spinner-border spinner-border-sm me-2 d-none" aria-hidden="true"></span>
+                            Apply
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="aircraft-status" class="alert alert-secondary">Loading aircraft traffic history...</div>
+
+    <div class="metric-grid mb-3">
+        <div class="metric-tile">
+            <div class="text-muted small">Flights</div>
+            <div class="metric-value" id="metric-flights">0</div>
+        </div>
+        <div class="metric-tile">
+            <div class="text-muted small">Aircraft</div>
+            <div class="metric-value" id="metric-aircraft">0</div>
+        </div>
+        <div class="metric-tile">
+            <div class="text-muted small">Customers</div>
+            <div class="metric-value" id="metric-customers">0</div>
+        </div>
+        <div class="metric-tile">
+            <div class="text-muted small">Flight Hours</div>
+            <div class="metric-value" id="metric-hours">0</div>
+        </div>
+        <div class="metric-tile">
+            <div class="text-muted small">Cycles</div>
+            <div class="metric-value" id="metric-cycles">0</div>
+        </div>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <h2 class="h5 mb-0">Traffic History</h2>
+            <span class="text-muted small">Daily logged flights for the top matching groups</span>
+        </div>
+        <div class="card-body">
+            <div class="chart-frame">
+                <canvas id="traffic-history-chart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-3">
+        <div class="col-xl-5">
+            <div class="card h-100">
+                <div class="card-header">
+                    <h2 class="h5 mb-0">Aircraft</h2>
+                </div>
+                <div class="table-scroll">
+                    <table class="table table-sm table-hover align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th>Aircraft</th>
+                                <th>Customer</th>
+                                <th>Type</th>
+                                <th class="text-end">Flights</th>
+                                <th class="text-end">Hours</th>
+                            </tr>
+                        </thead>
+                        <tbody id="aircraft-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        <div class="col-xl-7">
+            <div class="card h-100">
+                <div class="card-header">
+                    <h2 class="h5 mb-0">Flight Logs</h2>
+                </div>
+                <div class="table-scroll">
+                    <table class="table table-sm table-hover align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th>Seen</th>
+                                <th>Customer</th>
+                                <th>Aircraft</th>
+                                <th>Flight</th>
+                                <th>Route</th>
+                                <th class="text-end">Hours</th>
+                            </tr>
+                        </thead>
+                        <tbody id="flight-log-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const form = document.getElementById('aircraft-filter-form');
+    const loadButton = document.getElementById('load-aircraft-btn');
+    const spinner = document.getElementById('load-aircraft-spinner');
+    const status = document.getElementById('aircraft-status');
+    const resetButton = document.getElementById('reset-filters-btn');
+    const aircraftBody = document.getElementById('aircraft-table-body');
+    const flightBody = document.getElementById('flight-log-table-body');
+    const chartCanvas = document.getElementById('traffic-history-chart');
+    let trafficChart = null;
+
+    function setDefaultDates() {
+        const today = new Date();
+        const from = new Date();
+        from.setDate(today.getDate() - 90);
+        document.getElementById('date-from-filter').value = from.toISOString().slice(0, 10);
+        document.getElementById('date-to-filter').value = today.toISOString().slice(0, 10);
+    }
+
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, function (character) {
+            return {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }[character];
+        });
+    }
+
+    function formatNumber(value, digits = 0) {
+        const number = Number(value || 0);
+        return number.toLocaleString(undefined, {
+            maximumFractionDigits: digits,
+            minimumFractionDigits: digits
+        });
+    }
+
+    function formatDate(value) {
+        if (!value) {
+            return '-';
+        }
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+            return value;
+        }
+        return date.toLocaleString(undefined, {
+            year: 'numeric',
+            month: 'short',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
+
+    function routeText(row) {
+        const origin = row.origin_iata || row.origin_icao || '?';
+        const destination = row.destination_iata || row.destination_icao || '?';
+        return `${origin} -> ${destination}`;
+    }
+
+    function setStatus(type, message) {
+        status.className = `alert alert-${type}`;
+        status.textContent = message;
+    }
+
+    function buildUrl() {
+        const params = new URLSearchParams(new FormData(form));
+        return `{{ url_for("flightradar.aircraft_analytics_data") }}?${params.toString()}`;
+    }
+
+    function updateMetrics(summary) {
+        document.getElementById('metric-flights').textContent = formatNumber(summary.flight_count);
+        document.getElementById('metric-aircraft').textContent = formatNumber(summary.aircraft_count);
+        document.getElementById('metric-customers').textContent = formatNumber(summary.customer_count);
+        document.getElementById('metric-hours').textContent = formatNumber(summary.estimated_flight_hours, 1);
+        document.getElementById('metric-cycles').textContent = formatNumber(summary.cycle_count);
+    }
+
+    function renderAircraft(rows) {
+        aircraftBody.innerHTML = rows.length ? rows.map(row => `
+            <tr>
+                <td><button type="button" class="btn btn-link btn-sm p-0 aircraft-select" data-registration="${escapeHtml(row.registration)}">${escapeHtml(row.registration || '-')}</button></td>
+                <td>${escapeHtml(row.customer_name || '-')}</td>
+                <td>
+                    <div>${escapeHtml(row.aircraft_type || '-')}</div>
+                    <div class="small text-muted">${escapeHtml(row.aircraft_model || '')}</div>
+                </td>
+                <td class="text-end">${formatNumber(row.flight_count)}</td>
+                <td class="text-end">${formatNumber(row.estimated_flight_hours, 1)}</td>
+            </tr>
+        `).join('') : '<tr><td colspan="5" class="text-muted text-center py-4">No aircraft match these filters.</td></tr>';
+    }
+
+    function renderFlights(rows) {
+        flightBody.innerHTML = rows.length ? rows.map(row => `
+            <tr>
+                <td>${escapeHtml(formatDate(row.first_seen || row.datetime_takeoff))}</td>
+                <td>${escapeHtml(row.customer_name || '-')}</td>
+                <td>
+                    <div class="fw-semibold">${escapeHtml(row.registration || '-')}</div>
+                    <div class="small text-muted">${escapeHtml(row.aircraft_type || row.aircraft_model || '')}</div>
+                </td>
+                <td>${escapeHtml(row.flight || row.callsign || '-')}</td>
+                <td>${escapeHtml(routeText(row))}</td>
+                <td class="text-end">${formatNumber(row.estimated_flight_hours, 1)}</td>
+            </tr>
+        `).join('') : '<tr><td colspan="6" class="text-muted text-center py-4">No flight logs match these filters.</td></tr>';
+    }
+
+    function renderChart(historyRows, groups) {
+        const labels = [...new Set(historyRows.map(row => row.bucket))].sort();
+        const palette = [
+            '#2f7d57', '#2d6cdf', '#8b5cf6', '#d97706',
+            '#0f766e', '#be123c', '#4b5563', '#7c3aed'
+        ];
+        const datasets = groups.map((group, index) => {
+            const groupName = group.group_name;
+            const byDate = new Map(
+                historyRows
+                    .filter(row => row.group_name === groupName)
+                    .map(row => [row.bucket, Number(row.flight_count || 0)])
+            );
+            return {
+                label: groupName,
+                data: labels.map(label => byDate.get(label) || 0),
+                borderColor: palette[index % palette.length],
+                backgroundColor: palette[index % palette.length],
+                tension: 0.25,
+                pointRadius: 2,
+                borderWidth: 2
+            };
+        });
+
+        if (trafficChart) {
+            trafficChart.destroy();
+        }
+        trafficChart = new Chart(chartCanvas, {
+            type: 'line',
+            data: {labels, datasets},
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {mode: 'index', intersect: false},
+                plugins: {
+                    legend: {position: 'top', align: 'end'},
+                    tooltip: {
+                        callbacks: {
+                            label: context => `${context.dataset.label}: ${formatNumber(context.parsed.y)} flights`
+                        }
+                    }
+                },
+                scales: {
+                    x: {grid: {display: false}},
+                    y: {beginAtZero: true, ticks: {precision: 0}}
+                }
+            }
+        });
+    }
+
+    async function loadData() {
+        loadButton.disabled = true;
+        spinner.classList.remove('d-none');
+        setStatus('info', 'Loading aircraft traffic history...');
+
+        try {
+            const response = await fetch(buildUrl());
+            const payload = await response.json();
+            if (!response.ok || !payload.ok) {
+                throw new Error(payload.error || 'Unable to load aircraft traffic history.');
+            }
+            updateMetrics(payload.summary || {});
+            renderChart(payload.history || [], payload.groups || []);
+            renderAircraft(payload.aircraft || []);
+            renderFlights(payload.flights || []);
+            setStatus('success', `Loaded ${formatNumber(payload.summary?.flight_count || 0)} logged flights.`);
+        } catch (error) {
+            setStatus('danger', error.message || 'Unable to load aircraft traffic history.');
+        } finally {
+            spinner.classList.add('d-none');
+            loadButton.disabled = false;
+        }
+    }
+
+    form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        loadData();
+    });
+
+    resetButton.addEventListener('click', function () {
+        form.reset();
+        setDefaultDates();
+        loadData();
+    });
+
+    aircraftBody.addEventListener('click', function (event) {
+        const button = event.target.closest('.aircraft-select');
+        if (!button) {
+            return;
+        }
+        document.getElementById('registration-filter').value = button.dataset.registration || '';
+        document.getElementById('group-by-filter').value = 'aircraft';
+        loadData();
+    });
+
+    setDefaultDates();
+    loadData();
+});
+</script>
+{% endblock %}
