@@ -1041,6 +1041,43 @@ def _aircraft_group_expr(group_by):
     return "'Traffic'"
 
 
+def _aircraft_breakdown_sql(group_by):
+    model_expr = _aircraft_model_expr('f')
+    if group_by == 'customer':
+        return "f.customer_id::text", "COALESCE(c.name, 'Unknown customer')"
+    if group_by == 'aircraft_type':
+        return "COALESCE(NULLIF(f.aircraft_type, ''), 'Unknown type')", "COALESCE(NULLIF(f.aircraft_type, ''), 'Unknown type')"
+    if group_by == 'aircraft_model':
+        return f"COALESCE(NULLIF({model_expr}, ''), 'Unknown model')", f"COALESCE(NULLIF({model_expr}, ''), 'Unknown model')"
+    return "COALESCE(NULLIF(f.registration, ''), 'Unknown aircraft')", "COALESCE(NULLIF(f.registration, ''), 'Unknown aircraft')"
+
+
+def _load_aircraft_breakdown(group_by, where_sql, params, *, limit=25):
+    group_id_expr, group_name_expr = _aircraft_breakdown_sql(group_by)
+    rows = db_execute(
+        f"""
+        SELECT {group_id_expr} AS group_id,
+               {group_name_expr} AS group_name,
+               COUNT(*) AS flight_count,
+               COUNT(DISTINCT f.registration) FILTER (WHERE f.registration IS NOT NULL AND f.registration <> '') AS aircraft_count,
+               COUNT(DISTINCT f.customer_id) AS customer_count,
+               COALESCE(SUM(f.estimated_flight_hours), 0) AS estimated_flight_hours,
+               COALESCE(SUM(f.cycle_count), 0) AS cycle_count,
+               MAX(COALESCE(f.last_seen, f.datetime_landed, f.first_seen, f.datetime_takeoff, f.created_at)) AS latest_seen_at
+        FROM customer_flightradar_flights f
+        JOIN customers c ON c.id = f.customer_id
+        WHERE 1 = 1
+          {where_sql}
+        GROUP BY group_id, group_name
+        ORDER BY flight_count DESC, estimated_flight_hours DESC, group_name
+        LIMIT ?
+        """,
+        tuple(params + [limit]),
+        fetch='all',
+    ) or []
+    return [_row_to_json(row) for row in rows]
+
+
 @flightradar_bp.route('/api/aircraft-analytics', methods=['GET'])
 @login_required
 def aircraft_analytics_data():
@@ -1131,6 +1168,26 @@ def aircraft_analytics_data():
             fetch='all',
         ) or []
 
+        route_rows = db_execute(
+            f"""
+            SELECT CONCAT(COALESCE(f.origin_iata, f.origin_icao, 'Unknown'), ' -> ', COALESCE(f.destination_iata, f.destination_icao, 'Unknown')) AS route,
+                   COUNT(*) AS flight_count,
+                   COUNT(DISTINCT f.registration) FILTER (WHERE f.registration IS NOT NULL AND f.registration <> '') AS aircraft_count,
+                   COUNT(DISTINCT f.customer_id) AS customer_count,
+                   COALESCE(SUM(f.estimated_flight_hours), 0) AS estimated_flight_hours,
+                   COALESCE(SUM(f.cycle_count), 0) AS cycle_count
+            FROM customer_flightradar_flights f
+            JOIN customers c ON c.id = f.customer_id
+            WHERE 1 = 1
+              {where_sql}
+            GROUP BY route
+            ORDER BY flight_count DESC, estimated_flight_hours DESC, route
+            LIMIT 25
+            """,
+            tuple(params),
+            fetch='all',
+        ) or []
+
         flight_rows = db_execute(
             f"""
             SELECT f.id,
@@ -1168,6 +1225,13 @@ def aircraft_analytics_data():
             'summary': _row_to_json(summary),
             'groups': [_row_to_json(row) for row in top_groups],
             'history': [_row_to_json(row) for row in history_rows],
+            'breakdowns': {
+                'customers': _load_aircraft_breakdown('customer', where_sql, params),
+                'aircraft_types': _load_aircraft_breakdown('aircraft_type', where_sql, params),
+                'aircraft_models': _load_aircraft_breakdown('aircraft_model', where_sql, params),
+                'aircraft': _load_aircraft_breakdown('aircraft', where_sql, params),
+                'routes': [_row_to_json(row) for row in route_rows],
+            },
             'aircraft': [_row_to_json(row) for row in aircraft_rows],
             'flights': [_row_to_json(row) for row in flight_rows],
         })

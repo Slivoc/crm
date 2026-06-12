@@ -39,6 +39,17 @@
         position: relative;
     }
 
+    .breakdown-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 1rem;
+    }
+
+    .breakdown-table {
+        max-height: 360px;
+        overflow: auto;
+    }
+
     .table-scroll {
         max-height: 520px;
         overflow: auto;
@@ -53,14 +64,16 @@
 
     @media (max-width: 1200px) {
         .aircraft-filters,
-        .metric-grid {
+        .metric-grid,
+        .breakdown-grid {
             grid-template-columns: repeat(2, minmax(0, 1fr));
         }
     }
 
     @media (max-width: 768px) {
         .aircraft-filters,
-        .metric-grid {
+        .metric-grid,
+        .breakdown-grid {
             grid-template-columns: 1fr;
         }
     }
@@ -125,15 +138,25 @@
                     </div>
                 </div>
                 <div class="d-flex flex-wrap align-items-end justify-content-between gap-3 mt-3">
-                    <div>
-                        <label class="form-label" for="group-by-filter">Chart Grouping</label>
-                        <select class="form-select" id="group-by-filter" name="group_by">
-                            <option value="aircraft" selected>Aircraft</option>
-                            <option value="customer">Customer</option>
-                            <option value="aircraft_type">Aircraft type</option>
-                            <option value="aircraft_model">Model</option>
-                            <option value="overall">Overall traffic</option>
-                        </select>
+                    <div class="d-flex flex-wrap gap-3">
+                        <div>
+                            <label class="form-label" for="group-by-filter">Chart Grouping</label>
+                            <select class="form-select" id="group-by-filter" name="group_by">
+                                <option value="customer" selected>Customer</option>
+                                <option value="aircraft_model">Model</option>
+                                <option value="aircraft_type">Aircraft type</option>
+                                <option value="aircraft">Aircraft</option>
+                                <option value="overall">Overall traffic</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="form-label" for="chart-metric-filter">Chart Metric</label>
+                            <select class="form-select" id="chart-metric-filter">
+                                <option value="flight_count" selected>Flights</option>
+                                <option value="estimated_flight_hours">Flight hours</option>
+                                <option value="cycle_count">Cycles</option>
+                            </select>
+                        </div>
                     </div>
                     <div class="d-flex gap-2">
                         <button type="button" class="btn btn-outline-secondary" id="reset-filters-btn">
@@ -178,11 +201,97 @@
     <div class="card mb-3">
         <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
             <h2 class="h5 mb-0">Traffic History</h2>
-            <span class="text-muted small">Daily logged flights for the top matching groups</span>
+            <span class="text-muted small">Daily activity for the top matching groups</span>
         </div>
         <div class="card-body">
             <div class="chart-frame">
                 <canvas id="traffic-history-chart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+            <h2 class="h5 mb-0">Activity Breakdown</h2>
+            <div class="btn-group btn-group-sm" role="group" aria-label="Breakdown metric">
+                <input type="radio" class="btn-check" name="breakdown_metric" id="breakdown-flights" value="flight_count" checked>
+                <label class="btn btn-outline-secondary" for="breakdown-flights">Flights</label>
+                <input type="radio" class="btn-check" name="breakdown_metric" id="breakdown-hours" value="estimated_flight_hours">
+                <label class="btn btn-outline-secondary" for="breakdown-hours">Hours</label>
+                <input type="radio" class="btn-check" name="breakdown_metric" id="breakdown-cycles" value="cycle_count">
+                <label class="btn btn-outline-secondary" for="breakdown-cycles">Cycles</label>
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="breakdown-grid">
+                <div>
+                    <h3 class="h6 mb-2">By Customer</h3>
+                    <div class="breakdown-table">
+                        <table class="table table-sm table-hover align-middle mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Customer</th>
+                                    <th class="text-end">Aircraft</th>
+                                    <th class="text-end">Flights</th>
+                                    <th class="text-end">Hours</th>
+                                    <th class="text-end">Cycles</th>
+                                </tr>
+                            </thead>
+                            <tbody id="customer-breakdown-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div>
+                    <h3 class="h6 mb-2">By Model</h3>
+                    <div class="breakdown-table">
+                        <table class="table table-sm table-hover align-middle mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Model</th>
+                                    <th class="text-end">Customers</th>
+                                    <th class="text-end">Flights</th>
+                                    <th class="text-end">Hours</th>
+                                    <th class="text-end">Cycles</th>
+                                </tr>
+                            </thead>
+                            <tbody id="model-breakdown-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div>
+                    <h3 class="h6 mb-2">By Aircraft Type</h3>
+                    <div class="breakdown-table">
+                        <table class="table table-sm table-hover align-middle mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Type</th>
+                                    <th class="text-end">Aircraft</th>
+                                    <th class="text-end">Flights</th>
+                                    <th class="text-end">Hours</th>
+                                    <th class="text-end">Cycles</th>
+                                </tr>
+                            </thead>
+                            <tbody id="type-breakdown-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div>
+                    <h3 class="h6 mb-2">Top Routes</h3>
+                    <div class="breakdown-table">
+                        <table class="table table-sm table-hover align-middle mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Route</th>
+                                    <th class="text-end">Aircraft</th>
+                                    <th class="text-end">Flights</th>
+                                    <th class="text-end">Hours</th>
+                                    <th class="text-end">Cycles</th>
+                                </tr>
+                            </thead>
+                            <tbody id="route-breakdown-body"></tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -248,7 +357,13 @@ document.addEventListener('DOMContentLoaded', function () {
     const aircraftBody = document.getElementById('aircraft-table-body');
     const flightBody = document.getElementById('flight-log-table-body');
     const chartCanvas = document.getElementById('traffic-history-chart');
+    const chartMetricInput = document.getElementById('chart-metric-filter');
+    const customerBreakdownBody = document.getElementById('customer-breakdown-body');
+    const modelBreakdownBody = document.getElementById('model-breakdown-body');
+    const typeBreakdownBody = document.getElementById('type-breakdown-body');
+    const routeBreakdownBody = document.getElementById('route-breakdown-body');
     let trafficChart = null;
+    let latestPayload = null;
 
     function setDefaultDates() {
         const today = new Date();
@@ -334,6 +449,59 @@ document.addEventListener('DOMContentLoaded', function () {
         `).join('') : '<tr><td colspan="5" class="text-muted text-center py-4">No aircraft match these filters.</td></tr>';
     }
 
+    function metricValue(row, metric) {
+        if (metric === 'estimated_flight_hours') {
+            return formatNumber(row.estimated_flight_hours, 1);
+        }
+        if (metric === 'cycle_count') {
+            return formatNumber(row.cycle_count);
+        }
+        return formatNumber(row.flight_count);
+    }
+
+    function renderBreakdownTable(body, rows, options) {
+        const metric = document.querySelector('input[name="breakdown_metric"]:checked')?.value || 'flight_count';
+        body.innerHTML = rows.length ? rows.map(row => `
+            <tr>
+                <td>
+                    ${options.filterName ? `<button type="button" class="btn btn-link btn-sm p-0 breakdown-filter" data-filter-name="${options.filterName}" data-filter-value="${escapeHtml(row.group_id || row.group_name)}">${escapeHtml(row.group_name || '-')}</button>` : escapeHtml(row.route || row.group_name || '-')}
+                    <div class="small text-muted">${escapeHtml(options.subtitle ? options.subtitle(row) : '')}</div>
+                </td>
+                <td class="text-end">${formatNumber(options.secondary === 'customers' ? row.customer_count : row.aircraft_count)}</td>
+                <td class="text-end ${metric === 'flight_count' ? 'fw-semibold' : ''}">${formatNumber(row.flight_count)}</td>
+                <td class="text-end ${metric === 'estimated_flight_hours' ? 'fw-semibold' : ''}">${formatNumber(row.estimated_flight_hours, 1)}</td>
+                <td class="text-end ${metric === 'cycle_count' ? 'fw-semibold' : ''}">${formatNumber(row.cycle_count)}</td>
+            </tr>
+        `).join('') : `<tr><td colspan="5" class="text-muted text-center py-4">No ${escapeHtml(options.emptyLabel)} activity.</td></tr>`;
+    }
+
+    function renderBreakdowns(breakdowns) {
+        renderBreakdownTable(customerBreakdownBody, breakdowns.customers || [], {
+            filterName: 'customer_id',
+            secondary: 'aircraft',
+            emptyLabel: 'customer',
+            subtitle: row => `${formatNumber(row.customer_count)} customer${Number(row.customer_count || 0) === 1 ? '' : 's'}`
+        });
+        renderBreakdownTable(modelBreakdownBody, breakdowns.aircraft_models || [], {
+            filterName: 'aircraft_model',
+            secondary: 'customers',
+            emptyLabel: 'model',
+            subtitle: row => `${formatNumber(row.aircraft_count)} aircraft`
+        });
+        renderBreakdownTable(typeBreakdownBody, breakdowns.aircraft_types || [], {
+            filterName: 'aircraft_type',
+            secondary: 'aircraft',
+            emptyLabel: 'aircraft type',
+            subtitle: row => `${formatNumber(row.customer_count)} customers`
+        });
+        renderBreakdownTable(routeBreakdownBody, breakdowns.routes || [], {
+            filterName: null,
+            secondary: 'aircraft',
+            emptyLabel: 'route',
+            subtitle: row => `${formatNumber(row.customer_count)} customers`
+        });
+    }
+
     function renderFlights(rows) {
         flightBody.innerHTML = rows.length ? rows.map(row => `
             <tr>
@@ -352,6 +520,12 @@ document.addEventListener('DOMContentLoaded', function () {
 
     function renderChart(historyRows, groups) {
         const labels = [...new Set(historyRows.map(row => row.bucket))].sort();
+        const metric = chartMetricInput.value;
+        const metricLabel = {
+            flight_count: 'flights',
+            estimated_flight_hours: 'flight hours',
+            cycle_count: 'cycles'
+        }[metric] || 'flights';
         const palette = [
             '#2f7d57', '#2d6cdf', '#8b5cf6', '#d97706',
             '#0f766e', '#be123c', '#4b5563', '#7c3aed'
@@ -361,7 +535,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const byDate = new Map(
                 historyRows
                     .filter(row => row.group_name === groupName)
-                    .map(row => [row.bucket, Number(row.flight_count || 0)])
+                    .map(row => [row.bucket, Number(row[metric] || 0)])
             );
             return {
                 label: groupName,
@@ -388,7 +562,7 @@ document.addEventListener('DOMContentLoaded', function () {
                     legend: {position: 'top', align: 'end'},
                     tooltip: {
                         callbacks: {
-                            label: context => `${context.dataset.label}: ${formatNumber(context.parsed.y)} flights`
+                            label: context => `${context.dataset.label}: ${formatNumber(context.parsed.y, metric === 'estimated_flight_hours' ? 1 : 0)} ${metricLabel}`
                         }
                     }
                 },
@@ -411,8 +585,10 @@ document.addEventListener('DOMContentLoaded', function () {
             if (!response.ok || !payload.ok) {
                 throw new Error(payload.error || 'Unable to load aircraft traffic history.');
             }
+            latestPayload = payload;
             updateMetrics(payload.summary || {});
             renderChart(payload.history || [], payload.groups || []);
+            renderBreakdowns(payload.breakdowns || {});
             renderAircraft(payload.aircraft || []);
             renderFlights(payload.flights || []);
             setStatus('success', `Loaded ${formatNumber(payload.summary?.flight_count || 0)} logged flights.`);
@@ -433,6 +609,32 @@ document.addEventListener('DOMContentLoaded', function () {
         form.reset();
         setDefaultDates();
         loadData();
+    });
+
+    chartMetricInput.addEventListener('change', function () {
+        if (latestPayload) {
+            renderChart(latestPayload.history || [], latestPayload.groups || []);
+        }
+    });
+
+    document.querySelectorAll('input[name="breakdown_metric"]').forEach(input => {
+        input.addEventListener('change', function () {
+            if (latestPayload) {
+                renderBreakdowns(latestPayload.breakdowns || {});
+            }
+        });
+    });
+
+    document.querySelector('.aircraft-page').addEventListener('click', function (event) {
+        const button = event.target.closest('.breakdown-filter');
+        if (!button) {
+            return;
+        }
+        const filter = document.querySelector(`[name="${button.dataset.filterName}"]`);
+        if (filter) {
+            filter.value = button.dataset.filterValue || '';
+            loadData();
+        }
     });
 
     aircraftBody.addEventListener('click', function (event) {
