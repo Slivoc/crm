@@ -328,8 +328,8 @@
             </div>
             <div class="col-md-3 mb-3">
                 <label class="form-label fw-bold">Max Results</label>
-                <input type="number" class="form-control" id="maxResults" min="1" step="1" value="500" placeholder="No limit">
-                <small class="form-text text-muted">Preview guard. Clear to load all, which may exceed nginx timeout.</small>
+                <input type="number" class="form-control" id="maxResults" min="1" step="1" placeholder="No limit">
+                <small class="form-text text-muted">Clear to load all. Large loads are fetched in 500-row chunks.</small>
             </div>
         </div>
 
@@ -824,6 +824,7 @@
 <script>
 const MARKETPLACE_EXPORT_DEFAULTS = {{ marketplace_export_defaults | tojson }};
 const ACTIVE_MASTER_LIST_SUMMARY = {{ active_master_list_summary | tojson }};
+const MARKETPLACE_EXPORT_LOAD_CHUNK_SIZE = 500;
 let allParts = [];
 let categories = [];
 let currentEditingPartNumber = null;
@@ -874,7 +875,7 @@ $(document).ready(function() {
         $('input[name="categoryFilter"][value="categorized_only"]').prop('checked', true);
         $('#pricingOnly').prop('checked', false);
         $('#partNumberSearch').val('');
-        $('#maxResults').val(500);
+        $('#maxResults').val('');
         $('#defaultQuantity').val(1);
         $('#applyMasterListFilter').prop('checked', !!activeMasterListSummary);
         applySavedMarketplaceDefaults();
@@ -988,7 +989,7 @@ function loadCategories() {
     });
 }
 
-function loadParts() {
+async function loadParts() {
     const startTime = Date.now();
     const baselinePartNumbers = Object.keys(importedAirbusBaselineRows || {});
 
@@ -1025,68 +1026,122 @@ function loadParts() {
         max_results: $('#maxResults').val().trim(),
         selected_base_part_numbers: partSourceMode === 'baseline' ? baselinePartNumbers : []
     };
+    const requestedMaxResults = parseInt(filters.max_results, 10) || 0;
+    const accumulatedParts = [];
+    const accumulatedReferenceSummary = {};
+    let rawLoaded = 0;
+    let offset = 0;
+    let lastResponse = null;
 
-    $.ajax({
-        url: '/marketplace/get-parts-for-export',
-        method: 'POST',
-        contentType: 'application/json',
-        data: JSON.stringify(filters),
-        success: function(response) {
-            const elapsedSeconds = ((Date.now() - startTime) / 1000).toFixed(1);
-            $('#loadingSpinner').hide();
-            setApplyFiltersBusy(false);
-            clearTimeout(loadStatusTimer);
-            setLoadStatusDetails('');
-
-            if (response.success && response.parts && response.parts.length > 0) {
-                allParts = response.parts;
-                referenceSummary = response.reference_summary || {};
-                if (response.active_master_list_summary !== undefined) {
-                    renderMasterListSummary(response.active_master_list_summary);
-                }
-                storeExportUncategorizedParts(response.parts, filters);
-                updateSummaryStats();
-                renderUncategorizedParts();
-                $('#statsRow').show();
-                $('#exportCard').show();
-                const sourceLabel = partSourceMode === 'baseline' ? 'uploaded Airbus list' : 'CRM filters';
-                const masterListText = response.master_list_applied ? ' Master list filter active.' : '';
-                const aliasCount = (referenceSummary.alias || 0) + (referenceSummary.alias_normalized || 0);
-                const unknownCount = referenceSummary.unknown || 0;
-                const exactCount = (referenceSummary.exact || 0) + (referenceSummary.exact_normalized || 0);
-                setLoadStatus(
-                    `Loaded ${response.parts.length} parts from ${sourceLabel} in ${elapsedSeconds}s. ` +
-                    `MPN refs: ${exactCount} exact, ${aliasCount} rewritten from alt refs, ${unknownCount} unresolved.${masterListText}`,
-                    'text-success'
-                );
-            } else {
-                $('#noPartsMessage').show();
-                allParts = [];
-                referenceSummary = {};
-                if (response.active_master_list_summary !== undefined) {
-                    renderMasterListSummary(response.active_master_list_summary);
-                }
-                if (partSourceMode === 'baseline') {
-                    setLoadStatus(`No CRM parts found for the uploaded Airbus list (${elapsedSeconds}s).`, 'text-muted');
-                } else {
-                    setLoadStatus(`No parts found (${elapsedSeconds}s).`, 'text-muted');
-                }
+    try {
+        while (true) {
+            const remaining = requestedMaxResults ? requestedMaxResults - rawLoaded : MARKETPLACE_EXPORT_LOAD_CHUNK_SIZE;
+            if (requestedMaxResults && remaining <= 0) {
+                break;
             }
-        },
-        error: function(xhr, status, error) {
+
+            const chunkLimit = requestedMaxResults
+                ? Math.min(MARKETPLACE_EXPORT_LOAD_CHUNK_SIZE, remaining)
+                : MARKETPLACE_EXPORT_LOAD_CHUNK_SIZE;
             const elapsedSeconds = ((Date.now() - startTime) / 1000).toFixed(1);
-            $('#loadingSpinner').hide();
-            setApplyFiltersBusy(false);
-            clearTimeout(loadStatusTimer);
-            console.error('Error loading parts:', error);
-            console.error('Response:', xhr.responseText);
-            const summary = xhr.responseJSON?.error || error || status || 'Unknown error';
-            const details = buildAjaxErrorDetails(xhr, status, error);
-            setLoadStatus(`Error loading parts (${elapsedSeconds}s): ${summary}`, 'text-danger');
-            setLoadStatusDetails(details, 'text-danger');
-            alert('Error loading parts: ' + summary);
+            setLoadStatus(
+                `Loading parts... ${rawLoaded} candidates checked, ${accumulatedParts.length} exportable parts found (${elapsedSeconds}s).`,
+                'text-muted'
+            );
+
+            const response = await $.ajax({
+                url: '/marketplace/get-parts-for-export',
+                method: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({
+                    ...filters,
+                    max_results: chunkLimit,
+                    offset: offset
+                })
+            });
+
+            if (!response.success) {
+                throw {
+                    responseJSON: response,
+                    statusText: response.error || 'Marketplace export request failed'
+                };
+            }
+
+            lastResponse = response;
+            const chunkRawCount = Number(response.raw_row_count || 0);
+            const chunkParts = Array.isArray(response.parts) ? response.parts : [];
+            accumulatedParts.push(...chunkParts);
+            mergeReferenceSummary(accumulatedReferenceSummary, response.reference_summary || {});
+            rawLoaded += chunkRawCount;
+            offset = Number(response.next_offset || (offset + chunkRawCount));
+
+            if (!response.has_more || chunkRawCount === 0) {
+                break;
+            }
         }
+
+        finishLoadParts(accumulatedParts, accumulatedReferenceSummary, lastResponse, filters, rawLoaded, startTime);
+    } catch (xhr) {
+        const elapsedSeconds = ((Date.now() - startTime) / 1000).toFixed(1);
+        $('#loadingSpinner').hide();
+        setApplyFiltersBusy(false);
+        clearTimeout(loadStatusTimer);
+        console.error('Error loading parts:', xhr);
+        const summary = xhr.responseJSON?.error || xhr.statusText || 'Unknown error';
+        const details = buildAjaxErrorDetails(xhr, xhr.statusText || 'error', summary);
+        setLoadStatus(`Error loading parts (${elapsedSeconds}s): ${summary}`, 'text-danger');
+        setLoadStatusDetails(details, 'text-danger');
+        alert('Error loading parts: ' + summary);
+    }
+}
+
+function mergeReferenceSummary(target, source) {
+    Object.entries(source || {}).forEach(([key, value]) => {
+        target[key] = (target[key] || 0) + (Number(value) || 0);
     });
+}
+
+function finishLoadParts(parts, mergedReferenceSummary, response, filters, rawLoaded, startTime) {
+    const elapsedSeconds = ((Date.now() - startTime) / 1000).toFixed(1);
+    $('#loadingSpinner').hide();
+    setApplyFiltersBusy(false);
+    clearTimeout(loadStatusTimer);
+    setLoadStatusDetails('');
+
+    if (response && response.active_master_list_summary !== undefined) {
+        renderMasterListSummary(response.active_master_list_summary);
+    }
+
+    if (parts.length > 0) {
+        allParts = parts;
+        referenceSummary = mergedReferenceSummary || {};
+        storeExportUncategorizedParts(parts, filters);
+        updateSummaryStats();
+        renderUncategorizedParts();
+        $('#statsRow').show();
+        $('#exportCard').show();
+        const sourceLabel = partSourceMode === 'baseline' ? 'uploaded Airbus list' : 'CRM filters';
+        const masterListText = response && response.master_list_applied ? ' Master list filter active.' : '';
+        const aliasCount = (referenceSummary.alias || 0) + (referenceSummary.alias_normalized || 0);
+        const unknownCount = referenceSummary.unknown || 0;
+        const exactCount = (referenceSummary.exact || 0) + (referenceSummary.exact_normalized || 0);
+        const rawText = rawLoaded > parts.length ? ` from ${rawLoaded} checked candidates` : '';
+        setLoadStatus(
+            `Loaded ${parts.length} parts${rawText} from ${sourceLabel} in ${elapsedSeconds}s. ` +
+            `MPN refs: ${exactCount} exact, ${aliasCount} rewritten from alt refs, ${unknownCount} unresolved.${masterListText}`,
+            'text-success'
+        );
+    } else {
+        $('#noPartsMessage').show();
+        allParts = [];
+        referenceSummary = {};
+        if (partSourceMode === 'baseline') {
+            setLoadStatus(`No CRM parts found for the uploaded Airbus list (${elapsedSeconds}s).`, 'text-muted');
+        } else {
+            const rawText = rawLoaded ? ` after checking ${rawLoaded} candidates` : '';
+            setLoadStatus(`No parts found${rawText} (${elapsedSeconds}s).`, 'text-muted');
+        }
+    }
 }
 
 function setLoadStatus(message, className) {

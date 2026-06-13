@@ -1439,16 +1439,59 @@ def _get_global_alternative_entries_map(cursor, base_part_numbers, rotary_only=T
     return alt_map
 
 
-def _get_alt_stock_rollup_map(customer_id, alt_entries_map):
+def _get_stock_quantity_map(cursor, base_part_numbers):
+    cleaned = list(dict.fromkeys(
+        str(value).strip()
+        for value in (base_part_numbers or [])
+        if str(value).strip()
+    ))
+    if not cleaned:
+        return {}
+
+    placeholders = ','.join('?' * len(cleaned))
+    cursor.execute(
+        f"""
+        SELECT base_part_number, COALESCE(SUM(available_quantity), 0) AS stock_qty
+        FROM stock_movements
+        WHERE movement_type = 'IN'
+          AND available_quantity > 0
+          AND base_part_number IN ({placeholders})
+        GROUP BY base_part_number
+        """,
+        cleaned,
+    )
+    return {
+        str(row['base_part_number']).strip(): _coerce_int(row['stock_qty'], default=0)
+        for row in (cursor.fetchall() or [])
+        if str(row['base_part_number'] or '').strip()
+    }
+
+
+def _apply_direct_stock_quantity(estimate, stock_qty):
+    updated = dict(estimate or {})
+    stock_qty_value = _coerce_int(stock_qty, default=0)
+    updated['stock_quantity'] = stock_qty_value
+    updated['in_stock'] = stock_qty_value > 0
+    if stock_qty_value > 0:
+        updated['estimated_lead_days'] = 0
+    return updated
+
+
+def _get_alt_stock_rollup_map(cursor, customer_id, alt_entries_map):
     flat_requests = []
+    alt_base_part_numbers = []
     for entries in (alt_entries_map or {}).values():
         for entry in entries:
+            alt_base = _coerce_text(entry.get('base_part_number'), default='')
+            if alt_base:
+                alt_base_part_numbers.append(alt_base)
             part_number = _coerce_text(entry.get('part_number'), default='')
             if not part_number:
                 continue
             flat_requests.append({'part_number': part_number, 'quantity': 1})
 
     estimates = _get_portal_estimates(flat_requests, customer_id)
+    stock_qty_map = _get_stock_quantity_map(cursor, alt_base_part_numbers)
     rollup_map = {}
 
     for source_base_part_number, entries in (alt_entries_map or {}).items():
@@ -1461,8 +1504,8 @@ def _get_alt_stock_rollup_map(customer_id, alt_entries_map):
             alt_base = _coerce_text(entry.get('base_part_number'), default='')
             alt_part_number = _coerce_text(entry.get('part_number'), default='')
             estimate = estimates.get(alt_base) or estimates.get(alt_part_number) or {}
-            stock_qty = _coerce_int(estimate.get('stock_quantity'), default=0)
-            in_stock = bool(estimate.get('in_stock')) and stock_qty > 0
+            stock_qty = _coerce_int(stock_qty_map.get(alt_base), default=0)
+            in_stock = stock_qty > 0
             estimated_price = _coerce_numeric_number(estimate.get('estimated_price'))
 
             if not in_stock:
@@ -1686,12 +1729,19 @@ def _fetch_marketplace_parts_by_references(references):
         for row in rows
     ]
     estimates = _get_portal_estimates(parts_payload, customer_id)
+    direct_stock_qty_map = _get_stock_quantity_map(
+        cursor,
+        [row['base_part_number'] for row in rows],
+    )
 
     exact_lookup = {}
     normalized_lookup = {}
     for row in rows:
         part_number = row['part_number'] or row['base_part_number']
-        estimate = estimates.get(row['base_part_number']) or estimates.get(part_number) or {}
+        estimate = _apply_direct_stock_quantity(
+            estimates.get(row['base_part_number']) or estimates.get(part_number),
+            direct_stock_qty_map.get(row['base_part_number'], 0),
+        )
         part = {
             'base_part_number': row['base_part_number'],
             'part_number': part_number,
@@ -3717,10 +3767,13 @@ def get_parts_for_export():
         max_results = _coerce_int(data.get('max_results'), default=0)
         if max_results < 0:
             max_results = 0
+        offset = _coerce_int(data.get('offset'), default=0)
+        if offset < 0:
+            offset = 0
 
         logger.info(
             "Marketplace export parts request: source_mode=%s stock_filter=%s category_filter=%s "
-            "pricing_only=%s apply_master_list=%s part_number_search=%s selected_count=%s max_results=%s",
+            "pricing_only=%s apply_master_list=%s part_number_search=%s selected_count=%s max_results=%s offset=%s",
             source_mode,
             stock_filter,
             category_filter,
@@ -3729,6 +3782,7 @@ def get_parts_for_export():
             part_number_search or "<none>",
             len(selected_base_part_numbers),
             max_results or "<none>",
+            offset,
         )
 
         customer_id = _get_marketplace_customer_id()
@@ -3924,12 +3978,21 @@ def get_parts_for_export():
 
         query += " ORDER BY pn.part_number"
         if max_results:
-            query += " LIMIT ?"
-            params.append(max_results)
+            query += " LIMIT ? OFFSET ?"
+            params.extend([max_results + 1, offset])
 
         cursor.execute(query, params)
         rows = cursor.fetchall()
-        logger.info("Marketplace export query returned %s parts", len(rows))
+        has_more = bool(max_results and len(rows) > max_results)
+        if max_results and has_more:
+            rows = rows[:max_results]
+        logger.info(
+            "Marketplace export query returned %s parts offset=%s limit=%s has_more=%s",
+            len(rows),
+            offset,
+            max_results or "<none>",
+            has_more,
+        )
 
         rotary_alt_entries_map = _get_global_alternative_entries_map(
             cursor,
@@ -3962,8 +4025,12 @@ def get_parts_for_export():
             len(estimates),
             time.monotonic() - estimates_start,
         )
-        rotary_alt_stock_rollup_map = _get_alt_stock_rollup_map(customer_id, rotary_alt_entries_map)
-        all_alt_stock_rollup_map = _get_alt_stock_rollup_map(customer_id, all_alt_entries_map)
+        direct_stock_qty_map = _get_stock_quantity_map(
+            cursor,
+            [row['base_part_number'] for row in rows],
+        )
+        rotary_alt_stock_rollup_map = _get_alt_stock_rollup_map(cursor, customer_id, rotary_alt_entries_map)
+        all_alt_stock_rollup_map = _get_alt_stock_rollup_map(cursor, customer_id, all_alt_entries_map)
 
         parts = []
         filtered_stock = 0
@@ -3980,7 +4047,10 @@ def get_parts_for_export():
         for row in rows:
             base_part_number = row['base_part_number']
             part_number = row['part_number'] or base_part_number
-            estimate = estimates.get(base_part_number) or estimates.get(row['part_number'])
+            estimate = _apply_direct_stock_quantity(
+                estimates.get(base_part_number) or estimates.get(row['part_number']),
+                direct_stock_qty_map.get(base_part_number, 0),
+            )
             selected_alt_rollup = _select_alt_stock_rollup(
                 include_non_hqpl_alts,
                 rotary_alt_stock_rollup_map.get(base_part_number),
@@ -4062,6 +4132,11 @@ def get_parts_for_export():
             'reference_summary': reference_summary,
             'master_list_applied': master_list_applied,
             'active_master_list_summary': active_master_list_summary,
+            'raw_row_count': len(rows),
+            'offset': offset,
+            'limit': max_results,
+            'has_more': has_more,
+            'next_offset': offset + len(rows),
         }), 200
 
     except Exception as e:
@@ -4170,15 +4245,22 @@ def export_to_marketplace():
             for row in rows
         ]
         estimates = _get_portal_estimates(parts_payload, customer_id)
-        rotary_alt_stock_rollup_map = _get_alt_stock_rollup_map(customer_id, rotary_alt_entries_map)
-        all_alt_stock_rollup_map = _get_alt_stock_rollup_map(customer_id, all_alt_entries_map)
+        direct_stock_qty_map = _get_stock_quantity_map(
+            cursor,
+            [row['base_part_number'] for row in rows],
+        )
+        rotary_alt_stock_rollup_map = _get_alt_stock_rollup_map(cursor, customer_id, rotary_alt_entries_map)
+        all_alt_stock_rollup_map = _get_alt_stock_rollup_map(cursor, customer_id, all_alt_entries_map)
 
         default_lead_days = _coerce_int(get_portal_setting('default_lead_time_days', 7), default=7)
 
         # Calculate prices based on portal estimates
         parts_data = []
         for row in rows:
-            estimate = estimates.get(row['base_part_number']) or estimates.get(row['part_number'])
+            estimate = _apply_direct_stock_quantity(
+                estimates.get(row['base_part_number']) or estimates.get(row['part_number']),
+                direct_stock_qty_map.get(row['base_part_number'], 0),
+            )
             primary_stock_qty = estimate.get('stock_quantity') if estimate else None
             selected_alt_rollup = _select_alt_stock_rollup(
                 include_non_hqpl_alts,
