@@ -328,8 +328,8 @@
             </div>
             <div class="col-md-3 mb-3">
                 <label class="form-label fw-bold">Max Results</label>
-                <input type="number" class="form-control" id="maxResults" min="1" step="1" placeholder="No limit">
-                <small class="form-text text-muted">Leave blank to load all.</small>
+                <input type="number" class="form-control" id="maxResults" min="1" step="1" value="500" placeholder="No limit">
+                <small class="form-text text-muted">Preview guard. Clear to load all, which may exceed nginx timeout.</small>
             </div>
         </div>
 
@@ -874,6 +874,7 @@ $(document).ready(function() {
         $('input[name="categoryFilter"][value="categorized_only"]').prop('checked', true);
         $('#pricingOnly').prop('checked', false);
         $('#partNumberSearch').val('');
+        $('#maxResults').val(500);
         $('#defaultQuantity').val(1);
         $('#applyMasterListFilter').prop('checked', !!activeMasterListSummary);
         applySavedMarketplaceDefaults();
