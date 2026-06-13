@@ -18,14 +18,15 @@
         <div class="card-body">
             <div class="row mb-3">
                 <div class="col-md-4">
-                    <label class="form-label fw-bold">Order uncategorized parts by</label>
+                    <label class="form-label fw-bold">Part source</label>
                     <select class="form-select" id="uncategorizedSourceMode">
                         <option value="alphabetical">Alphabetical</option>
                         <option value="stock_qty">Top by stock quantity</option>
                         <option value="stock_value">Top by stock value</option>
                         <option value="sales_frequency">Top by sales frequency</option>
+                        <option value="hqpl_opportunities">HQPL opportunities</option>
                     </select>
-                    <div class="small text-muted mt-1">Always uses uncategorized parts from CRM. Change the ordering to focus on the most important parts first.</div>
+                    <div class="small text-muted mt-1">Use HQPL opportunities to attack the active Mirakl expansion candidates first.</div>
                 </div>
                 <div class="col-md-2">
                     <label class="form-label fw-bold">Limit</label>
@@ -81,8 +82,22 @@ let filteredParts = [];
 let searchTimer = null;
 let selectedCategoryMap = {};
 let currentSourceMode = 'alphabetical';
+const INITIAL_SOURCE = {{ (initial_source or '')|tojson }};
+const INITIAL_MONTHS = {{ (initial_months or 24)|tojson }};
+const INITIAL_STATUS_FILTER = {{ (initial_status_filter or '')|tojson }};
+const INITIAL_LIMIT = {{ (initial_limit or 100)|tojson }};
+const INITIAL_PART_QUERY = {{ (initial_part_query or '')|tojson }};
 
 $(document).ready(function() {
+    if (INITIAL_SOURCE) {
+        $('#uncategorizedSourceMode').val(INITIAL_SOURCE);
+    }
+    if (INITIAL_LIMIT) {
+        $('#uncategorizedSourceLimit').val(String(INITIAL_LIMIT));
+    }
+    if (INITIAL_PART_QUERY) {
+        $('#uncategorizedFilter').val(INITIAL_PART_QUERY);
+    }
     loadCategories();
     loadUncategorizedParts();
 
@@ -146,10 +161,16 @@ function loadUncategorizedParts() {
 
     if (currentSourceMode !== 'alphabetical') {
         $('#uncategorizedSource').text('Loading ranked uncategorized parts...');
-        $.get('/marketplace/categorization-tool/uncategorized-ranked', {
+        const rankedParams = {
             source: currentSourceMode,
             limit: limit
-        }).done(function(response) {
+        };
+        if (currentSourceMode === 'hqpl_opportunities') {
+            rankedParams.months = INITIAL_MONTHS || 24;
+            rankedParams.status_filter = INITIAL_STATUS_FILTER || 'missing_category';
+            rankedParams.part_query = $('#uncategorizedFilter').val() || '';
+        }
+        $.get('/marketplace/categorization-tool/uncategorized-ranked', rankedParams).done(function(response) {
             if (!response.success) {
                 $('#uncategorizedSource').text(response.error || 'Failed to load ranked parts.');
                 renderUncategorizedParts([]);
@@ -312,6 +333,15 @@ function renderUncategorizedTable() {
 
 function formatPartSignals(part) {
     const bits = [];
+    if (Number(part.activity_score || 0) > 0) {
+        bits.push(`Activity ${Number(part.activity_score).toLocaleString('en-GB')}`);
+    }
+    if (part.latest_activity_date) {
+        bits.push(`Latest ${part.latest_activity_date}`);
+    }
+    if (part.reason_text) {
+        bits.push(part.reason_text);
+    }
     if (Number(part.stock_quantity || 0) > 0) {
         bits.push(`Stock ${Number(part.stock_quantity).toLocaleString('en-GB')}`);
     }
@@ -321,10 +351,17 @@ function formatPartSignals(part) {
     if (Number(part.sales_order_count || 0) > 0) {
         bits.push(`Sales ${Number(part.sales_order_count).toLocaleString('en-GB')}`);
     }
+    if (Number(part.parts_list_line_count || 0) > 0) {
+        bits.push(`Parts lists ${Number(part.parts_list_line_count).toLocaleString('en-GB')}`);
+    }
+    const quoteCount = Number(part.customer_quote_count || 0) + Number(part.supplier_quote_count || 0);
+    if (quoteCount > 0) {
+        bits.push(`Quotes ${quoteCount.toLocaleString('en-GB')}`);
+    }
     if (Number(part.quantity_sold || 0) > 0) {
         bits.push(`Qty sold ${Number(part.quantity_sold).toLocaleString('en-GB')}`);
     }
-    return bits.length ? bits.join(' | ') : 'No stock/sales signal';
+    return bits.length ? bits.join(' | ') : 'No activity signal';
 }
 
 function removePartFromList(basePartNumber) {

@@ -10,6 +10,9 @@
             <p class="text-muted mb-0">Rotary HQPL parts with CRM activity that are not fully listed or ready for Mirakl.</p>
         </div>
         <div class="d-flex gap-2 flex-wrap">
+            <a class="btn btn-primary btn-sm" href="{{ url_for('marketplace.categorization_tool_page', source='hqpl_opportunities', months=months, limit=limit if limit <= 500 else 500, part_query=part_query or None, status_filter='missing_category' if status_filter == 'not_listed_or_not_ready' else status_filter) }}">
+                <i class="bi bi-tags"></i> Categorise These Parts
+            </a>
             <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('marketplace.export_page') }}">
                 <i class="bi bi-box-arrow-up"></i> Export Page
             </a>

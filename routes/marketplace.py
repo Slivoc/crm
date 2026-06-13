@@ -2553,7 +2553,14 @@ def get_marketplace_categories():
 @marketplace_bp.route('/categorization-tool', methods=['GET'])
 def categorization_tool_page():
     """Render the marketplace categorization tool page"""
-    return render_template('marketplace_category_tool.html')
+    return render_template(
+        'marketplace_category_tool.html',
+        initial_source=(request.args.get('source') or '').strip(),
+        initial_months=max(_coerce_int(request.args.get('months'), default=24), 0),
+        initial_status_filter=(request.args.get('status_filter') or '').strip(),
+        initial_limit=max(min(_coerce_int(request.args.get('limit'), default=100), 500), 1),
+        initial_part_query=(request.args.get('part_query') or '').strip(),
+    )
 
 
 @marketplace_bp.route('/categorization-tool/suggest', methods=['POST'])
@@ -2719,6 +2726,66 @@ def categorization_tool_uncategorized_ranked():
         limit = max(1, min(int(limit), 500))
     except (TypeError, ValueError):
         limit = 100
+
+    if source == 'hqpl_opportunities':
+        months = max(_coerce_int(request.args.get('months'), default=24), 0)
+        status_filter = _coerce_text(
+            request.args.get('status_filter'),
+            default='missing_category',
+        ).strip()
+        if status_filter not in {
+            'not_listed_or_not_ready',
+            'missing_category',
+            'no_product_id',
+            'no_price',
+            'unknown_reference',
+            'all',
+        }:
+            status_filter = 'missing_category'
+        part_query = _coerce_text(request.args.get('part_query'), default='').strip()
+        opportunity_rows = _build_hqpl_activity_report_rows(
+            months=months,
+            part_query=part_query,
+            status_filter=status_filter,
+            limit=limit,
+        )
+        parts = [
+            {
+                'base_part_number': row['base_part_number'],
+                'part_number': row['part_number'],
+                'activity_score': row['activity_score'],
+                'latest_activity_date': row['latest_activity_date'],
+                'reason_text': row['reason_text'],
+                'reasons': row['reasons'],
+                'stock_quantity': row['stock_quantity'],
+                'stock_value': row['stock_value'],
+                'sales_order_count': row['sales_order_count'],
+                'sales_customer_count': row['sales_customer_count'],
+                'sales_quantity': row['sales_quantity'],
+                'parts_list_line_count': row['parts_list_line_count'],
+                'parts_list_customer_count': row['parts_list_customer_count'],
+                'customer_quote_count': row['customer_quote_count'],
+                'supplier_quote_count': row['supplier_quote_count'],
+                'purchase_order_count': row['purchase_order_count'],
+                'portal_search_count': row['portal_search_count'],
+                'reference_status': row['reference_status'],
+                'resolved_mpn_title': row['resolved_mpn_title'],
+                'hqpl_manufacturer': row['hqpl_manufacturer'],
+            }
+            for row in opportunity_rows
+            if not row.get('mkp_category')
+        ]
+        return jsonify({
+            'success': True,
+            'source': source,
+            'title': 'HQPL opportunity parts missing categories',
+            'parts': parts,
+            'summary': {
+                'months': months,
+                'status_filter': status_filter,
+                'part_query': part_query,
+            },
+        }), 200
 
     supported_sources = {
         'stock_qty': {
