@@ -34,7 +34,6 @@ logger = logging.getLogger(__name__)
 
 marketplace_bp = Blueprint('marketplace', __name__)
 
-PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY')
 AIRBUS_ROTARY_APPROVAL_LIST_TYPE = 'airbus_rotary'
 _AIRBUS_HARDWARE_REFERENCE_CACHE = None
 _AIRBUS_HARDWARE_REFERENCE_CACHE_MTIME = None
@@ -257,9 +256,29 @@ def _get_marketplace_customer_id():
 
 
 def _get_perplexity_client():
-    if not PERPLEXITY_API_KEY:
+    app_settings_key = ''
+    try:
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute(
+            "SELECT value FROM app_settings WHERE key = ? LIMIT 1",
+            ('PERPLEXITY_API_KEY',),
+        )
+        row = cursor.fetchone()
+        app_settings_key = row['value'] if row and row['value'] else ''
+    except Exception:
+        app_settings_key = ''
+
+    api_key = (
+        os.getenv('PERPLEXITY_API_KEY')
+        or current_app.config.get('PERPLEXITY_API_KEY')
+        or app_settings_key
+        or get_portal_setting('PERPLEXITY_API_KEY')
+        or get_portal_setting('perplexity_api_key')
+    )
+    if not api_key:
         return None
-    return OpenAI(api_key=PERPLEXITY_API_KEY, base_url="https://api.perplexity.ai")
+    return OpenAI(api_key=api_key, base_url="https://api.perplexity.ai")
 
 
 def _extract_json_object(raw_content):
