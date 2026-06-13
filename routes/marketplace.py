@@ -579,11 +579,6 @@ def _part_identifier(record):
     return str(record.get('part_number') or record.get('base_part_number') or '').strip()
 
 
-def _is_on_demand_without_price(record):
-    commercial_mode = _coerce_text(record.get('commercial-on-collection'), default='').upper()
-    return commercial_mode == 'ON_DEMAND' and _coerce_positive_number(record.get('price')) is None
-
-
 def _get_offer_missing_required_fields(offer):
     missing = []
     if _is_blank(offer.get('sku')):
@@ -592,7 +587,7 @@ def _get_offer_missing_required_fields(offer):
         missing.append('product-id')
     if _is_blank(offer.get('product-id-type')):
         missing.append('product-id-type')
-    if _coerce_numeric_number(offer.get('price')) is None and not _is_on_demand_without_price(offer):
+    if _coerce_numeric_number(offer.get('price')) is None:
         missing.append('price')
     if _coerce_positive_number(offer.get('quantity')) is None:
         missing.append('quantity')
@@ -1551,15 +1546,6 @@ def _build_offer_row_from_payload(offer):
         payload.get('commercial-on-collection', '')
     )
 
-    if _is_on_demand_without_price(payload):
-        payload['price'] = ''
-        payload['price-additional-info'] = ''
-        payload['discount-price'] = ''
-        for field in OFFER_IMPORT_FIELDS:
-            lowered = field.lower()
-            if lowered.startswith('price[') or lowered.startswith('discount-price['):
-                payload[field] = ''
-
     return payload
 
 
@@ -1834,7 +1820,10 @@ def _build_master_list_test_offers():
             continue
 
         price = crm_part.get('estimated_price_eur')
-        quantity = crm_part.get('stock_qty') if crm_part.get('in_stock') else 1
+        stock_qty = _coerce_int(crm_part.get('stock_qty'), default=0)
+        has_stock = stock_qty > 0
+        quantity = stock_qty if has_stock else 1
+        lead_time = 1 if has_stock else crm_part.get('estimated_lead_days')
         offer = _build_offer_row_from_payload({
             'sku': crm_part.get('part_number') or crm_part.get('base_part_number') or reference,
             'product-id': _MASTER_LIST_TEST_REFERENCE_MAP[reference],
@@ -1856,13 +1845,13 @@ def _build_master_list_test_offers():
             'update-delete': 'update',
             'allow-quote-requests': 'true',
             'leadtime-to-ship': _sanitize_marketplace_lead_time_days(
-                crm_part.get('estimated_lead_days'),
+                lead_time,
                 default=7,
             ),
             'min-order-quantity': '',
             'max-order-quantity': '',
             'package-quantity': '',
-            'commercial-on-collection': 'ON_DEMAND',
+            'commercial-on-collection': 'ON_COLLECTION' if has_stock else 'ON_DEMAND',
             'plt': '',
             'plt-unit': '',
             'shelflife': '',
@@ -3107,6 +3096,507 @@ def update_marketplace_fields(base_part_number):
         return jsonify({'error': str(e)}), 500
 
 
+def _row_get(row, key, default=None):
+    try:
+        value = row[key]
+    except (KeyError, IndexError, TypeError):
+        value = default
+    return default if value is None else value
+
+
+def _as_int(value, default=0):
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_float(value, default=0.0):
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return default
+
+
+def _date_text(value):
+    if not value:
+        return ''
+    if hasattr(value, 'isoformat'):
+        return value.isoformat()[:10]
+    return str(value)[:10]
+
+
+def _table_exists(cursor, table_name):
+    try:
+        cursor.execute(
+            """
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_name = ?
+            LIMIT 1
+            """,
+            (table_name,),
+        )
+        return cursor.fetchone() is not None
+    except Exception:
+        try:
+            cursor.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+                (table_name,),
+            )
+            return cursor.fetchone() is not None
+        except Exception:
+            return False
+
+
+def _build_hqpl_activity_report_rows(*, months=24, part_query='', status_filter='not_listed_or_not_ready', limit=500):
+    today = datetime.utcnow().date()
+    cutoff = _months_ago(today, months) if months and months > 0 else None
+
+    def dated_clause(column):
+        return f" AND {column} >= ?" if cutoff else ""
+
+    db = get_db()
+    cursor = db.cursor()
+    has_portal_search_lines = _table_exists(cursor, 'portal_search_history_lines')
+
+    params = [AIRBUS_ROTARY_APPROVAL_LIST_TYPE]
+    for _ in range(7 + (1 if has_portal_search_lines else 0)):
+        if cutoff:
+            params.append(cutoff)
+
+    if has_portal_search_lines:
+        portal_search_cte = f"""
+        portal_search AS (
+            SELECT
+                UPPER(TRIM(pshl.base_part_number)) AS base_part_number,
+                COUNT(*) AS portal_search_count,
+                COUNT(DISTINCT pshl.customer_id) AS portal_search_customer_count,
+                MAX(pshl.created_at) AS latest_portal_search_date,
+                MIN(CASE WHEN pshl.estimated_price > 0 THEN pshl.estimated_price ELSE NULL END) AS lowest_portal_estimated_price
+            FROM portal_search_history_lines pshl
+            WHERE pshl.base_part_number IS NOT NULL
+              AND TRIM(pshl.base_part_number) <> ''
+              {dated_clause('pshl.created_at')}
+            GROUP BY UPPER(TRIM(pshl.base_part_number))
+        )
+        """
+    else:
+        portal_search_cte = """
+        portal_search AS (
+            SELECT
+                hqpl.base_part_number,
+                0 AS portal_search_count,
+                0 AS portal_search_customer_count,
+                NULL AS latest_portal_search_date,
+                NULL AS lowest_portal_estimated_price
+            FROM hqpl
+            WHERE 1 = 0
+        )
+        """
+
+    query = f"""
+        WITH hqpl AS (
+            SELECT DISTINCT
+                UPPER(COALESCE(NULLIF(TRIM(ma.airbus_material_base), ''), NULLIF(TRIM(ma.manufacturer_part_number_base), ''))) AS base_part_number,
+                MIN(NULLIF(TRIM(ma.manufacturer_name), '')) AS hqpl_manufacturer
+            FROM manufacturer_approvals ma
+            WHERE ma.approval_list_type = ?
+              AND TRIM(COALESCE(NULLIF(ma.airbus_material_base, ''), NULLIF(TRIM(ma.manufacturer_part_number_base), ''))) <> ''
+            GROUP BY UPPER(COALESCE(NULLIF(TRIM(ma.airbus_material_base), ''), NULLIF(TRIM(ma.manufacturer_part_number_base), '')))
+        ),
+        part_meta AS (
+            SELECT
+                UPPER(TRIM(pn.base_part_number)) AS base_part_number,
+                MAX(NULLIF(TRIM(pn.part_number), '')) AS part_number,
+                MAX(NULLIF(TRIM(pn.mkp_category), '')) AS mkp_category,
+                MAX(NULLIF(TRIM(pn.mkp_offer_product_id), '')) AS mkp_offer_product_id,
+                MAX(NULLIF(TRIM(pn.mkp_offer_product_id_type), '')) AS mkp_offer_product_id_type
+            FROM part_numbers pn
+            WHERE pn.base_part_number IS NOT NULL
+              AND TRIM(pn.base_part_number) <> ''
+            GROUP BY UPPER(TRIM(pn.base_part_number))
+        ),
+        stock AS (
+            SELECT
+                UPPER(TRIM(sm.base_part_number)) AS base_part_number,
+                COALESCE(SUM(sm.available_quantity), 0) AS stock_quantity,
+                COALESCE(SUM(sm.available_quantity * COALESCE(sm.cost_per_unit, 0)), 0) AS stock_value,
+                MAX(sm.movement_date) AS latest_stock_date
+            FROM stock_movements sm
+            WHERE sm.movement_type = 'IN'
+              AND sm.available_quantity > 0
+              AND sm.base_part_number IS NOT NULL
+              AND TRIM(sm.base_part_number) <> ''
+            GROUP BY UPPER(TRIM(sm.base_part_number))
+        ),
+        sales AS (
+            SELECT
+                UPPER(TRIM(sol.base_part_number)) AS base_part_number,
+                COUNT(*) AS sales_order_count,
+                COUNT(DISTINCT so.customer_id) AS sales_customer_count,
+                COALESCE(SUM(sol.quantity), 0) AS sales_quantity,
+                MAX(so.date_entered) AS latest_sale_date,
+                MAX(CASE WHEN sol.price > 0 THEN sol.price ELSE NULL END) AS latest_sale_price
+            FROM sales_order_lines sol
+            JOIN sales_orders so ON so.id = sol.sales_order_id
+            WHERE sol.base_part_number IS NOT NULL
+              AND TRIM(sol.base_part_number) <> ''
+              {dated_clause('so.date_entered')}
+            GROUP BY UPPER(TRIM(sol.base_part_number))
+        ),
+        parts_list_activity AS (
+            SELECT
+                UPPER(TRIM(pll.base_part_number)) AS base_part_number,
+                COUNT(*) AS parts_list_line_count,
+                COUNT(DISTINCT pl.id) AS parts_list_count,
+                COUNT(DISTINCT pl.customer_id) AS parts_list_customer_count,
+                COALESCE(SUM(pll.quantity), 0) AS parts_list_quantity,
+                MAX(pl.date_created) AS latest_parts_list_date
+            FROM parts_list_lines pll
+            JOIN parts_lists pl ON pl.id = pll.parts_list_id
+            WHERE pll.base_part_number IS NOT NULL
+              AND TRIM(pll.base_part_number) <> ''
+              {dated_clause('pl.date_created')}
+            GROUP BY UPPER(TRIM(pll.base_part_number))
+        ),
+        customer_quotes AS (
+            SELECT
+                UPPER(TRIM(pll.base_part_number)) AS base_part_number,
+                COUNT(*) AS customer_quote_count,
+                MAX(cql.date_created) AS latest_customer_quote_date,
+                MIN(CASE WHEN cql.quote_price_gbp > 0 THEN cql.quote_price_gbp ELSE NULL END) AS lowest_customer_quote_gbp
+            FROM customer_quote_lines cql
+            JOIN parts_list_lines pll ON pll.id = cql.parts_list_line_id
+            WHERE cql.quoted_status = 'quoted'
+              AND pll.base_part_number IS NOT NULL
+              AND TRIM(pll.base_part_number) <> ''
+              AND COALESCE(CAST(cql.is_no_bid AS INTEGER), 0) = 0
+              {dated_clause('cql.date_created')}
+            GROUP BY UPPER(TRIM(pll.base_part_number))
+        ),
+        direct_cqs AS (
+            SELECT
+                UPPER(TRIM(cl.base_part_number)) AS base_part_number,
+                COUNT(*) AS direct_cq_count,
+                MAX(c.entry_date) AS latest_direct_cq_date,
+                MIN(CASE WHEN cl.unit_price > 0 THEN cl.unit_price ELSE NULL END) AS lowest_direct_cq_price
+            FROM cq_lines cl
+            JOIN cqs c ON c.id = cl.cq_id
+            WHERE cl.base_part_number IS NOT NULL
+              AND TRIM(cl.base_part_number) <> ''
+              AND COALESCE(cl.is_no_quote, FALSE) = FALSE
+              {dated_clause('c.entry_date')}
+            GROUP BY UPPER(TRIM(cl.base_part_number))
+        ),
+        supplier_quotes AS (
+            SELECT
+                UPPER(TRIM(pll.base_part_number)) AS base_part_number,
+                COUNT(*) AS supplier_quote_count,
+                COUNT(DISTINCT sq.supplier_id) AS supplier_count,
+                MAX(COALESCE(sq.quote_date, sql.date_modified, sql.date_created, sq.date_created)) AS latest_supplier_quote_date,
+                MIN(CASE WHEN sql.unit_price > 0 THEN sql.unit_price ELSE NULL END) AS lowest_supplier_quote_price
+            FROM parts_list_supplier_quote_lines sql
+            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+            JOIN parts_list_lines pll ON pll.id = sql.parts_list_line_id
+            WHERE COALESCE(sql.is_no_bid, FALSE) = FALSE
+              AND pll.base_part_number IS NOT NULL
+              AND TRIM(pll.base_part_number) <> ''
+              {dated_clause('COALESCE(sq.quote_date, sql.date_modified, sql.date_created, sq.date_created)')}
+            GROUP BY UPPER(TRIM(pll.base_part_number))
+        ),
+        vendor_quotes AS (
+            SELECT
+                UPPER(TRIM(vl.base_part_number)) AS base_part_number,
+                COUNT(*) AS vendor_quote_count,
+                MAX(v.entry_date) AS latest_vendor_quote_date,
+                MIN(CASE WHEN vl.vendor_price > 0 THEN vl.vendor_price ELSE NULL END) AS lowest_vendor_quote_price
+            FROM vq_lines vl
+            JOIN vqs v ON v.id = vl.vq_id
+            WHERE vl.base_part_number IS NOT NULL
+              AND TRIM(vl.base_part_number) <> ''
+              {dated_clause('v.entry_date')}
+            GROUP BY UPPER(TRIM(vl.base_part_number))
+        ),
+        purchases AS (
+            SELECT
+                UPPER(TRIM(pol.base_part_number)) AS base_part_number,
+                COUNT(*) AS purchase_order_count,
+                MAX(po.date_issued) AS latest_purchase_order_date,
+                MIN(CASE WHEN pol.price > 0 THEN pol.price ELSE NULL END) AS lowest_purchase_price
+            FROM purchase_order_lines pol
+            JOIN purchase_orders po ON po.id = pol.purchase_order_id
+            WHERE pol.base_part_number IS NOT NULL
+              AND TRIM(pol.base_part_number) <> ''
+              {dated_clause('po.date_issued')}
+            GROUP BY UPPER(TRIM(pol.base_part_number))
+        ),
+        {portal_search_cte}
+        SELECT
+            hqpl.base_part_number,
+            hqpl.hqpl_manufacturer,
+            COALESCE(pm.part_number, hqpl.base_part_number) AS part_number,
+            pm.mkp_category,
+            pm.mkp_offer_product_id,
+            pm.mkp_offer_product_id_type,
+            COALESCE(stock.stock_quantity, 0) AS stock_quantity,
+            COALESCE(stock.stock_value, 0) AS stock_value,
+            stock.latest_stock_date,
+            COALESCE(sales.sales_order_count, 0) AS sales_order_count,
+            COALESCE(sales.sales_customer_count, 0) AS sales_customer_count,
+            COALESCE(sales.sales_quantity, 0) AS sales_quantity,
+            sales.latest_sale_date,
+            sales.latest_sale_price,
+            COALESCE(parts_list_activity.parts_list_line_count, 0) AS parts_list_line_count,
+            COALESCE(parts_list_activity.parts_list_count, 0) AS parts_list_count,
+            COALESCE(parts_list_activity.parts_list_customer_count, 0) AS parts_list_customer_count,
+            COALESCE(parts_list_activity.parts_list_quantity, 0) AS parts_list_quantity,
+            parts_list_activity.latest_parts_list_date,
+            COALESCE(customer_quotes.customer_quote_count, 0) AS customer_quote_count,
+            customer_quotes.latest_customer_quote_date,
+            customer_quotes.lowest_customer_quote_gbp,
+            COALESCE(direct_cqs.direct_cq_count, 0) AS direct_cq_count,
+            direct_cqs.latest_direct_cq_date,
+            direct_cqs.lowest_direct_cq_price,
+            COALESCE(supplier_quotes.supplier_quote_count, 0) AS supplier_quote_count,
+            COALESCE(supplier_quotes.supplier_count, 0) AS supplier_count,
+            supplier_quotes.latest_supplier_quote_date,
+            supplier_quotes.lowest_supplier_quote_price,
+            COALESCE(vendor_quotes.vendor_quote_count, 0) AS vendor_quote_count,
+            vendor_quotes.latest_vendor_quote_date,
+            vendor_quotes.lowest_vendor_quote_price,
+            COALESCE(purchases.purchase_order_count, 0) AS purchase_order_count,
+            purchases.latest_purchase_order_date,
+            purchases.lowest_purchase_price,
+            COALESCE(portal_search.portal_search_count, 0) AS portal_search_count,
+            COALESCE(portal_search.portal_search_customer_count, 0) AS portal_search_customer_count,
+            portal_search.latest_portal_search_date,
+            portal_search.lowest_portal_estimated_price
+        FROM hqpl
+        JOIN part_meta pm ON pm.base_part_number = hqpl.base_part_number
+        LEFT JOIN stock ON stock.base_part_number = hqpl.base_part_number
+        LEFT JOIN sales ON sales.base_part_number = hqpl.base_part_number
+        LEFT JOIN parts_list_activity ON parts_list_activity.base_part_number = hqpl.base_part_number
+        LEFT JOIN customer_quotes ON customer_quotes.base_part_number = hqpl.base_part_number
+        LEFT JOIN direct_cqs ON direct_cqs.base_part_number = hqpl.base_part_number
+        LEFT JOIN supplier_quotes ON supplier_quotes.base_part_number = hqpl.base_part_number
+        LEFT JOIN vendor_quotes ON vendor_quotes.base_part_number = hqpl.base_part_number
+        LEFT JOIN purchases ON purchases.base_part_number = hqpl.base_part_number
+        LEFT JOIN portal_search ON portal_search.base_part_number = hqpl.base_part_number
+    """
+    if part_query:
+        query += " WHERE (UPPER(COALESCE(pm.part_number, hqpl.base_part_number)) LIKE ? OR UPPER(hqpl.base_part_number) LIKE ?)"
+        like_value = f"%{part_query.upper()}%"
+        params.extend([like_value, like_value])
+
+    cursor.execute(query, params)
+    raw_rows = cursor.fetchall() or []
+    rows = []
+    for row in raw_rows:
+        part_number = _row_get(row, 'part_number') or _row_get(row, 'base_part_number')
+        reference_resolution = _resolve_airbus_mpn_title(part_number)
+        counts = {
+            'stock': 1 if _as_float(_row_get(row, 'stock_quantity')) > 0 else 0,
+            'sales': _as_int(_row_get(row, 'sales_order_count')),
+            'parts_lists': _as_int(_row_get(row, 'parts_list_line_count')),
+            'customer_quotes': _as_int(_row_get(row, 'customer_quote_count')) + _as_int(_row_get(row, 'direct_cq_count')),
+            'supplier_quotes': _as_int(_row_get(row, 'supplier_quote_count')) + _as_int(_row_get(row, 'vendor_quote_count')),
+            'purchase_orders': _as_int(_row_get(row, 'purchase_order_count')),
+            'portal_searches': _as_int(_row_get(row, 'portal_search_count')),
+        }
+        activity_score = sum(counts.values())
+        if activity_score <= 0:
+            continue
+
+        price_candidates = [
+            _row_get(row, 'latest_sale_price'),
+            _row_get(row, 'lowest_customer_quote_gbp'),
+            _row_get(row, 'lowest_direct_cq_price'),
+            _row_get(row, 'lowest_supplier_quote_price'),
+            _row_get(row, 'lowest_vendor_quote_price'),
+            _row_get(row, 'lowest_purchase_price'),
+            _row_get(row, 'lowest_portal_estimated_price'),
+        ]
+        has_positive_price = any(_as_float(value) > 0 for value in price_candidates)
+        reasons = []
+        if not _row_get(row, 'mkp_category'):
+            reasons.append('Missing category')
+        if not _row_get(row, 'mkp_offer_product_id'):
+            reasons.append('No stored product ID')
+        if reference_resolution.get('reference_status') in ('unknown', 'missing'):
+            reasons.append('Unresolved MPN title')
+        if not has_positive_price:
+            reasons.append('No positive price history')
+        if _as_float(_row_get(row, 'stock_quantity')) <= 0:
+            reasons.append('No current stock')
+
+        not_listed_or_not_ready = (
+            not _row_get(row, 'mkp_offer_product_id')
+            or not _row_get(row, 'mkp_category')
+            or reference_resolution.get('reference_status') in ('unknown', 'missing')
+        )
+
+        if status_filter == 'missing_category' and _row_get(row, 'mkp_category'):
+            continue
+        if status_filter == 'no_product_id' and _row_get(row, 'mkp_offer_product_id'):
+            continue
+        if status_filter == 'no_price' and has_positive_price:
+            continue
+        if status_filter == 'unknown_reference' and reference_resolution.get('reference_status') not in ('unknown', 'missing'):
+            continue
+        if status_filter == 'not_listed_or_not_ready' and not not_listed_or_not_ready:
+            continue
+
+        latest_dates = [
+            _row_get(row, 'latest_stock_date'),
+            _row_get(row, 'latest_sale_date'),
+            _row_get(row, 'latest_parts_list_date'),
+            _row_get(row, 'latest_customer_quote_date'),
+            _row_get(row, 'latest_direct_cq_date'),
+            _row_get(row, 'latest_supplier_quote_date'),
+            _row_get(row, 'latest_vendor_quote_date'),
+            _row_get(row, 'latest_purchase_order_date'),
+            _row_get(row, 'latest_portal_search_date'),
+        ]
+        latest_activity_date = max([_date_text(value) for value in latest_dates if _date_text(value)] or [''])
+
+        rows.append({
+            'base_part_number': _row_get(row, 'base_part_number', ''),
+            'part_number': part_number,
+            'hqpl_manufacturer': _row_get(row, 'hqpl_manufacturer', ''),
+            'mkp_category': _row_get(row, 'mkp_category', ''),
+            'mkp_offer_product_id': _row_get(row, 'mkp_offer_product_id', ''),
+            'mkp_offer_product_id_type': _row_get(row, 'mkp_offer_product_id_type', ''),
+            'resolved_mpn_title': reference_resolution.get('resolved_mpn_title', ''),
+            'reference_status': reference_resolution.get('reference_status', ''),
+            'activity_score': activity_score,
+            'latest_activity_date': latest_activity_date,
+            'stock_quantity': _as_float(_row_get(row, 'stock_quantity')),
+            'stock_value': _as_float(_row_get(row, 'stock_value')),
+            'sales_order_count': counts['sales'],
+            'sales_customer_count': _as_int(_row_get(row, 'sales_customer_count')),
+            'sales_quantity': _as_float(_row_get(row, 'sales_quantity')),
+            'parts_list_line_count': counts['parts_lists'],
+            'parts_list_count': _as_int(_row_get(row, 'parts_list_count')),
+            'parts_list_customer_count': _as_int(_row_get(row, 'parts_list_customer_count')),
+            'parts_list_quantity': _as_float(_row_get(row, 'parts_list_quantity')),
+            'customer_quote_count': counts['customer_quotes'],
+            'supplier_quote_count': counts['supplier_quotes'],
+            'supplier_count': _as_int(_row_get(row, 'supplier_count')),
+            'purchase_order_count': counts['purchase_orders'],
+            'portal_search_count': counts['portal_searches'],
+            'portal_search_customer_count': _as_int(_row_get(row, 'portal_search_customer_count')),
+            'has_positive_price': has_positive_price,
+            'lowest_supplier_quote_price': _row_get(row, 'lowest_supplier_quote_price'),
+            'lowest_customer_quote_gbp': _row_get(row, 'lowest_customer_quote_gbp') or _row_get(row, 'lowest_direct_cq_price'),
+            'lowest_purchase_price': _row_get(row, 'lowest_purchase_price'),
+            'lowest_vendor_quote_price': _row_get(row, 'lowest_vendor_quote_price'),
+            'lowest_portal_estimated_price': _row_get(row, 'lowest_portal_estimated_price'),
+            'reasons': reasons,
+            'reason_text': '; '.join(reasons),
+        })
+
+    rows.sort(key=lambda item: (-item['activity_score'], item['reason_text'], item['part_number']))
+    if limit and limit > 0:
+        rows = rows[:limit]
+    return rows
+
+
+@marketplace_bp.route('/hqpl-opportunities', methods=['GET'])
+def hqpl_opportunities_report():
+    months = max(_coerce_int(request.args.get('months'), default=24), 0)
+    limit = max(min(_coerce_int(request.args.get('limit'), default=500), 5000), 1)
+    part_query = _coerce_text(request.args.get('part_query'), default='').strip()
+    status_filter = _coerce_text(request.args.get('status_filter'), default='not_listed_or_not_ready').strip()
+    allowed_filters = {'not_listed_or_not_ready', 'missing_category', 'no_product_id', 'no_price', 'unknown_reference', 'all'}
+    if status_filter not in allowed_filters:
+        status_filter = 'not_listed_or_not_ready'
+
+    rows = _build_hqpl_activity_report_rows(
+        months=months,
+        part_query=part_query,
+        status_filter=status_filter,
+        limit=limit,
+    )
+    summary = {
+        'rows': len(rows),
+        'missing_category': sum(1 for row in rows if not row.get('mkp_category')),
+        'no_product_id': sum(1 for row in rows if not row.get('mkp_offer_product_id')),
+        'no_price': sum(1 for row in rows if not row.get('has_positive_price')),
+        'unknown_reference': sum(1 for row in rows if row.get('reference_status') in ('unknown', 'missing')),
+        'with_stock': sum(1 for row in rows if _as_float(row.get('stock_quantity')) > 0),
+    }
+    return render_template(
+        'marketplace_hqpl_opportunities.html',
+        rows=rows,
+        summary=summary,
+        months=months,
+        limit=limit,
+        part_query=part_query,
+        status_filter=status_filter,
+    )
+
+
+@marketplace_bp.route('/hqpl-opportunities.csv', methods=['GET'])
+def hqpl_opportunities_report_csv():
+    months = max(_coerce_int(request.args.get('months'), default=24), 0)
+    limit = max(min(_coerce_int(request.args.get('limit'), default=5000), 20000), 1)
+    part_query = _coerce_text(request.args.get('part_query'), default='').strip()
+    status_filter = _coerce_text(request.args.get('status_filter'), default='not_listed_or_not_ready').strip()
+    rows = _build_hqpl_activity_report_rows(
+        months=months,
+        part_query=part_query,
+        status_filter=status_filter,
+        limit=limit,
+    )
+    fieldnames = [
+        'part_number',
+        'base_part_number',
+        'hqpl_manufacturer',
+        'activity_score',
+        'latest_activity_date',
+        'reason_text',
+        'mkp_category',
+        'mkp_offer_product_id',
+        'reference_status',
+        'resolved_mpn_title',
+        'stock_quantity',
+        'stock_value',
+        'sales_order_count',
+        'sales_customer_count',
+        'sales_quantity',
+        'parts_list_line_count',
+        'parts_list_count',
+        'parts_list_customer_count',
+        'parts_list_quantity',
+        'customer_quote_count',
+        'supplier_quote_count',
+        'supplier_count',
+        'purchase_order_count',
+        'portal_search_count',
+        'portal_search_customer_count',
+        'has_positive_price',
+        'lowest_supplier_quote_price',
+        'lowest_customer_quote_gbp',
+        'lowest_purchase_price',
+        'lowest_vendor_quote_price',
+        'lowest_portal_estimated_price',
+    ]
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
+    writer.writeheader()
+    writer.writerows(rows)
+    csv_file = io.BytesIO(output.getvalue().encode('utf-8-sig'))
+    csv_file.seek(0)
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    return send_file(
+        csv_file,
+        mimetype='text/csv',
+        as_attachment=True,
+        download_name=f"HQPL_Mirakl_Opportunities_{timestamp}.csv",
+    )
+
+
 @marketplace_bp.route('/get-parts-for-export', methods=['POST'])
 def get_parts_for_export():
     """
@@ -3621,15 +4111,19 @@ def export_to_marketplace():
 
             quantity = default_quantity
             stock_qty_value = _coerce_int(stock_qty, default=0)
-            if stock_qty_value > 0:
+            has_stock = stock_qty_value > 0
+            if has_stock:
                 quantity = stock_qty_value
 
-            if lead_time is None:
-                lead_time = 1 if in_stock else default_lead_days
+            if has_stock:
+                lead_time = 1
+            elif lead_time is None:
+                lead_time = default_lead_days
             lead_time_value = _sanitize_marketplace_lead_time_days(
                 lead_time,
                 default=default_lead_days,
             )
+            commercial_mode = 'ON_COLLECTION' if has_stock else 'ON_DEMAND'
 
             part_number = row['part_number'] or row['base_part_number']
             resolved_description = _coerce_text(row['mkp_description'], default='')
@@ -3687,6 +4181,7 @@ def export_to_marketplace():
                 'price': _convert_marketplace_price_to_eur(price) if price is not None else 0.0,
                 'condition': 'New',
                 'lead_time_days': lead_time_value,
+                'commercial-on-collection': commercial_mode,
                 'baseline_row': baseline_row,
                 **_resolve_airbus_mpn_title(part_number),
             })
@@ -3722,7 +4217,7 @@ def export_to_marketplace():
                     'min-order-quantity': '',
                     'max-order-quantity': '',
                     'package-quantity': '',
-                    'commercial-on-collection': 'ON_DEMAND',
+                    'commercial-on-collection': part.get('commercial-on-collection'),
                     'plt': '',
                     'plt-unit': '',
                     'shelflife': '',

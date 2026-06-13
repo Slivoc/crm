@@ -250,6 +250,8 @@
                 .filter(row => row.crm_part && row.resolved_product_id && row.resolved_product_id_type)
                 .map(row => {
                     const crm = row.crm_part || {};
+                    const stockQty = Number.parseInt(crm.stock_qty, 10) || 0;
+                    const hasStock = stockQty > 0;
                     return {
                         'sku': crm.part_number || crm.base_part_number || row.requested_reference,
                         'product-id': row.resolved_product_id,
@@ -258,7 +260,7 @@
                         'internal-description': '',
                         'price': crm.estimated_price_eur,
                         'price-additional-info': '',
-                        'quantity': crm.in_stock ? (crm.stock_qty || 0) : 1,
+                        'quantity': hasStock ? stockQty : 1,
                         'min-quantity-alert': '',
                         'state': '1',
                         'available-start-date': '',
@@ -270,11 +272,11 @@
                         'discount-price': '',
                         'update-delete': 'update',
                         'allow-quote-requests': 'true',
-                        'leadtime-to-ship': crm.estimated_lead_days || '',
+                        'leadtime-to-ship': hasStock ? 1 : (crm.estimated_lead_days || ''),
                         'min-order-quantity': '',
                         'max-order-quantity': '',
                         'package-quantity': '',
-                        'commercial-on-collection': 'ON_DEMAND',
+                        'commercial-on-collection': hasStock ? 'ON_COLLECTION' : 'ON_DEMAND',
                         'plt': '',
                         'plt-unit': '',
                         'shelflife': '',

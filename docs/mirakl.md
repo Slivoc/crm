@@ -52,6 +52,16 @@ been observed in this repo, not generic Mirakl theory.
 
 - Offers-only uploads are valid. The hard part is matching each offer to the
   correct Airbus product.
+- Offer rows still need a populated `price` field. Airbus/Mirakl accepts
+  `commercial-on-collection=ON_DEMAND`, but the offer import rejects blank
+  `price` values with `The 'price' field is mandatory`. A placeholder `0.00`
+  has been observed in the ready-to-import offer example; blank is not valid.
+- Airbus clarified the commercial mode semantics after the April call:
+  - `ON_COLLECTION` = in-stock items. Export the actual CRM stock quantity and
+    use a 1-day lead time.
+  - `ON_DEMAND` = items to procure on a short supplier/source lead time. Export
+    the configured default quantity and use the source quote lead time when
+    available.
 - Airbus advised using `MPN title` as the matching identifier for this flow.
 - The four main offer error classes were discussed:
   - `The product does not exist`
@@ -60,8 +70,9 @@ been observed in this repo, not generic Mirakl theory.
   - `The product linked to the new offer is different from the product linked to the existing offer.`
 - `This product is not available for sale` was explained as an Airbus-side
   restriction / HQPL issue, not a CRM export formatting problem.
-- `leadtime-to-ship` was clarified as a shipping delay in days. Longer sourcing
-  delays belong in procurement lead time, not in `leadtime-to-ship`.
+- Latest Airbus guidance says `leadtime-to-ship` should be 1 day for
+  `ON_COLLECTION` stock rows, and should follow the short supplier/source quote
+  lead time for `ON_DEMAND` procurement rows.
 - Airbus said they would investigate suspicious `The product does not exist`
   cases where the product appeared to exist in the master catalog.
 
@@ -89,11 +100,16 @@ been observed in this repo, not generic Mirakl theory.
   - Offer row generation now normalizes mistaken `product-id-type=SKU` back to
     `mpnTitle` when the product ID is really the part number / resolved MPN
     title.
-  - `leadtime-to-ship` is now sanitized before export/import:
+- `leadtime-to-ship` is now sanitized before export/import:
     - minimum `1`
     - default cap `30`
     - configurable via `MIRAKL_MAX_LEADTIME_TO_SHIP_DAYS` or portal setting
       `mirakl_max_leadtime_to_ship_days`
+- Offer commercial mode now follows stock status:
+  - stock quantity > 0 exports as `ON_COLLECTION`, quantity = stock quantity,
+    `leadtime-to-ship = 1`
+  - no stock exports as `ON_DEMAND`, quantity = export default, and
+    `leadtime-to-ship` follows the source estimate/default lead time
 - `airbus_marketplace_export.py`
   - Full Airbus template exports apply the same lead-time sanitization.
 - `templates/marketplace_export.html`
@@ -125,6 +141,15 @@ These two files solve different problems and should stay separate.
   - Repo-side mitigation is in place.
   - Large lead times should now be clamped before export so they do not hit the
     earlier operator validation error.
+- Blank offer `price`
+  - Repo-side mitigation is in place.
+  - Offer validation now treats `price` as mandatory even for
+    `commercial-on-collection=ON_DEMAND`, and offer export preserves `0.00`
+    instead of blanking it.
+- Offer commercial mode / quantity / lead time
+  - Repo-side mitigation is in place.
+  - Offer exports now distinguish stocked `ON_COLLECTION` rows from procurable
+    `ON_DEMAND` rows based on effective stock quantity.
 - Wrong identifier type / rows using SKU as the matching key
   - Repo-side mitigation is in place.
   - Offer exports should now prefer:

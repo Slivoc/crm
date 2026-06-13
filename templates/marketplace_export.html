@@ -115,6 +115,9 @@
             <a class="btn btn-outline-secondary" href="/marketplace/categorization-tool">
                 <i class="bi bi-tags"></i> Categorization Tool
             </a>
+            <a class="btn btn-outline-secondary" href="{{ url_for('marketplace.hqpl_opportunities_report') }}">
+                <i class="bi bi-graph-up-arrow"></i> HQPL Opportunities
+            </a>
             <a class="btn btn-outline-secondary" href="/marketplace/mirakl">
                 <i class="bi bi-plug"></i> Mirakl Connection
             </a>
@@ -2067,15 +2070,15 @@ function buildProductPayload(part, defaultQuantity, defaults) {
     const partNumber = (part.part_number || part.base_part_number || '').trim();
     const effectiveState = getEffectiveMarketplaceState(part);
     const stockQty = effectiveState.stockQty;
-    const quantity = Number.isFinite(stockQty) && stockQty > 0 ? stockQty : defaultQuantity;
-    const rawLeadTime = quantity > 0 ? 1 : (part.estimated_lead_days ?? 7);
+    const hasStock = Number.isFinite(stockQty) && stockQty > 0;
+    const quantity = hasStock ? stockQty : defaultQuantity;
+    const rawLeadTime = hasStock ? 1 : (part.estimated_lead_days ?? 7);
     const leadTime = Math.max(Number.parseInt(rawLeadTime, 10) || 1, 1);
     let description = resolveDefaultDescription(part, defaults);
     const baselineRow = getImportedAirbusBaselineRow(part);
     const eurPrice = coerceNumber(part && part.estimated_price_eur);
     const rawPrice = eurPrice !== null ? eurPrice : (effectiveState.price ?? '');
     const price = coerceNumber(rawPrice) === null ? '0.00' : rawPrice;
-    const isOnDemandWithoutPrice = coerceNumber(rawPrice) === null;
     if (effectiveState.note) {
         description = [description, effectiveState.note].filter(Boolean).join(' ');
     }
@@ -2116,7 +2119,7 @@ function buildProductPayload(part, defaultQuantity, defaults) {
         price: price,
         condition: 'New',
         lead_time_days: leadTime,
-        'commercial-on-collection': isOnDemandWithoutPrice ? 'ON_DEMAND' : 'ON_COLLECTION',
+        'commercial-on-collection': hasStock ? 'ON_COLLECTION' : 'ON_DEMAND',
         baseline_row: baselineRow
     };
 }
@@ -2125,14 +2128,14 @@ function buildOfferPayload(part, defaultQuantity, defaults) {
     const partNumber = (part.part_number || part.base_part_number || '').trim();
     const effectiveState = getEffectiveMarketplaceState(part);
     const stockQty = effectiveState.stockQty;
-    const quantity = Number.isFinite(stockQty) && stockQty > 0 ? stockQty : defaultQuantity;
-    const rawLeadTime = quantity > 0 ? 1 : (part.estimated_lead_days ?? 7);
+    const hasStock = Number.isFinite(stockQty) && stockQty > 0;
+    const quantity = hasStock ? stockQty : defaultQuantity;
+    const rawLeadTime = hasStock ? 1 : (part.estimated_lead_days ?? 7);
     const leadTime = sanitizeLeadTimeToShipDays(rawLeadTime, 7);
     const baselineRow = getImportedAirbusBaselineRow(part);
     const eurPrice = coerceNumber(part && part.estimated_price_eur);
     const rawPrice = eurPrice !== null ? eurPrice : (effectiveState.price ?? '');
     const price = coerceNumber(rawPrice) === null ? '0.00' : rawPrice;
-    const isOnDemandWithoutPrice = coerceNumber(rawPrice) === null;
     const productId = resolveOfferProductId(part, baselineRow);
     const productIdType = resolveOfferProductIdType(part, baselineRow);
     const description = [resolveDefaultDescription(part, defaults), effectiveState.note].filter(Boolean).join(' ');
@@ -2161,7 +2164,7 @@ function buildOfferPayload(part, defaultQuantity, defaults) {
         'min-order-quantity': '',
         'max-order-quantity': '',
         'package-quantity': '',
-        'commercial-on-collection': 'ON_DEMAND',
+        'commercial-on-collection': hasStock ? 'ON_COLLECTION' : 'ON_DEMAND',
         'plt': '',
         'plt-unit': '',
         'shelflife': '',
@@ -2247,9 +2250,7 @@ function validateMandatoryForOfferPayload(offer) {
     if (!productIdType) {
         missing.push('product-id-type');
     }
-    const commercialMode = String(offer['commercial-on-collection'] || '').trim().toUpperCase();
-    const onDemandWithoutPrice = commercialMode === 'ON_DEMAND' && coercePositiveNumber(offer['price']) === null;
-    if (price === null && !onDemandWithoutPrice) {
+    if (price === null) {
         missing.push('price');
     }
     if (!Number.isFinite(quantity) || quantity <= 0) {

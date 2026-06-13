@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+
+{% block title %}HQPL Mirakl Opportunities{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex align-items-start justify-content-between flex-wrap gap-3 mb-3">
+        <div>
+            <h1 class="h3 mb-1">HQPL Mirakl Opportunities</h1>
+            <p class="text-muted mb-0">Rotary HQPL parts with CRM activity that are not fully listed or ready for Mirakl.</p>
+        </div>
+        <div class="d-flex gap-2 flex-wrap">
+            <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('marketplace.export_page') }}">
+                <i class="bi bi-box-arrow-up"></i> Export Page
+            </a>
+            <a class="btn btn-outline-primary btn-sm" href="{{ url_for('marketplace.hqpl_opportunities_report_csv', months=months, limit=limit, part_query=part_query or None, status_filter=status_filter) }}">
+                <i class="bi bi-download"></i> CSV
+            </a>
+        </div>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <form method="get" action="{{ url_for('marketplace.hqpl_opportunities_report') }}" class="row g-3 align-items-end">
+                <div class="col-md-3 col-lg-2">
+                    <label class="form-label fw-semibold" for="months">Activity window</label>
+                    <select class="form-select" id="months" name="months">
+                        <option value="6" {% if months == 6 %}selected{% endif %}>Last 6 months</option>
+                        <option value="12" {% if months == 12 %}selected{% endif %}>Last 12 months</option>
+                        <option value="24" {% if months == 24 %}selected{% endif %}>Last 24 months</option>
+                        <option value="36" {% if months == 36 %}selected{% endif %}>Last 36 months</option>
+                        <option value="0" {% if months == 0 %}selected{% endif %}>All time</option>
+                    </select>
+                </div>
+                <div class="col-md-4 col-lg-3">
+                    <label class="form-label fw-semibold" for="status_filter">Report focus</label>
+                    <select class="form-select" id="status_filter" name="status_filter">
+                        <option value="not_listed_or_not_ready" {% if status_filter == 'not_listed_or_not_ready' %}selected{% endif %}>Not listed or not ready</option>
+                        <option value="missing_category" {% if status_filter == 'missing_category' %}selected{% endif %}>Missing category</option>
+                        <option value="no_product_id" {% if status_filter == 'no_product_id' %}selected{% endif %}>No stored product ID</option>
+                        <option value="no_price" {% if status_filter == 'no_price' %}selected{% endif %}>No positive price history</option>
+                        <option value="unknown_reference" {% if status_filter == 'unknown_reference' %}selected{% endif %}>Unresolved MPN title</option>
+                        <option value="all" {% if status_filter == 'all' %}selected{% endif %}>All active HQPL parts</option>
+                    </select>
+                </div>
+                <div class="col-md-3 col-lg-2">
+                    <label class="form-label fw-semibold" for="limit">Limit</label>
+                    <input class="form-control" id="limit" name="limit" type="number" min="1" max="5000" value="{{ limit }}">
+                </div>
+                <div class="col-md-6 col-lg-3">
+                    <label class="form-label fw-semibold" for="part_query">Part search</label>
+                    <input class="form-control" id="part_query" name="part_query" value="{{ part_query }}" placeholder="Part or base part">
+                </div>
+                <div class="col-md-3 col-lg-2 d-flex gap-2">
+                    <button class="btn btn-primary" type="submit">Run</button>
+                    <a class="btn btn-outline-secondary" href="{{ url_for('marketplace.hqpl_opportunities_report') }}">Reset</a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="row g-3 mb-3">
+        <div class="col-sm-6 col-lg-2">
+            <div class="card h-100">
+                <div class="card-body py-3">
+                    <div class="fs-4 fw-semibold">{{ summary.rows }}</div>
+                    <div class="text-muted small">Rows shown</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-sm-6 col-lg-2">
+            <div class="card h-100">
+                <div class="card-body py-3">
+                    <div class="fs-4 fw-semibold text-warning">{{ summary.missing_category }}</div>
+                    <div class="text-muted small">Missing category</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-sm-6 col-lg-2">
+            <div class="card h-100">
+                <div class="card-body py-3">
+                    <div class="fs-4 fw-semibold text-secondary">{{ summary.no_product_id }}</div>
+                    <div class="text-muted small">No product ID</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-sm-6 col-lg-2">
+            <div class="card h-100">
+                <div class="card-body py-3">
+                    <div class="fs-4 fw-semibold text-danger">{{ summary.no_price }}</div>
+                    <div class="text-muted small">No price history</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-sm-6 col-lg-2">
+            <div class="card h-100">
+                <div class="card-body py-3">
+                    <div class="fs-4 fw-semibold text-danger">{{ summary.unknown_reference }}</div>
+                    <div class="text-muted small">Unresolved MPN</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-sm-6 col-lg-2">
+            <div class="card h-100">
+                <div class="card-body py-3">
+                    <div class="fs-4 fw-semibold text-success">{{ summary.with_stock }}</div>
+                    <div class="text-muted small">With stock</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header bg-light d-flex justify-content-between align-items-center">
+            <strong>Candidate parts</strong>
+            <span class="badge bg-secondary">{{ rows|length }}</span>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Part</th>
+                        <th>Reasons</th>
+                        <th class="text-end">Activity</th>
+                        <th>Latest</th>
+                        <th class="text-end">Stock</th>
+                        <th class="text-center">Sales</th>
+                        <th class="text-center">Parts lists</th>
+                        <th class="text-center">Quotes</th>
+                        <th class="text-center">POs</th>
+                        <th class="text-center">Portal</th>
+                        <th>Marketplace</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in rows %}
+                    <tr>
+                        <td>
+                            <div class="fw-semibold font-monospace">{{ row.part_number }}</div>
+                            <div class="small text-muted">{{ row.base_part_number }}</div>
+                            {% if row.hqpl_manufacturer %}
+                            <div class="small text-muted">{{ row.hqpl_manufacturer }}</div>
+                            {% endif %}
+                        </td>
+                        <td style="min-width: 210px;">
+                            <div class="d-flex flex-wrap gap-1">
+                                {% for reason in row.reasons %}
+                                <span class="badge text-bg-light border">{{ reason }}</span>
+                                {% endfor %}
+                            </div>
+                        </td>
+                        <td class="text-end fw-semibold">{{ row.activity_score }}</td>
+                        <td>{{ row.latest_activity_date or '-' }}</td>
+                        <td class="text-end">{{ "%.0f"|format(row.stock_quantity) }}</td>
+                        <td class="text-center">
+                            {{ row.sales_order_count }}
+                            {% if row.sales_customer_count %}
+                            <div class="small text-muted">{{ row.sales_customer_count }} cust</div>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            {{ row.parts_list_line_count }}
+                            {% if row.parts_list_customer_count %}
+                            <div class="small text-muted">{{ row.parts_list_customer_count }} cust</div>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            {{ row.customer_quote_count + row.supplier_quote_count }}
+                            {% if row.supplier_count %}
+                            <div class="small text-muted">{{ row.supplier_count }} supp</div>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">{{ row.purchase_order_count }}</td>
+                        <td class="text-center">
+                            {{ row.portal_search_count }}
+                            {% if row.portal_search_customer_count %}
+                            <div class="small text-muted">{{ row.portal_search_customer_count }} cust</div>
+                            {% endif %}
+                        </td>
+                        <td style="min-width: 260px;">
+                            {% if row.mkp_category %}
+                            <div class="small text-truncate" title="{{ row.mkp_category }}">{{ row.mkp_category }}</div>
+                            {% else %}
+                            <span class="badge text-bg-warning">No category</span>
+                            {% endif %}
+                            <div class="small mt-1">
+                                {% if row.mkp_offer_product_id %}
+                                <span class="text-success">{{ row.mkp_offer_product_id }}</span>
+                                {% else %}
+                                <span class="text-muted">No stored product ID</span>
+                                {% endif %}
+                            </div>
+                            <div class="small text-muted">MPN: {{ row.reference_status }}{% if row.resolved_mpn_title and row.resolved_mpn_title != row.part_number %} -> {{ row.resolved_mpn_title }}{% endif %}</div>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="11" class="text-center text-muted py-4">No active HQPL opportunities matched the selected filters.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
