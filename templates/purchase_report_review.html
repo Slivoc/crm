@@ -60,6 +60,30 @@
     .status-line {
         min-height: 1.5rem;
     }
+
+    .select-cell {
+        width: 42px;
+        min-width: 42px;
+        text-align: center;
+    }
+
+    .report-filter-bar {
+        gap: 0.75rem;
+    }
+
+    .report-filter-bar .form-control,
+    .report-filter-bar .form-select {
+        width: auto;
+        min-width: 180px;
+    }
+
+    .ignored-row {
+        opacity: 0.58;
+    }
+
+    .ignored-row .part-cell strong {
+        text-decoration: line-through;
+    }
 </style>
 {% endblock %}
 
@@ -85,20 +109,46 @@
         </div>
 
         <div class="alert alert-info py-2" id="report-action-status">
-            Comments are saved per section and part number, so they will appear on later matching reports.
+            Comments are saved per section and part number. Ignored parts are excluded from future purchase reports.
         </div>
 
         {% for section in review_sections %}
-            <div class="card mb-4">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h2 class="h5 mb-0">{{ section.title }} ({{ section.rows|length }})</h2>
-                    <span class="text-muted small">Snapshot rows from this email report</span>
+            <div class="card mb-4 report-section-card" data-section="{{ section.section }}">
+                <div class="card-header">
+                    <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap mb-3">
+                        <h2 class="h5 mb-0">{{ section.title }} (<span class="visible-row-count">{{ section.rows|length }}</span>/<span class="total-row-count">{{ section.rows|length }}</span>)</h2>
+                        <span class="text-muted small">Snapshot rows from this email report</span>
+                    </div>
+                    <div class="d-flex align-items-center flex-wrap report-filter-bar">
+                        <div class="input-group input-group-sm" style="width: 280px;">
+                            <span class="input-group-text"><i class="bi bi-search"></i></span>
+                            <input type="search" class="form-control section-search" placeholder="Filter rows">
+                        </div>
+                        <select class="form-select form-select-sm section-status-filter" aria-label="Ignored status filter">
+                            <option value="active">Active rows</option>
+                            <option value="all">All rows</option>
+                            <option value="ignored">Ignored rows</option>
+                        </select>
+                        <button type="button" class="btn btn-sm btn-outline-secondary select-visible-btn">
+                            Select Visible
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary clear-section-selection-btn">
+                            Clear Selection
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-danger ignore-selected-btn" disabled>
+                            <i class="bi bi-eye-slash me-1"></i>Ignore Selected
+                        </button>
+                        <span class="text-muted small selected-row-count">0 selected</span>
+                    </div>
                 </div>
                 <div class="card-body p-0">
                     <div class="table-responsive">
                         <table class="table table-sm table-striped table-hover report-table mb-0">
                             <thead class="table-light">
                                 <tr>
+                                    <th class="select-cell">
+                                        <input type="checkbox" class="form-check-input select-visible-checkbox" title="Select visible rows">
+                                    </th>
                                     <th>Part</th>
                                     {% if section.section == 'quoted_not_won' %}
                                         <th>Quote lines</th>
@@ -137,9 +187,22 @@
                             </thead>
                             <tbody>
                                 {% for item in section.rows %}
-                                    <tr data-section="{{ section.section }}" data-base-part-number="{{ item.base_part_number or item.part_number }}">
+                                    <tr class="{% if item.is_ignored %}ignored-row{% endif %}"
+                                        data-section="{{ section.section }}"
+                                        data-base-part-number="{{ item.base_part_number or item.part_number }}"
+                                        data-display-part="{{ item.display_part }}"
+                                        data-ignored="{{ '1' if item.is_ignored else '0' }}">
+                                        <td class="select-cell">
+                                            <input type="checkbox" class="form-check-input row-select-checkbox" {% if item.is_ignored %}disabled{% endif %}>
+                                        </td>
                                         <td class="part-cell">
                                             <strong>{{ item.display_part }}</strong>
+                                            {% if item.is_ignored %}
+                                                <div class="badge text-bg-secondary mt-1">Ignored</div>
+                                                {% if item.ignored_part and item.ignored_part.ignored_by_user_name %}
+                                                    <div class="text-muted small">by {{ item.ignored_part.ignored_by_user_name }}</div>
+                                                {% endif %}
+                                            {% endif %}
                                         </td>
                                         {% if section.section == 'quoted_not_won' %}
                                             <td>{{ item.quote_line_count or 0 }}</td>
@@ -192,7 +255,7 @@
                                     </tr>
                                 {% else %}
                                     <tr>
-                                        <td colspan="20" class="text-center text-muted py-4">No rows in this section.</td>
+                                        <td colspan="21" class="text-center text-muted py-4">No rows in this section.</td>
                                     </tr>
                                 {% endfor %}
                             </tbody>
@@ -227,6 +290,126 @@ document.addEventListener('DOMContentLoaded', function() {
             body: JSON.stringify(payload || {})
         }).then(response => response.json().then(data => ({ ok: response.ok, data })));
     }
+
+    function visibleRows(card) {
+        return Array.from(card.querySelectorAll('tbody tr[data-base-part-number]'))
+            .filter(row => row.style.display !== 'none');
+    }
+
+    function selectedRows(card) {
+        return Array.from(card.querySelectorAll('.row-select-checkbox:checked'))
+            .map(checkbox => checkbox.closest('tr'))
+            .filter(Boolean);
+    }
+
+    function updateSectionControls(card) {
+        const selected = selectedRows(card);
+        const visibleSelectable = visibleRows(card).filter(row => row.dataset.ignored !== '1');
+        const selectedVisible = visibleSelectable.filter(row => row.querySelector('.row-select-checkbox')?.checked);
+        const ignoreBtn = card.querySelector('.ignore-selected-btn');
+        const selectedCount = card.querySelector('.selected-row-count');
+        const visibleCount = card.querySelector('.visible-row-count');
+        const selectVisibleCheckbox = card.querySelector('.select-visible-checkbox');
+
+        if (ignoreBtn) ignoreBtn.disabled = selected.length === 0;
+        if (selectedCount) selectedCount.textContent = `${selected.length} selected`;
+        if (visibleCount) visibleCount.textContent = visibleRows(card).length;
+        if (selectVisibleCheckbox) {
+            selectVisibleCheckbox.checked = visibleSelectable.length > 0 && selectedVisible.length === visibleSelectable.length;
+            selectVisibleCheckbox.indeterminate = selectedVisible.length > 0 && selectedVisible.length < visibleSelectable.length;
+        }
+    }
+
+    function applySectionFilters(card) {
+        const query = (card.querySelector('.section-search')?.value || '').trim().toLowerCase();
+        const status = card.querySelector('.section-status-filter')?.value || 'active';
+        card.querySelectorAll('tbody tr[data-base-part-number]').forEach(row => {
+            const matchesText = !query || row.textContent.toLowerCase().includes(query);
+            const isIgnored = row.dataset.ignored === '1';
+            const matchesStatus = status === 'all' || (status === 'ignored' ? isIgnored : !isIgnored);
+            row.style.display = matchesText && matchesStatus ? '' : 'none';
+            if (row.style.display === 'none') {
+                row.querySelector('.row-select-checkbox').checked = false;
+            }
+        });
+        updateSectionControls(card);
+    }
+
+    document.querySelectorAll('.report-section-card').forEach(card => {
+        card.querySelector('.section-search')?.addEventListener('input', () => applySectionFilters(card));
+        card.querySelector('.section-status-filter')?.addEventListener('change', () => applySectionFilters(card));
+
+        card.querySelectorAll('.row-select-checkbox').forEach(checkbox => {
+            checkbox.addEventListener('change', () => updateSectionControls(card));
+        });
+
+        card.querySelector('.select-visible-btn')?.addEventListener('click', () => {
+            visibleRows(card).forEach(row => {
+                if (row.dataset.ignored !== '1') {
+                    row.querySelector('.row-select-checkbox').checked = true;
+                }
+            });
+            updateSectionControls(card);
+        });
+
+        card.querySelector('.select-visible-checkbox')?.addEventListener('change', event => {
+            const checked = event.target.checked;
+            visibleRows(card).forEach(row => {
+                if (row.dataset.ignored !== '1') {
+                    row.querySelector('.row-select-checkbox').checked = checked;
+                }
+            });
+            updateSectionControls(card);
+        });
+
+        card.querySelector('.clear-section-selection-btn')?.addEventListener('click', () => {
+            card.querySelectorAll('.row-select-checkbox').forEach(checkbox => {
+                checkbox.checked = false;
+            });
+            updateSectionControls(card);
+        });
+
+        card.querySelector('.ignore-selected-btn')?.addEventListener('click', function() {
+            const button = this;
+            const rows = selectedRows(card);
+            if (!rows.length) return;
+            const partLabel = rows.length === 1 ? rows[0].dataset.displayPart : `${rows.length} parts`;
+            if (!window.confirm(`Ignore ${partLabel} on future purchase reports?`)) return;
+
+            button.disabled = true;
+            setStatus('Saving ignored parts...', 'alert-info');
+            postJson(`/purchase-suggestions/api/reports/${runId}/ignored-parts`, {
+                parts: rows.map(row => ({
+                    section: row.dataset.section,
+                    base_part_number: row.dataset.basePartNumber,
+                    display_part_number: row.dataset.displayPart
+                }))
+            }).then(({ ok, data }) => {
+                if (!ok || !data.success) throw new Error(data.error || 'Ignore failed');
+                rows.forEach(row => {
+                    row.dataset.ignored = '1';
+                    row.classList.add('ignored-row');
+                    const checkbox = row.querySelector('.row-select-checkbox');
+                    checkbox.checked = false;
+                    checkbox.disabled = true;
+                    const partCell = row.querySelector('.part-cell');
+                    if (partCell && !partCell.querySelector('.badge')) {
+                        partCell.insertAdjacentHTML('beforeend', '<div class="badge text-bg-secondary mt-1">Ignored</div>');
+                    }
+                });
+                applySectionFilters(card);
+                setStatus(`${data.ignored_count || rows.length} part(s) ignored. They will be excluded from future reports.`, 'alert-success');
+            }).catch(error => {
+                setStatus(`Ignore failed: ${error.message}`, 'alert-danger');
+                updateSectionControls(card);
+            }).finally(() => {
+                button.disabled = false;
+                updateSectionControls(card);
+            });
+        });
+
+        applySectionFilters(card);
+    });
 
     document.querySelectorAll('.save-comment-btn').forEach(button => {
         button.addEventListener('click', function() {

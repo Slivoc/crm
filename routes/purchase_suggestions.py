@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import re
 from html import escape
 from datetime import datetime, timedelta, date
 from decimal import Decimal
@@ -153,6 +154,10 @@ def _json_default(value):
     if isinstance(value, Decimal):
         return float(value)
     return str(value)
+
+
+def _normalize_part_key(value):
+    return re.sub(r'[^A-Z0-9]', '', str(value or '').upper())
 
 
 REPORT_SECTION_KEYS = (
@@ -416,6 +421,11 @@ def _load_unordered_customer_quote_report(
         LEFT JOIN stock ON stock.base_part_number = part_stats.base_part_number
         LEFT JOIN recent_sales ON recent_sales.base_part_number = part_stats.base_part_number
         WHERE (? = 0 OR COALESCE(stock.stock_quantity, 0) <= 0)
+          AND NOT EXISTS (
+              SELECT 1
+              FROM purchase_report_ignored_parts prip
+              WHERE prip.base_part_number = part_stats.base_part_number
+          )
           AND (
               CASE
                   WHEN part_stats.quote_occurrence_count > 0
@@ -517,6 +527,11 @@ def _load_stock_sourced_unwon_quote_report(cursor, period_days=30, max_rows=50):
               WHERE {sale_base_key} = {pll_base_key}
                 AND (pl.customer_id IS NULL OR so_ord.customer_id = pl.customer_id)
                 AND so_ord.date_entered >= COALESCE(cql.quoted_on, cql.date_created)
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM purchase_report_ignored_parts prip
+              WHERE prip.base_part_number = {pll_base_key}
           )
         ORDER BY {pll_base_key} ASC, COALESCE(cql.quoted_on, cql.date_created) DESC, cql.quote_price_gbp DESC
         LIMIT ?
@@ -629,6 +644,11 @@ def _load_frequent_sales_source_cost_report(cursor, period_days=90, min_orders=3
         LEFT JOIN stock ON stock.base_part_number = sales.base_part_number
         LEFT JOIN part_numbers pn ON pn.base_part_number = sales.base_part_number
         WHERE (? = 0 OR COALESCE(stock.stock_quantity, 0) <= 0)
+          AND NOT EXISTS (
+              SELECT 1
+              FROM purchase_report_ignored_parts prip
+              WHERE prip.base_part_number = sales.base_part_number
+          )
         ORDER BY sales.sales_order_count DESC, sales.total_sales_qty DESC, sales.last_sale_date DESC
         LIMIT ?
         """,
@@ -778,6 +798,47 @@ def _attach_report_comments(report):
     return report
 
 
+def _load_ignored_purchase_report_parts(base_part_numbers):
+    keys = sorted({_normalize_part_key(part) for part in base_part_numbers if _normalize_part_key(part)})
+    if not keys:
+        return {}
+
+    placeholders = ', '.join(['?'] * len(keys))
+    rows = db_execute(
+        f"""
+        SELECT id, base_part_number, display_part_number, ignored_by_user_id,
+               ignored_by_user_name, reason, created_at, updated_at
+        FROM purchase_report_ignored_parts
+        WHERE base_part_number IN ({placeholders})
+        """,
+        tuple(keys),
+        fetch='all',
+    ) or []
+
+    ignored = {}
+    for row in rows:
+        item = dict(row)
+        item['created_at'] = _stringify_date(item.get('created_at'))
+        item['updated_at'] = _stringify_date(item.get('updated_at'))
+        ignored[item['base_part_number']] = item
+    return ignored
+
+
+def _attach_ignored_purchase_report_parts(report):
+    base_part_numbers = []
+    for _, report_key in REPORT_SECTION_KEYS:
+        for item in report.get(report_key, []) or []:
+            base_part_numbers.append(item.get('base_part_number') or item.get('part_number'))
+
+    ignored = _load_ignored_purchase_report_parts(base_part_numbers)
+    for _, report_key in REPORT_SECTION_KEYS:
+        for item in report.get(report_key, []) or []:
+            key = _normalize_part_key(item.get('base_part_number') or item.get('part_number'))
+            item['is_ignored'] = key in ignored
+            item['ignored_part'] = ignored.get(key)
+    return report
+
+
 def _load_purchase_report_run(run_id):
     run = db_execute(
         """
@@ -834,7 +895,61 @@ def _load_purchase_report_run(run_id):
                 report[report_key].append(item)
                 break
 
-    return _attach_report_comments(report)
+    _attach_report_comments(report)
+    return _attach_ignored_purchase_report_parts(report)
+
+
+def _save_ignored_purchase_report_parts(parts, reason=''):
+    user_id = _current_user_id()
+    if not user_id:
+        raise RuntimeError('Login required')
+
+    user_name = _current_user_display_name()
+    cleaned_reason = str(reason or '').strip()
+    saved = []
+    seen = set()
+
+    with db_cursor(commit=True) as cursor:
+        for part in parts or []:
+            display_part_number = str(part.get('display_part_number') or part.get('part_number') or part.get('base_part_number') or '').strip()
+            base_part_number = _normalize_part_key(part.get('base_part_number') or display_part_number)
+            if not base_part_number or base_part_number in seen:
+                continue
+            seen.add(base_part_number)
+
+            _execute_with_cursor(
+                cursor,
+                """
+                INSERT INTO purchase_report_ignored_parts (
+                    base_part_number, display_part_number, ignored_by_user_id,
+                    ignored_by_user_name, reason, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, NOW(), NOW())
+                ON CONFLICT(base_part_number)
+                DO UPDATE SET
+                    display_part_number = COALESCE(NULLIF(EXCLUDED.display_part_number, ''), purchase_report_ignored_parts.display_part_number),
+                    ignored_by_user_id = EXCLUDED.ignored_by_user_id,
+                    ignored_by_user_name = EXCLUDED.ignored_by_user_name,
+                    reason = EXCLUDED.reason,
+                    updated_at = NOW()
+                RETURNING id, base_part_number, display_part_number, ignored_by_user_id,
+                          ignored_by_user_name, reason, created_at, updated_at
+                """,
+                (
+                    base_part_number,
+                    display_part_number or base_part_number,
+                    user_id,
+                    user_name,
+                    cleaned_reason,
+                ),
+            )
+            row = cursor.fetchone()
+            item = dict(row or {})
+            item['created_at'] = _stringify_date(item.get('created_at'))
+            item['updated_at'] = _stringify_date(item.get('updated_at'))
+            saved.append(item)
+
+    return saved
 
 
 def _save_purchase_report_comment(section, base_part_number, comment):
@@ -2018,6 +2133,54 @@ def save_purchase_report_comment(run_id):
         return jsonify({'success': True, 'comment': saved})
     except Exception as e:
         logging.exception('Error saving purchase report comment: %s', e)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@purchase_suggestions_bp.route('/api/reports/<int:run_id>/ignored-parts', methods=['POST'])
+@login_required
+def ignore_purchase_report_parts(run_id):
+    try:
+        payload = request.get_json(silent=True) or {}
+        requested_parts = payload.get('parts') or []
+        reason = payload.get('reason') or ''
+        if not isinstance(requested_parts, list) or not requested_parts:
+            return jsonify({'success': False, 'error': 'Select at least one part to ignore'}), 400
+
+        rows = db_execute(
+            """
+            SELECT report_section, base_part_number, display_part_number
+            FROM purchase_report_run_items
+            WHERE run_id = ?
+            """,
+            (run_id,),
+            fetch='all',
+        ) or []
+        if not rows:
+            return jsonify({'success': False, 'error': 'Purchase report run not found'}), 404
+
+        snapshot_parts = {}
+        for row in rows:
+            key = (row.get('report_section'), _normalize_part_key(row.get('base_part_number')))
+            snapshot_parts[key] = row
+
+        parts_to_ignore = []
+        for part in requested_parts:
+            if not isinstance(part, dict):
+                continue
+            section = str(part.get('section') or '').strip()
+            base_part_number = _normalize_part_key(part.get('base_part_number'))
+            row = snapshot_parts.get((section, base_part_number))
+            if not row:
+                return jsonify({'success': False, 'error': 'One or more selected parts are not in this report snapshot'}), 400
+            parts_to_ignore.append({
+                'base_part_number': row.get('base_part_number'),
+                'display_part_number': row.get('display_part_number') or part.get('display_part_number'),
+            })
+
+        saved = _save_ignored_purchase_report_parts(parts_to_ignore, reason=reason)
+        return jsonify({'success': True, 'ignored_parts': saved, 'ignored_count': len(saved)})
+    except Exception as e:
+        logging.exception('Error ignoring purchase report parts: %s', e)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
