@@ -164,6 +164,104 @@ def _get_customer_deepdive_suggestions(customer_id, limit=20):
     ) or []
     return [dict(row) for row in rows]
 
+
+def _strip_perplexity_thinking(text):
+    return re.sub(r'<think>.*?</think>', '', text or '', flags=re.DOTALL).strip()
+
+
+def _parse_json_object(text):
+    cleaned = _strip_perplexity_thinking(text)
+    cleaned = re.sub(r'^```(?:json)?\s*|\s*```$', '', cleaned, flags=re.IGNORECASE | re.MULTILINE).strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        match = re.search(r'\{.*\}', cleaned, flags=re.DOTALL)
+        if not match:
+            raise
+        return json.loads(match.group(0))
+
+
+def _get_customer_deepdive_context(customer_id):
+    deepdive = _ensure_customer_deepdive(customer_id)
+    customer = get_customer_by_id(customer_id)
+    customer_dict = dict(customer) if customer and hasattr(customer, 'keys') else (customer or {})
+    saved_rows = db_execute(
+        """
+        SELECT c.name, c.country, c.website, cdc.relationship_type, cdc.notes
+        FROM customer_deepdive_companies cdc
+        JOIN customers c ON c.id = cdc.related_customer_id
+        WHERE cdc.customer_deepdive_id = ?
+        ORDER BY cdc.relationship_type, c.name
+        """,
+        (deepdive['id'],),
+        fetch='all',
+    ) or []
+    saved_notes = "\n".join(
+        f"- {row['relationship_type']}: {row['name']} ({row['country'] or 'country unknown'}): {row['notes'] or 'no notes'}"
+        for row in saved_rows
+    )
+    return customer_dict, deepdive, saved_notes
+
+
+def _generate_customer_deepdive_perplexity_suggestions(customer_id, count=8):
+    api_key = os.getenv("PERPLEXITY_API_KEY")
+    if not api_key:
+        raise ValueError("PERPLEXITY_API_KEY is not configured.")
+
+    customer, deepdive, saved_notes = _get_customer_deepdive_context(customer_id)
+    count = max(3, min(int(count or 8), 12))
+    system_message = (
+        "You are a B2B market research assistant for an electronics/aerospace CRM. "
+        "Suggest companies that are truly similar to the source customer based on what the company actually does, "
+        "its products, customers, operating model, and buying/use case. Do not rely on broad keyword overlap, "
+        "incidental geography, or loosely related sectors. Geography is useful only when the notes make it relevant. "
+        "Return only valid JSON with this shape: "
+        "{\"suggestions\":[{\"name\":\"Company name\",\"country\":\"ISO country name or code\","
+        "\"website\":\"https://example.com or null\",\"why\":\"specific evidence-based rationale\","
+        "\"similarity_basis\":\"short phrase\",\"confidence\":0.0}]}"
+    )
+    user_prompt = (
+        f"Source customer:\n"
+        f"- Name: {customer.get('name')}\n"
+        f"- Country: {customer.get('country') or 'Unknown'}\n"
+        f"- Website: {customer.get('website') or 'Unknown'}\n"
+        f"- CRM description: {customer.get('description') or 'Not provided'}\n"
+        f"- CRM notes: {customer.get('notes') or 'Not provided'}\n\n"
+        f"Customer deep dive notes:\n"
+        f"- Title: {deepdive.get('title') or ''}\n"
+        f"- Market overview: {deepdive.get('overview') or 'Not provided'}\n"
+        f"- Strategy notes: {deepdive.get('strategy_notes') or 'Not provided'}\n\n"
+        f"Saved benchmark/target notes:\n{saved_notes or 'No saved customers or notes yet.'}\n\n"
+        f"Find {count} similar companies. Use the notes above as the primary signal for what the source customer "
+        "actually does. Exclude the source customer itself. For each suggestion, explain the operational similarity "
+        "rather than simply naming a shared industry label."
+    )
+    client = OpenAI(api_key=api_key, base_url="https://api.perplexity.ai")
+    response = client.chat.completions.create(
+        model="sonar-reasoning-pro",
+        messages=[
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.1,
+    )
+    content = response.choices[0].message.content
+    parsed = _parse_json_object(content)
+    suggestions = parsed.get('suggestions', []) if isinstance(parsed, dict) else []
+    normalized = []
+    for item in suggestions[:count]:
+        if not isinstance(item, dict) or not item.get('name'):
+            continue
+        normalized.append({
+            'name': str(item.get('name', '')).strip(),
+            'country': str(item.get('country') or '').strip(),
+            'website': item.get('website') or '',
+            'why': str(item.get('why') or item.get('similarity_basis') or '').strip(),
+            'similarity_basis': str(item.get('similarity_basis') or '').strip(),
+            'confidence': item.get('confidence'),
+        })
+    return normalized
+
 def _get_customer_permission_flags(customer_data):
     customer_salesperson_id = customer_data.get('salesperson_id')
     user_salesperson_id = current_user.get_salesperson_id()
@@ -8044,3 +8142,28 @@ def customer_deep_dive(customer_id):
         )
 
     return jsonify({'success': True, **_get_customer_deepdive_payload(customer_id), 'can_edit': can_edit})
+
+
+@customers_bp.route('/<int:customer_id>/deep-dive/perplexity-suggestions', methods=['POST'])
+@login_required
+def customer_deep_dive_perplexity_suggestions(customer_id):
+    customer = get_customer_by_id(customer_id)
+    if not customer:
+        return jsonify({'success': False, 'error': 'Customer not found'}), 404
+    customer_dict = dict(customer) if hasattr(customer, 'keys') else customer
+    can_view, _ = _get_customer_permission_flags(customer_dict)
+    if not can_view:
+        return jsonify({'success': False, 'error': 'Forbidden'}), 403
+
+    data = request.get_json(silent=True) or {}
+    try:
+        suggestions = _generate_customer_deepdive_perplexity_suggestions(
+            customer_id,
+            count=data.get('count') or 8,
+        )
+        return jsonify({'success': True, 'suggestions': suggestions})
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    except Exception as exc:
+        logger.exception("Perplexity deep dive suggestions failed for customer %s", customer_id)
+        return jsonify({'success': False, 'error': f'Unable to generate Perplexity suggestions: {exc}'}), 500

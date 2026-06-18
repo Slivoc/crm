@@ -551,16 +551,35 @@
 
                  <div class="row g-3">
                      <div class="col-xl-5">
-                         <div class="card border h-100">
-                             <div class="card-header d-flex justify-content-between align-items-center">
-                                 <h6 class="mb-0">Suggested Similar Customers</h6>
-                                 <span class="badge text-bg-light" id="deepDiveSuggestionCount">0</span>
+                             <div class="card border h-100">
+                             <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+                                 <div>
+                                     <h6 class="mb-0">Suggested Similar Customers</h6>
+                                     <div class="small text-muted">Use CRM matching or ask Perplexity to research companies that match what the notes say this customer actually does.</div>
+                                 </div>
+                                 <div class="d-flex align-items-center gap-2">
+                                     <button type="button" class="btn btn-sm btn-outline-primary" id="generatePerplexityDeepDiveSuggestions">
+                                         <i class="bi bi-stars me-1"></i> Ask Perplexity
+                                     </button>
+                                     <span class="badge text-bg-light" id="deepDiveSuggestionCount">0</span>
+                                 </div>
                              </div>
                              <div class="card-body p-0">
                                  <div class="table-responsive">
                                      <table class="table table-sm table-hover align-middle mb-0">
                                          <thead><tr><th>Customer</th><th>Why</th><th class="text-end">Add</th></tr></thead>
                                          <tbody id="deepDiveSuggestionsBody"><tr><td colspan="3" class="text-muted p-3">Loading suggestions...</td></tr></tbody>
+                                     </table>
+                                 </div>
+                             </div>
+                         </div>
+                         <div class="card border mt-3">
+                             <div class="card-header"><h6 class="mb-0">Perplexity Market Suggestions</h6></div>
+                             <div class="card-body p-0">
+                                 <div class="table-responsive">
+                                     <table class="table table-sm table-hover align-middle mb-0">
+                                         <thead><tr><th>Company</th><th>Why it is similar</th><th>Confidence</th></tr></thead>
+                                         <tbody id="deepDivePerplexityBody"><tr><td colspan="3" class="text-muted p-3">Click Ask Perplexity to research external similar companies.</td></tr></tbody>
                                      </table>
                                  </div>
                              </div>
@@ -2072,8 +2091,9 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!root) return;
     const customerId = root.dataset.customerId;
     const canEdit = {{ 'true' if can_edit else 'false' }};
-    const state = { selected: [], suggestions: [] };
+    const state = { selected: [], suggestions: [], perplexitySuggestions: [] };
     const endpoint = `/customers/${customerId}/deep-dive`;
+    const perplexityEndpoint = `/customers/${customerId}/deep-dive/perplexity-suggestions`;
 
     function escapeHtml(value) {
         return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -2161,6 +2181,49 @@ document.addEventListener('DOMContentLoaded', function() {
             </tr>`).join('') : '<tr><td colspan="3" class="text-muted p-3">No similar customers found.</td></tr>';
     }
 
+    function renderPerplexitySuggestions() {
+        const body = document.getElementById('deepDivePerplexityBody');
+        if (!body) return;
+        body.innerHTML = state.perplexitySuggestions.length ? state.perplexitySuggestions.map(row => {
+            const company = row.website
+                ? `<a href="${escapeHtml(row.website)}" target="_blank" rel="noopener" class="fw-semibold text-decoration-none">${escapeHtml(row.name)}</a>`
+                : `<span class="fw-semibold">${escapeHtml(row.name)}</span>`;
+            const confidence = row.confidence === null || row.confidence === undefined || row.confidence === ''
+                ? '—'
+                : `${Math.round(Number(row.confidence) * 100)}%`;
+            return `<tr>
+                <td style="min-width: 180px;">${company}<div class="small text-muted">${escapeHtml(row.country || '')}</div></td>
+                <td class="small text-muted">${escapeHtml(row.why || row.similarity_basis || 'Similar operating profile')}</td>
+                <td class="text-end">${escapeHtml(confidence)}</td>
+            </tr>`;
+        }).join('') : '<tr><td colspan="3" class="text-muted p-3">Click Ask Perplexity to research external similar companies.</td></tr>';
+    }
+
+    async function generatePerplexitySuggestions() {
+        const button = document.getElementById('generatePerplexityDeepDiveSuggestions');
+        if (button) {
+            button.disabled = true;
+            button.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Asking...';
+        }
+        document.getElementById('deepDivePerplexityBody').innerHTML = '<tr><td colspan="3" class="text-muted p-3">Perplexity is researching companies from the deep dive notes...</td></tr>';
+        try {
+            const response = await fetch(perplexityEndpoint, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({count: 8})
+            });
+            const data = await response.json();
+            if (!data.success) throw new Error(data.error || 'Unable to generate Perplexity suggestions');
+            state.perplexitySuggestions = data.suggestions || [];
+            renderPerplexitySuggestions();
+        } finally {
+            if (button) {
+                button.disabled = false;
+                button.innerHTML = '<i class="bi bi-stars me-1"></i> Ask Perplexity';
+            }
+        }
+    }
+
     async function loadDeepDive() {
         const response = await fetch(endpoint);
         const data = await response.json();
@@ -2209,6 +2272,10 @@ document.addEventListener('DOMContentLoaded', function() {
     });
     document.getElementById('saveCustomerDeepDive')?.addEventListener('click', () => saveDeepDive().catch(error => {
         document.getElementById('customerDeepDiveAlert').innerHTML = `<div class="alert alert-danger py-2">${escapeHtml(error.message)}</div>`;
+    }));
+    document.getElementById('generatePerplexityDeepDiveSuggestions')?.addEventListener('click', () => generatePerplexitySuggestions().catch(error => {
+        document.getElementById('customerDeepDiveAlert').innerHTML = `<div class="alert alert-danger py-2">${escapeHtml(error.message)}</div>`;
+        renderPerplexitySuggestions();
     }));
     loadDeepDive().catch(error => {
         document.getElementById('customerDeepDiveAlert').innerHTML = `<div class="alert alert-danger py-2">${escapeHtml(error.message)}</div>`;
