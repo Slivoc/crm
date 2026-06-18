@@ -4,7 +4,7 @@ from collections import defaultdict
 from datetime import datetime, date, timedelta
 from math import log1p
 import re
-from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, current_app, Response, stream_with_context
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, current_app, Response, stream_with_context, send_file
 from routes.auth import login_required, current_user
 from ai_helper import get_cached_news, get_top_customers_for_news, get_watched_customers_for_news, get_cache_key, cleanup_old_cache_files, fetch_customer_news_perplexity, process_customer_news_chatgpt, cache_news, filter_duplicate_news, store_sent_news_items
 from routes.news_email import get_news_email_addresses, send_news_email
@@ -20,6 +20,10 @@ from db import get_db_connection, execute as db_execute, db_cursor, _using_postg
 from dateutil.relativedelta import relativedelta
 import calendar
 from openai import OpenAI
+from io import BytesIO
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill
+from openpyxl.utils import get_column_letter
 
 salespeople_bp = Blueprint('salespeople', __name__)
 
@@ -1175,6 +1179,91 @@ def dashboard():
         print(traceback.format_exc())
         flash(f"An error occurred: {str(e)}", 'error')
         return redirect(url_for('index'))
+
+
+
+def _format_export_date(value):
+    """Format date/datetime values consistently for spreadsheet exports."""
+    if isinstance(value, datetime):
+        return value.strftime('%Y-%m-%d')
+    if isinstance(value, date):
+        return value.strftime('%Y-%m-%d')
+    if value is None:
+        return ''
+    parsed_value = _parse_datetime_value(value)
+    if parsed_value:
+        return parsed_value.strftime('%Y-%m-%d')
+    return str(value)
+
+
+@salespeople_bp.route('/<int:salesperson_id>/activity/export')
+@login_required
+def export_activity_customers(salesperson_id):
+    """Export the activity page customer summary to Excel."""
+    salesperson = get_salesperson_by_id(salesperson_id)
+    if not salesperson:
+        flash('Salesperson not found!', 'error')
+        return redirect(url_for('salespeople.dashboard'))
+
+    customers = get_salesperson_customers_with_spend(
+        salesperson_id,
+        sort_by='historical_spend',
+        sort_order='desc'
+    ) or []
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = 'Customer Activity'
+
+    headers = [
+        'Customer Name',
+        'Status',
+        'Historical Spend',
+        'Last Order Date',
+        'Last Order Number',
+        'Last Order Value',
+    ]
+    worksheet.append(headers)
+
+    header_fill = PatternFill(fill_type='solid', fgColor='1F4E78')
+    header_font = Font(color='FFFFFF', bold=True)
+    for cell in worksheet[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+
+    for customer in customers:
+        worksheet.append([
+            customer.get('name') or '',
+            customer.get('customer_status') or '',
+            float(customer.get('historical_spend') or 0),
+            _format_export_date(customer.get('most_recent_order_date')),
+            customer.get('most_recent_order_number') or '',
+            float(customer.get('most_recent_order_value') or 0),
+        ])
+
+    for row in worksheet.iter_rows(min_row=2, min_col=3, max_col=3):
+        row[0].number_format = '£#,##0.00'
+    for row in worksheet.iter_rows(min_row=2, min_col=6, max_col=6):
+        row[0].number_format = '£#,##0.00'
+
+    worksheet.freeze_panes = 'A2'
+    worksheet.auto_filter.ref = worksheet.dimensions
+    for column_cells in worksheet.columns:
+        max_length = max(len(str(cell.value or '')) for cell in column_cells)
+        worksheet.column_dimensions[get_column_letter(column_cells[0].column)].width = min(max(max_length + 2, 14), 45)
+
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+
+    safe_name = re.sub(r'[^A-Za-z0-9_-]+', '_', salesperson.get('name') or 'salesperson').strip('_')
+    filename = f"{safe_name}_customer_activity_{date.today().strftime('%Y%m%d')}.xlsx"
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=filename,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
 
 @salespeople_bp.route('/<int:salesperson_id>/activity')
 @login_required

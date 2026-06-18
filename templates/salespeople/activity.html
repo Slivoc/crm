@@ -65,6 +65,9 @@
       <a href="{{ url_for('salespeople.customers', salesperson_id=salesperson.id) }}" class="btn btn-outline-primary">
         <i class="bi bi-building"></i> Customers
       </a>
+      <a href="{{ url_for('salespeople.export_activity_customers', salesperson_id=salesperson.id) }}" class="btn btn-outline-success">
+        <i class="bi bi-file-earmark-excel"></i> Export Excel
+      </a>
       <a href="{{ url_for('salespeople.dashboard') }}" class="btn btn-outline-secondary">
         <i class="bi bi-arrow-left"></i> Team Dashboard
       </a>
