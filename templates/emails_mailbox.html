@@ -399,6 +399,56 @@
     </div>
 </div>
 
+<!-- Excel Column Selection Modal -->
+<div class="modal fade" id="mailboxExcelColumnModal" tabindex="-1" aria-labelledby="mailboxExcelColumnLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="mailboxExcelColumnLabel">
+                    <i class="bi bi-file-earmark-spreadsheet me-2"></i>Choose Excel Columns
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted mb-2" id="mailboxExcelColumnIntro">
+                    Select which spreadsheet columns contain the part number and quantity.
+                </p>
+                <div class="alert alert-info py-2">
+                    <i class="bi bi-info-circle me-1"></i>
+                    Quantity is optional. If you skip it, each imported line defaults to quantity 1.
+                </div>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <div class="excel-column-picker h-100">
+                            <div class="fw-semibold mb-2">
+                                <span class="badge bg-primary me-1">Required</span>
+                                Part number column
+                            </div>
+                            <div class="list-group excel-column-options" id="mailboxExcelPartColumns"></div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="excel-column-picker h-100">
+                            <div class="fw-semibold mb-2">
+                                <span class="badge bg-secondary me-1">Optional</span>
+                                Quantity column
+                            </div>
+                            <div class="list-group excel-column-options" id="mailboxExcelQtyColumns"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="alert alert-danger mt-3 d-none" id="mailboxExcelColumnFeedback"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="mailboxExcelColumnImportBtn" disabled>
+                    <i class="bi bi-upload me-1"></i>Import Selected Columns
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Manual Parts Entry Modal -->
 <div class="modal fade" id="mailboxManualPartsModal" tabindex="-1" aria-labelledby="mailboxManualPartsLabel" aria-hidden="true">
     <div class="modal-dialog">
@@ -524,6 +574,12 @@ const mailboxManualPartsInput = document.getElementById('mailboxManualPartsInput
 const mailboxManualPartsFeedback = document.getElementById('mailboxManualPartsFeedback');
 const mailboxManualPartsSaveBtn = document.getElementById('mailboxManualPartsSaveBtn');
 const mailboxManualPartsOpenEmptyBtn = document.getElementById('mailboxManualPartsOpenEmptyBtn');
+const mailboxExcelColumnModalEl = document.getElementById('mailboxExcelColumnModal');
+const mailboxExcelColumnIntro = document.getElementById('mailboxExcelColumnIntro');
+const mailboxExcelPartColumns = document.getElementById('mailboxExcelPartColumns');
+const mailboxExcelQtyColumns = document.getElementById('mailboxExcelQtyColumns');
+const mailboxExcelColumnFeedback = document.getElementById('mailboxExcelColumnFeedback');
+const mailboxExcelColumnImportBtn = document.getElementById('mailboxExcelColumnImportBtn');
 
 let messageCache = [];
 let selectedMessage = null;
@@ -538,6 +594,8 @@ let mailboxSupplierRequests = [];
 let mailboxPartsScanData = null;
 let mailboxPartsScanInFlight = false;
 let mailboxModalSupplierSelection = null;
+let mailboxExcelColumnSelection = null;
+let mailboxExcelColumnResolver = null;
 let selectedMessageHtml = null;
 let selectedMessagePdfAttachments = [];
 let selectedMessageZipAttachments = [];
@@ -2997,9 +3055,8 @@ async function tryImportFromExcelAttachment(ctx) {
         const preview = await previewRes.json();
         if (!previewRes.ok || !preview.success || !preview.columns?.length) return false;
 
-        const partColumn = prompt(`Excel found: ${preview.attachment_name || attachment.name}\nChoose PART NUMBER column:\n${preview.columns.join(', ')}`, preview.columns[0] || '');
-        if (!partColumn) return false;
-        const qtyColumn = prompt(`Choose QUANTITY column (optional, leave blank for qty=1):\n${preview.columns.join(', ')}`, '');
+        const selectedColumns = await chooseExcelColumns(preview, attachment);
+        if (!selectedColumns?.partColumn) return false;
 
         const importRes = await fetch('/emails/mailbox/excel-import-lines', {
             method: 'POST',
@@ -3008,8 +3065,8 @@ async function tryImportFromExcelAttachment(ctx) {
                 message_id: selectedMessage.id,
                 attachment_id: attachment.id,
                 sheet_name: preview.sheet_name,
-                part_column: partColumn,
-                qty_column: qtyColumn || null
+                part_column: selectedColumns.partColumn,
+                qty_column: selectedColumns.qtyColumn || null
             })
         });
         const importData = await importRes.json();
@@ -3362,6 +3419,147 @@ function parseManualPartsText(rawText) {
 
     return lines;
 }
+
+function setExcelColumnFeedback(message) {
+    if (!mailboxExcelColumnFeedback) return;
+    if (!message) {
+        mailboxExcelColumnFeedback.classList.add('d-none');
+        mailboxExcelColumnFeedback.textContent = '';
+        return;
+    }
+    mailboxExcelColumnFeedback.textContent = message;
+    mailboxExcelColumnFeedback.classList.remove('d-none');
+}
+
+function guessExcelColumn(columns, patterns) {
+    const normalized = columns.map(column => String(column || '').toLowerCase());
+    const exactIndex = normalized.findIndex(column => patterns.some(pattern => column === pattern));
+    if (exactIndex >= 0) return columns[exactIndex];
+    const partialIndex = normalized.findIndex(column => patterns.some(pattern => column.includes(pattern)));
+    return partialIndex >= 0 ? columns[partialIndex] : null;
+}
+
+function renderExcelColumnOptions(container, columns, type) {
+    if (!container) return;
+    container.innerHTML = '';
+
+    if (type === 'qty') {
+        const skipButton = document.createElement('button');
+        skipButton.type = 'button';
+        skipButton.className = 'list-group-item list-group-item-action excel-column-option';
+        skipButton.dataset.column = '';
+        skipButton.dataset.type = type;
+        skipButton.innerHTML = `
+            <div class="d-flex align-items-center justify-content-between gap-2">
+                <span><i class="bi bi-dash-circle me-2"></i>No quantity column</span>
+                <small class="text-muted">Use qty 1</small>
+            </div>
+        `;
+        container.appendChild(skipButton);
+    }
+
+    columns.forEach((column, index) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'list-group-item list-group-item-action excel-column-option';
+        button.dataset.column = column;
+        button.dataset.type = type;
+        button.innerHTML = `
+            <div class="d-flex align-items-center justify-content-between gap-2">
+                <span class="text-truncate"><i class="bi bi-columns-gap me-2"></i>${escapeHtml(column)}</span>
+                <small class="text-muted flex-shrink-0">Column ${index + 1}</small>
+            </div>
+        `;
+        container.appendChild(button);
+    });
+}
+
+function updateExcelColumnSelectionButtons() {
+    const selectedPart = mailboxExcelColumnSelection?.partColumn || '';
+    const selectedQty = mailboxExcelColumnSelection?.qtyColumn || '';
+
+    document.querySelectorAll('#mailboxExcelPartColumns .excel-column-option').forEach(button => {
+        button.classList.toggle('active', button.dataset.column === selectedPart);
+    });
+    document.querySelectorAll('#mailboxExcelQtyColumns .excel-column-option').forEach(button => {
+        button.classList.toggle('active', button.dataset.column === selectedQty);
+    });
+
+    if (mailboxExcelColumnImportBtn) {
+        mailboxExcelColumnImportBtn.disabled = !selectedPart;
+    }
+    setExcelColumnFeedback(selectedPart ? '' : 'Select a part number column to continue.');
+}
+
+function chooseExcelColumns(preview, attachment) {
+    return new Promise(resolve => {
+        const columns = Array.isArray(preview?.columns) ? preview.columns.filter(Boolean) : [];
+        if (!columns.length || !mailboxExcelColumnModalEl) {
+            resolve(null);
+            return;
+        }
+
+        const guessedPart = guessExcelColumn(columns, ['part number', 'part_number', 'part no', 'part', 'pn', 'mpn']) || columns[0];
+        const guessedQty = guessExcelColumn(columns, ['quantity', 'qty', 'qnty', 'order qty', 'required qty']) || '';
+        mailboxExcelColumnSelection = {
+            partColumn: guessedPart,
+            qtyColumn: guessedQty && guessedQty !== guessedPart ? guessedQty : ''
+        };
+        mailboxExcelColumnResolver = resolve;
+
+        if (mailboxExcelColumnIntro) {
+            mailboxExcelColumnIntro.textContent = `Excel found: ${preview.attachment_name || attachment?.name || 'attachment'}. Click the columns to import.`;
+        }
+        renderExcelColumnOptions(mailboxExcelPartColumns, columns, 'part');
+        renderExcelColumnOptions(mailboxExcelQtyColumns, columns, 'qty');
+        updateExcelColumnSelectionButtons();
+
+        const modal = bootstrap.Modal.getOrCreateInstance(mailboxExcelColumnModalEl);
+        modal.show();
+    });
+}
+
+mailboxExcelPartColumns?.addEventListener('click', (event) => {
+    const option = event.target.closest('.excel-column-option');
+    if (!option) return;
+    mailboxExcelColumnSelection = mailboxExcelColumnSelection || {};
+    mailboxExcelColumnSelection.partColumn = option.dataset.column || '';
+    if (mailboxExcelColumnSelection.qtyColumn === mailboxExcelColumnSelection.partColumn) {
+        mailboxExcelColumnSelection.qtyColumn = '';
+    }
+    updateExcelColumnSelectionButtons();
+});
+
+mailboxExcelQtyColumns?.addEventListener('click', (event) => {
+    const option = event.target.closest('.excel-column-option');
+    if (!option) return;
+    mailboxExcelColumnSelection = mailboxExcelColumnSelection || {};
+    mailboxExcelColumnSelection.qtyColumn = option.dataset.column || '';
+    updateExcelColumnSelectionButtons();
+});
+
+mailboxExcelColumnImportBtn?.addEventListener('click', () => {
+    if (!mailboxExcelColumnSelection?.partColumn) {
+        setExcelColumnFeedback('Select a part number column to continue.');
+        return;
+    }
+    const result = {
+        partColumn: mailboxExcelColumnSelection.partColumn,
+        qtyColumn: mailboxExcelColumnSelection.qtyColumn || null
+    };
+    const resolver = mailboxExcelColumnResolver;
+    mailboxExcelColumnResolver = null;
+    bootstrap.Modal.getOrCreateInstance(mailboxExcelColumnModalEl).hide();
+    if (resolver) resolver(result);
+});
+
+mailboxExcelColumnModalEl?.addEventListener('hidden.bs.modal', () => {
+    if (mailboxExcelColumnResolver) {
+        const resolver = mailboxExcelColumnResolver;
+        mailboxExcelColumnResolver = null;
+        resolver(null);
+    }
+});
 
 function openManualPartsModal(ctx) {
     mailboxManualPartsContext = {
@@ -4128,6 +4326,27 @@ mailboxManualPartsInput?.addEventListener('keydown', (event) => {
 .connected-user {
     font-size: 0.85rem;
     color: #198754;
+}
+
+.excel-column-picker {
+    border: 1px solid #dbe3ea;
+    border-radius: 10px;
+    padding: 12px;
+    background: #f8fafc;
+}
+
+.excel-column-options {
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+.excel-column-option {
+    text-align: left;
+}
+
+.excel-column-option.active {
+    border-color: #0d6efd;
+    box-shadow: inset 4px 0 0 #0d6efd;
 }
 
 /* Responsive */
