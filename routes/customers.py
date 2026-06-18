@@ -113,7 +113,7 @@ def _get_customer_deepdive_payload(customer_id):
         fetch='all',
     ) or []
     return {
-        'deepdive': deepdive,
+        'deepdive': _deepdive_with_parsed_document(deepdive),
         'selected': [dict(row) for row in selected_rows],
         'suggestions': _get_customer_deepdive_suggestions(customer_id),
     }
@@ -260,7 +260,78 @@ def _generate_customer_deepdive_perplexity_suggestions(customer_id, count=8):
             'similarity_basis': str(item.get('similarity_basis') or '').strip(),
             'confidence': item.get('confidence'),
         })
-    return normalized
+    return _match_perplexity_suggestions_to_customers(normalized)
+
+
+def _normalize_match_text(value):
+    return re.sub(r'[^a-z0-9]+', '', (value or '').lower())
+
+
+def _website_host(value):
+    value = (value or '').lower().strip()
+    value = re.sub(r'^https?://', '', value)
+    value = re.sub(r'^www\.', '', value)
+    return value.split('/')[0]
+
+
+def _match_perplexity_suggestions_to_customers(suggestions):
+    customers = db_execute("SELECT id, name, country, website FROM customers", fetch='all') or []
+    customer_rows = [dict(row) for row in customers]
+    for suggestion in suggestions:
+        name_key = _normalize_match_text(suggestion.get('name'))
+        host = _website_host(suggestion.get('website'))
+        best = None
+        best_reason = ''
+        for customer in customer_rows:
+            customer_host = _website_host(customer.get('website'))
+            if host and customer_host and host == customer_host:
+                best = customer
+                best_reason = 'Website domain match'
+                break
+            customer_key = _normalize_match_text(customer.get('name'))
+            if name_key and customer_key and (name_key == customer_key or name_key in customer_key or customer_key in name_key):
+                best = customer
+                best_reason = 'Company name match'
+                break
+        suggestion['crm_match'] = {
+            'id': best.get('id'),
+            'name': best.get('name'),
+            'country': best.get('country'),
+            'website': best.get('website'),
+            'reason': best_reason,
+        } if best else None
+    return suggestions
+
+
+def _deepdive_with_parsed_document(deepdive):
+    data = dict(deepdive)
+    raw = data.get('perplexity_suggestions')
+    if isinstance(raw, str) and raw.strip():
+        try:
+            data['perplexity_suggestions'] = json.loads(raw)
+        except json.JSONDecodeError:
+            data['perplexity_suggestions'] = []
+    elif not raw:
+        data['perplexity_suggestions'] = []
+    return data
+
+def _build_customer_deepdive_document(suggestions):
+    if not suggestions:
+        return ''
+    lines = ['# Perplexity Similar Customer Results', '']
+    for item in suggestions:
+        match = item.get('crm_match') or {}
+        match_text = f"CRM match: {match.get('name')} (#{match.get('id')})" if match else 'CRM match: none found'
+        lines.extend([
+            f"## {item.get('name') or 'Unnamed company'}",
+            f"- Country: {item.get('country') or 'Unknown'}",
+            f"- Website: {item.get('website') or 'Unknown'}",
+            f"- Why similar: {item.get('why') or item.get('similarity_basis') or 'Not provided'}",
+            f"- {match_text}",
+            '',
+        ])
+    return '\n'.join(lines).strip()
+
 
 def _get_customer_permission_flags(customer_data):
     customer_salesperson_id = customer_data.get('salesperson_id')
@@ -1967,6 +2038,33 @@ def customers_latest_activity_view():
 
     return render_template('customers_latest_activity.html', customers=customer_data)
 
+
+
+@customers_bp.route('/prospecting/customer-deep-dives')
+@login_required
+def customer_deep_dive_workspace():
+    selected_customer_id = request.args.get('customer_id', type=int)
+    customer = get_customer_by_id(selected_customer_id) if selected_customer_id else None
+    customer_dict = dict(customer) if customer and hasattr(customer, 'keys') else customer
+    can_view = True
+    can_edit = False
+    if customer_dict:
+        can_view, can_edit = _get_customer_permission_flags(customer_dict)
+        if not can_view:
+            flash('You do not have permission to view that customer deep dive.', 'danger')
+            return redirect(url_for('customers.prospecting'))
+    customers = get_all_customers()
+    return render_template(
+        'customer_deep_dive_workspace.html',
+        customer=customer_dict,
+        customers=customers,
+        can_edit=can_edit,
+        breadcrumbs=generate_breadcrumbs(
+            ('Home', url_for('index')),
+            ('Prospecting', url_for('customers.prospecting')),
+            ('Customer Deep Dives', url_for('customers.customer_deep_dive_workspace')),
+        ),
+    )
 
 @customers_bp.route('/prospecting', methods=['GET', 'POST'])
 def prospecting():
@@ -8108,13 +8206,18 @@ def customer_deep_dive(customer_id):
     db_execute(
         """
         UPDATE customer_deepdives
-        SET title = ?, overview = ?, strategy_notes = ?, updated_at = CURRENT_TIMESTAMP
+        SET title = ?, overview = ?, strategy_notes = ?,
+            perplexity_suggestions = ?,
+            perplexity_document = ?,
+            updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """,
         (
             data.get('title') or deepdive['title'],
             data.get('overview') or '',
             data.get('strategy_notes') or '',
+            json.dumps(data.get('perplexity_suggestions') or []),
+            _build_customer_deepdive_document(data.get('perplexity_suggestions') or []),
             deepdive['id'],
         ),
         commit=True,
@@ -8151,8 +8254,10 @@ def customer_deep_dive_perplexity_suggestions(customer_id):
     if not customer:
         return jsonify({'success': False, 'error': 'Customer not found'}), 404
     customer_dict = dict(customer) if hasattr(customer, 'keys') else customer
-    can_view, _ = _get_customer_permission_flags(customer_dict)
+    can_view, can_edit = _get_customer_permission_flags(customer_dict)
     if not can_view:
+        return jsonify({'success': False, 'error': 'Forbidden'}), 403
+    if not can_edit:
         return jsonify({'success': False, 'error': 'Forbidden'}), 403
 
     data = request.get_json(silent=True) or {}
@@ -8160,6 +8265,18 @@ def customer_deep_dive_perplexity_suggestions(customer_id):
         suggestions = _generate_customer_deepdive_perplexity_suggestions(
             customer_id,
             count=data.get('count') or 8,
+        )
+        deepdive = _ensure_customer_deepdive(customer_id)
+        db_execute(
+            """
+            UPDATE customer_deepdives
+            SET perplexity_suggestions = ?,
+                perplexity_document = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (json.dumps(suggestions), _build_customer_deepdive_document(suggestions), deepdive['id']),
+            commit=True,
         )
         return jsonify({'success': True, 'suggestions': suggestions})
     except ValueError as exc:
