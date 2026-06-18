@@ -1442,15 +1442,68 @@ document.addEventListener('DOMContentLoaded', function() {
         };
     };
 
-    const applyMonthlyGoalDataset = (chartData) => {
+    const buildRollingAverageDataset = (sourceDataset, labelSet, label = '3 Month Rolling Avg') => {
+        if (!sourceDataset || !Array.isArray(sourceDataset.data)) {
+            return null;
+        }
+
+        const averageSeries = sourceDataset.data.map((value, index, values) => {
+            if (index < 2) {
+                return null;
+            }
+
+            const windowValues = values
+                .slice(index - 2, index + 1)
+                .map(point => Number(point || 0));
+            const total = windowValues.reduce((sum, point) => sum + point, 0);
+            return Math.round((total / 3) * 100) / 100;
+        });
+
+        if (!averageSeries.some(value => value !== null && value !== undefined)) {
+            return null;
+        }
+
+        return {
+            label,
+            data: averageSeries.slice(0, labelSet.length),
+            borderColor: 'rgb(124, 58, 237)',
+            backgroundColor: 'rgba(124, 58, 237, 0.08)',
+            borderDash: [8, 5],
+            borderWidth: 3,
+            tension: 0.35,
+            fill: false,
+            pointRadius: 0,
+            pointHoverRadius: 7,
+            pointHoverBackgroundColor: 'rgb(124, 58, 237)',
+            pointHoverBorderColor: '#fff',
+            pointHoverBorderWidth: 2,
+            pointHitRadius: 18,
+            order: 98,
+            isRollingAverage: true
+        };
+    };
+
+    const applySalesChartOverlays = (chartData, rollingAverageLabel = '3 Month Rolling Avg') => {
         if (!chartData || !Array.isArray(chartData.datasets)) {
             return;
         }
-        chartData.datasets = chartData.datasets.filter(dataset => !dataset.isMonthlyGoal);
+
+        chartData.datasets = chartData.datasets.filter(dataset => !dataset.isMonthlyGoal && !dataset.isRollingAverage);
+
+        const primaryDataset = chartData.datasets[0];
+        const averageDataset = buildRollingAverageDataset(primaryDataset, chartData.labels || [], rollingAverageLabel);
+        if (averageDataset) {
+            chartData.datasets.push(averageDataset);
+        }
+
         const goalDataset = buildMonthlyGoalDataset(monthlyGoal, chartData.labels || []);
         if (goalDataset) {
             chartData.datasets.push(goalDataset);
         }
+    };
+
+    const applyMonthlyGoalDataset = (chartData) => {
+        applySalesChartOverlays(chartData);
     };
 
     // Initialize chart data with modern styling
@@ -1998,10 +2051,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 pointHitRadius: 20
             }]
         };
-        const goalDataset = buildMonthlyGoalDataset(monthlyGoal, customerSalesData.labels || []);
-        if (goalDataset) {
-            customerChartData.datasets.push(goalDataset);
-        }
+        applySalesChartOverlays(customerChartData, `${customerSalesData.customer_name} 3 Month Avg`);
         salesChart.data = customerChartData;
                 scheduleRender(() => {
                     salesChart.update();
@@ -2054,9 +2104,11 @@ document.addEventListener('DOMContentLoaded', function() {
             newValues.push(monthTotal);
         }
 
+        excludedData.datasets = excludedData.datasets.filter(dataset => !dataset.isMonthlyGoal && !dataset.isRollingAverage);
         excludedData.datasets[0].data = newValues;
         excludedData.datasets[0].label = excludedData.datasets[0].label +
             ` (${excludedCustomers.size} customer${excludedCustomers.size !== 1 ? 's' : ''} excluded)`;
+        applySalesChartOverlays(excludedData);
 
         return excludedData;
     }
@@ -2125,6 +2177,11 @@ document.addEventListener('DOMContentLoaded', function() {
             pointHitRadius: 20
         });
     });
+
+    const baselineAverageDataset = buildRollingAverageDataset(baselineDataset, labels, 'Baseline 3 Month Avg');
+    if (baselineAverageDataset) {
+        datasets.push(baselineAverageDataset);
+    }
 
     const goalDataset = buildMonthlyGoalDataset(monthlyGoal, labels);
     if (goalDataset) {
