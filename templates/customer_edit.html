@@ -2104,6 +2104,22 @@ document.addEventListener('DOMContentLoaded', function() {
         return `£${number.toLocaleString(undefined, {maximumFractionDigits: 0})}`;
     }
 
+    async function readDeepDiveJson(response) {
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+            return data;
+        }
+        const text = await response.text();
+        const parser = new DOMParser();
+        const parsed = parser.parseFromString(text, 'text/html');
+        const title = parsed.querySelector('title')?.textContent?.trim();
+        const heading = parsed.querySelector('h1, h2, h3')?.textContent?.trim();
+        const summary = title || heading || text.replace(/\s+/g, ' ').trim().slice(0, 160);
+        throw new Error(summary ? `Expected JSON but received HTML: ${summary}` : `Expected JSON but received ${contentType || 'an empty response'}`);
+    }
+
     function reason(row) {
         const parts = [];
         if (row.shared_tag_count) parts.push(`${row.shared_tag_count} shared tags`);
@@ -2209,10 +2225,14 @@ document.addEventListener('DOMContentLoaded', function() {
         try {
             const response = await fetch(perplexityEndpoint, {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
                 body: JSON.stringify({count: 8})
             });
-            const data = await response.json();
+            const data = await readDeepDiveJson(response);
             if (!data.success) throw new Error(data.error || 'Unable to generate Perplexity suggestions');
             state.perplexitySuggestions = data.suggestions || [];
             renderPerplexitySuggestions();
@@ -2225,8 +2245,13 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     async function loadDeepDive() {
-        const response = await fetch(endpoint);
-        const data = await response.json();
+        const response = await fetch(endpoint, {
+            headers: {
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        });
+        const data = await readDeepDiveJson(response);
         if (!data.success) throw new Error(data.error || 'Unable to load deep dive');
         document.getElementById('customerDeepDiveTitle').value = data.deepdive.title || '';
         document.getElementById('customerDeepDiveOverview').value = data.deepdive.overview || '';
@@ -2241,7 +2266,11 @@ document.addEventListener('DOMContentLoaded', function() {
         document.querySelectorAll('.deep-dive-note').forEach(input => updateNotes(input.dataset.id, input.dataset.type, input.value));
         const response = await fetch(endpoint, {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
             body: JSON.stringify({
                 title: document.getElementById('customerDeepDiveTitle').value,
                 overview: document.getElementById('customerDeepDiveOverview').value,
@@ -2249,7 +2278,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 selected: state.selected
             })
         });
-        const data = await response.json();
+        const data = await readDeepDiveJson(response);
         if (!data.success) throw new Error(data.error || 'Unable to save deep dive');
         state.selected = data.selected || [];
         state.suggestions = data.suggestions || [];
