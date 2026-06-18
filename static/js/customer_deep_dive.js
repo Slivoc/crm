@@ -1,0 +1,69 @@
+document.addEventListener('DOMContentLoaded', function() {
+  const root = document.querySelector('[data-customer-id]');
+  if (!root || !root.dataset.customerId) return;
+  const customerId = root.dataset.customerId;
+  const canEdit = root.dataset.canEdit === 'true';
+  const state = { selected: [], suggestions: [], perplexitySuggestions: [] };
+  const endpoint = `/customers/${customerId}/deep-dive`;
+  const perplexityEndpoint = `/customers/${customerId}/deep-dive/perplexity-suggestions`;
+  const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const money = value => `£${Number(value || 0).toLocaleString(undefined, {maximumFractionDigits: 0})}`;
+  async function readJson(response) {
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.success === false) throw new Error(data.error || `Request failed (${response.status})`);
+    return data;
+  }
+  function reason(row) {
+    const parts = [];
+    if (row.shared_tag_count) parts.push(`${row.shared_tag_count} shared tags`);
+    if (row.shared_industry_count) parts.push(`${row.shared_industry_count} industries`);
+    if (row.shared_company_type_count) parts.push(`${row.shared_company_type_count} types`);
+    if (row.order_count) parts.push(`${row.order_count} orders (${money(row.total_order_value)})`);
+    if (row.country) parts.push(row.country);
+    return parts.join(' • ') || 'Similar profile';
+  }
+  function key(row) { return `${row.related_customer_id || row.id}:${row.relationship_type || row.suggested_type || 'potential'}`; }
+  function addCustomer(row, type) {
+    const item = { related_customer_id: row.related_customer_id || row.id, name: row.name, country: row.country, website: row.website, status: row.status, assigned_salesperson_name: row.assigned_salesperson_name, order_count: row.order_count || 0, total_order_value: row.total_order_value || 0, last_order_date: row.last_order_date, relationship_type: type, notes: row.notes || '' };
+    if (!state.selected.some(existing => key(existing) === key(item))) state.selected.push(item);
+    renderSelected();
+  }
+  function removeCustomer(id, type) { state.selected = state.selected.filter(row => !(String(row.related_customer_id) === String(id) && row.relationship_type === type)); renderSelected(); }
+  function updateNotes(id, type, notes) { const item = state.selected.find(row => String(row.related_customer_id) === String(id) && row.relationship_type === type); if (item) item.notes = notes; }
+  function selectedHtml(row) {
+    const id = row.related_customer_id;
+    return `<tr><td style="min-width:220px"><a href="/customers/${id}/edit" target="_blank" class="fw-semibold text-decoration-none">${escapeHtml(row.name)}</a><div class="small text-muted">${escapeHtml(row.country || '')} ${row.status ? '• ' + escapeHtml(row.status) : ''} ${row.assigned_salesperson_name ? '• ' + escapeHtml(row.assigned_salesperson_name) : ''}</div></td><td class="small text-muted">${row.order_count || 0} orders<br>${money(row.total_order_value)} lifetime</td><td><textarea class="form-control form-control-sm deep-dive-note" rows="2" data-id="${id}" data-type="${row.relationship_type}" placeholder="Positioning notes..." ${canEdit ? '' : 'disabled'}>${escapeHtml(row.notes || '')}</textarea></td><td class="text-end"><button type="button" class="btn btn-sm btn-outline-danger deep-dive-remove" data-id="${id}" data-type="${row.relationship_type}" ${canEdit ? '' : 'disabled'}><i class="bi bi-x"></i></button></td></tr>`;
+  }
+  function renderSelected() {
+    const potential = state.selected.filter(row => row.relationship_type === 'potential');
+    const existing = state.selected.filter(row => row.relationship_type === 'existing');
+    document.getElementById('deepDivePotentialBody').innerHTML = potential.length ? potential.map(selectedHtml).join('') : '<tr><td class="text-muted p-3">No potential targets saved yet.</td></tr>';
+    document.getElementById('deepDiveExistingBody').innerHTML = existing.length ? existing.map(selectedHtml).join('') : '<tr><td class="text-muted p-3">No benchmark customers saved yet.</td></tr>';
+  }
+  function renderSuggestions() {
+    document.getElementById('deepDiveSuggestionCount').textContent = state.suggestions.length;
+    document.getElementById('deepDiveSuggestionsBody').innerHTML = state.suggestions.length ? state.suggestions.map(row => `<tr><td><a href="/customers/${row.id}/edit" target="_blank" class="text-decoration-none fw-semibold">${escapeHtml(row.name)}</a><div class="small text-muted">Score ${row.similarity_score || 0}</div></td><td class="small text-muted">${escapeHtml(reason(row))}</td><td class="text-end text-nowrap"><button type="button" class="btn btn-sm btn-outline-primary deep-dive-add" data-id="${row.id}" data-type="potential" ${canEdit ? '' : 'disabled'}>Potential</button> <button type="button" class="btn btn-sm btn-outline-success deep-dive-add" data-id="${row.id}" data-type="existing" ${canEdit ? '' : 'disabled'}>Existing</button></td></tr>`).join('') : '<tr><td colspan="3" class="text-muted p-3">No context customers found.</td></tr>';
+  }
+  function renderPerplexity() {
+    const body = document.getElementById('deepDivePerplexityBody');
+    body.innerHTML = state.perplexitySuggestions.length ? state.perplexitySuggestions.map(row => {
+      const company = row.website ? `<a href="${escapeHtml(row.website)}" target="_blank" rel="noopener" class="fw-semibold text-decoration-none">${escapeHtml(row.name)}</a>` : `<span class="fw-semibold">${escapeHtml(row.name)}</span>`;
+      const match = row.crm_match ? `<a href="/customers/${row.crm_match.id}/edit" target="_blank" class="badge text-bg-success text-decoration-none">${escapeHtml(row.crm_match.name)}</a><div class="small text-muted">${escapeHtml(row.crm_match.reason || 'Matched in CRM')}</div>` : '<span class="badge text-bg-light">No CRM match</span>';
+      return `<tr><td style="min-width:180px">${company}<div class="small text-muted">${escapeHtml(row.country || '')}</div></td><td class="small text-muted">${escapeHtml(row.why || row.similarity_basis || 'Similar operating profile')}</td><td>${match}</td></tr>`;
+    }).join('') : '<tr><td colspan="3" class="text-muted p-3">Click Ask Perplexity to research and match companies.</td></tr>';
+  }
+  async function generatePerplexity() {
+    const button = document.getElementById('generatePerplexityDeepDiveSuggestions');
+    button.disabled = true; button.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Asking...';
+    document.getElementById('deepDivePerplexityBody').innerHTML = '<tr><td colspan="3" class="text-muted p-3">Perplexity is researching companies and checking CRM matches...</td></tr>';
+    try { const data = await readJson(await fetch(perplexityEndpoint, {method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json','X-Requested-With':'XMLHttpRequest'}, body:JSON.stringify({count:8})})); state.perplexitySuggestions = data.suggestions || []; renderPerplexity(); }
+    finally { button.disabled = false; button.innerHTML = '<i class="bi bi-stars me-1"></i> Ask Perplexity'; }
+  }
+  async function load() { const data = await readJson(await fetch(endpoint, {headers:{'Accept':'application/json','X-Requested-With':'XMLHttpRequest'}})); document.getElementById('customerDeepDiveTitle').value = data.deepdive.title || ''; document.getElementById('customerDeepDiveOverview').value = data.deepdive.overview || ''; document.getElementById('customerDeepDiveStrategy').value = data.deepdive.strategy_notes || ''; state.selected = data.selected || []; state.suggestions = data.suggestions || []; state.perplexitySuggestions = data.deepdive.perplexity_suggestions || []; renderSelected(); renderSuggestions(); renderPerplexity(); }
+  async function save() { document.querySelectorAll('.deep-dive-note').forEach(input => updateNotes(input.dataset.id, input.dataset.type, input.value)); const data = await readJson(await fetch(endpoint, {method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json','X-Requested-With':'XMLHttpRequest'}, body:JSON.stringify({title:document.getElementById('customerDeepDiveTitle').value, overview:document.getElementById('customerDeepDiveOverview').value, strategy_notes:document.getElementById('customerDeepDiveStrategy').value, selected:state.selected, perplexity_suggestions:state.perplexitySuggestions})})); state.selected = data.selected || []; state.suggestions = data.suggestions || []; document.getElementById('customerDeepDiveAlert').innerHTML = '<div class="alert alert-success py-2">Customer deep dive document saved.</div>'; renderSelected(); renderSuggestions(); }
+  root.addEventListener('click', event => { const add = event.target.closest('.deep-dive-add'); if (add) { const row = state.suggestions.find(item => String(item.id) === String(add.dataset.id)); if (row) addCustomer(row, add.dataset.type); } const remove = event.target.closest('.deep-dive-remove'); if (remove) removeCustomer(remove.dataset.id, remove.dataset.type); });
+  root.addEventListener('input', event => { if (event.target.classList.contains('deep-dive-note')) updateNotes(event.target.dataset.id, event.target.dataset.type, event.target.value); });
+  document.getElementById('saveCustomerDeepDive')?.addEventListener('click', () => save().catch(error => { document.getElementById('customerDeepDiveAlert').innerHTML = `<div class="alert alert-danger py-2">${escapeHtml(error.message)}</div>`; }));
+  document.getElementById('generatePerplexityDeepDiveSuggestions')?.addEventListener('click', () => generatePerplexity().catch(error => { document.getElementById('customerDeepDiveAlert').innerHTML = `<div class="alert alert-danger py-2">${escapeHtml(error.message)}</div>`; renderPerplexity(); }));
+  load().catch(error => { document.getElementById('customerDeepDiveAlert').innerHTML = `<div class="alert alert-danger py-2">${escapeHtml(error.message)}</div>`; });
+});

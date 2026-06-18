@@ -25,10 +25,15 @@
           <i class="bi bi-bullseye me-1"></i>
           <span>3. Prospecting</span>
         </a>
+        <a href="{{ url_for('customers.customer_deep_dive_workspace') }}"
+           class="btn {% if request.endpoint == 'customers.customer_deep_dive_workspace' %}btn-primary{% else %}btn-secondary{% endif %}">
+          <i class="bi bi-bullseye me-1"></i>
+          <span>4. Customer Deep Dives</span>
+        </a>
         <a href="{{ url_for('geo_deepdive.list_deepdives') }}"
            class="btn {% if request.endpoint in ['geo_deepdive.list_deepdives', 'geo_deepdive.view_deepdive', 'geo_deepdive.new_deepdive', 'geo_deepdive.edit_deepdive'] %}btn-primary{% else %}btn-secondary{% endif %}">
           <i class="bi bi-globe me-1"></i>
-          <span>4. Geographic Deep Dives</span>
+          <span>5. Geographic Deep Dives</span>
         </a>
       </div>
     </div>
