@@ -221,8 +221,12 @@ function renderUncategorizedTable() {
     }
     filteredParts.forEach(part => {
         const label = part.part_number || part.base_part_number;
+        const selectedCategory = selectedCategoryMap[part.base_part_number] || '';
         const options = categories.length
-            ? categories.map(cat => `<option value="${cat}">${cat.replace('Marketplace Categories/Hardware and Electrical/', '')}</option>`).join('')
+            ? categories.map(cat => {
+                const selected = cat === selectedCategory ? ' selected' : '';
+                return `<option value="${cat}"${selected}>${cat.replace('Marketplace Categories/Hardware and Electrical/', '')}</option>`;
+            }).join('')
             : '<option value="">Loading categories...</option>';
         const metrics = formatPartSignals(part);
         const row = `
@@ -275,6 +279,9 @@ function renderUncategorizedTable() {
                         : 'Unknown';
                     const confidence = response.confidence ? ` (${response.confidence})` : '';
                     $row.data('suggested-category', response.category || '');
+                    if (response.category && categories.includes(response.category)) {
+                        $select.val(response.category).trigger('change');
+                    }
                     $reason.text(`Suggested: ${shortName}${confidence}. ${response.reasoning || ''}`);
                 } else {
                     $reason.text(response.error || 'Suggestion failed');
