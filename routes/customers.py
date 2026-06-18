@@ -61,6 +61,109 @@ def _reviewed_flag(value: bool):
     return value if _using_postgres() else int(value)
 
 
+
+def _ensure_customer_deepdive(customer_id):
+    existing = db_execute(
+        "SELECT * FROM customer_deepdives WHERE customer_id = ?",
+        (customer_id,),
+        fetch='one',
+    )
+    if existing:
+        return dict(existing)
+
+    customer = get_customer_by_id(customer_id)
+    title = f"{customer['name']} Customer Deep Dive" if customer else 'Customer Deep Dive'
+    db_execute(
+        """
+        INSERT INTO customer_deepdives (customer_id, title, overview, strategy_notes)
+        VALUES (?, ?, '', '')
+        """,
+        (customer_id, title),
+        commit=True,
+    )
+    created = db_execute(
+        "SELECT * FROM customer_deepdives WHERE customer_id = ?",
+        (customer_id,),
+        fetch='one',
+    )
+    return dict(created)
+
+
+def _get_customer_deepdive_payload(customer_id):
+    deepdive = _ensure_customer_deepdive(customer_id)
+    selected_rows = db_execute(
+        """
+        SELECT cdc.*, c.name, c.country, c.website, cs.status, s.name AS assigned_salesperson_name,
+               COALESCE(so_stats.order_count, 0) AS order_count,
+               COALESCE(so_stats.total_value, 0) AS total_order_value,
+               so_stats.last_order_date
+        FROM customer_deepdive_companies cdc
+        JOIN customers c ON cdc.related_customer_id = c.id
+        LEFT JOIN customer_status cs ON c.status_id = cs.id
+        LEFT JOIN salespeople s ON c.salesperson_id = s.id
+        LEFT JOIN (
+            SELECT customer_id, COUNT(*) AS order_count, COALESCE(SUM(total_value), 0) AS total_value, MAX(date_entered) AS last_order_date
+            FROM sales_orders
+            GROUP BY customer_id
+        ) so_stats ON so_stats.customer_id = c.id
+        WHERE cdc.customer_deepdive_id = ?
+        ORDER BY cdc.relationship_type, c.name
+        """,
+        (deepdive['id'],),
+        fetch='all',
+    ) or []
+    return {
+        'deepdive': deepdive,
+        'selected': [dict(row) for row in selected_rows],
+        'suggestions': _get_customer_deepdive_suggestions(customer_id),
+    }
+
+
+def _get_customer_deepdive_suggestions(customer_id, limit=20):
+    rows = db_execute(
+        """
+        WITH source_tags AS (SELECT tag_id FROM customer_industry_tags WHERE customer_id = ?),
+             source_industries AS (SELECT industry_id FROM customer_industries WHERE customer_id = ?),
+             source_types AS (SELECT company_type_id FROM customer_company_types WHERE customer_id = ?),
+             sales AS (
+                 SELECT customer_id, COUNT(*) AS order_count, COALESCE(SUM(total_value), 0) AS total_value, MAX(date_entered) AS last_order_date
+                 FROM sales_orders
+                 GROUP BY customer_id
+             )
+        SELECT c.id, c.name, c.country, c.website, cs.status, s.name AS assigned_salesperson_name,
+               COALESCE(COUNT(DISTINCT cit.tag_id), 0) AS shared_tag_count,
+               COALESCE(COUNT(DISTINCT ci.industry_id), 0) AS shared_industry_count,
+               COALESCE(COUNT(DISTINCT cct.company_type_id), 0) AS shared_company_type_count,
+               COALESCE(sales.order_count, 0) AS order_count,
+               COALESCE(sales.total_value, 0) AS total_order_value,
+               sales.last_order_date,
+               CASE WHEN COALESCE(sales.order_count, 0) > 0 THEN 'existing' ELSE 'potential' END AS suggested_type,
+               (COALESCE(COUNT(DISTINCT cit.tag_id), 0) * 4 +
+                COALESCE(COUNT(DISTINCT ci.industry_id), 0) * 3 +
+                COALESCE(COUNT(DISTINCT cct.company_type_id), 0) * 2 +
+                CASE WHEN c.country = src.country THEN 2 ELSE 0 END +
+                CASE WHEN COALESCE(sales.order_count, 0) > 0 THEN 1 ELSE 0 END) AS similarity_score
+        FROM customers src
+        JOIN customers c ON c.id <> src.id
+        LEFT JOIN customer_industry_tags cit ON cit.customer_id = c.id AND cit.tag_id IN (SELECT tag_id FROM source_tags)
+        LEFT JOIN customer_industries ci ON ci.customer_id = c.id AND ci.industry_id IN (SELECT industry_id FROM source_industries)
+        LEFT JOIN customer_company_types cct ON cct.customer_id = c.id AND cct.company_type_id IN (SELECT company_type_id FROM source_types)
+        LEFT JOIN sales ON sales.customer_id = c.id
+        LEFT JOIN customer_status cs ON c.status_id = cs.id
+        LEFT JOIN salespeople s ON c.salesperson_id = s.id
+        WHERE src.id = ?
+        GROUP BY c.id, c.name, c.country, c.website, cs.status, s.name, sales.order_count, sales.total_value, sales.last_order_date, src.country
+        HAVING (COALESCE(COUNT(DISTINCT cit.tag_id), 0) + COALESCE(COUNT(DISTINCT ci.industry_id), 0) + COALESCE(COUNT(DISTINCT cct.company_type_id), 0)) > 0
+            OR c.country = src.country
+            OR COALESCE(sales.order_count, 0) > 0
+        ORDER BY similarity_score DESC, sales.total_value DESC, c.name
+        LIMIT ?
+        """,
+        (customer_id, customer_id, customer_id, customer_id, limit),
+        fetch='all',
+    ) or []
+    return [dict(row) for row in rows]
+
 def _get_customer_permission_flags(customer_data):
     customer_salesperson_id = customer_data.get('salesperson_id')
     user_salesperson_id = current_user.get_salesperson_id()
@@ -7884,3 +7987,60 @@ def enrich_single_customer(customer_id):
     except Exception as e:
         logger.exception(e)
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@customers_bp.route('/<int:customer_id>/deep-dive', methods=['GET', 'POST'])
+@login_required
+def customer_deep_dive(customer_id):
+    customer = get_customer_by_id(customer_id)
+    if not customer:
+        return jsonify({'success': False, 'error': 'Customer not found'}), 404
+    customer_dict = dict(customer) if hasattr(customer, 'keys') else customer
+    can_view, can_edit = _get_customer_permission_flags(customer_dict)
+    if not can_view:
+        return jsonify({'success': False, 'error': 'Forbidden'}), 403
+
+    if request.method == 'GET':
+        return jsonify({'success': True, **_get_customer_deepdive_payload(customer_id), 'can_edit': can_edit})
+
+    if not can_edit:
+        return jsonify({'success': False, 'error': 'Forbidden'}), 403
+
+    data = request.get_json(silent=True) or {}
+    deepdive = _ensure_customer_deepdive(customer_id)
+    db_execute(
+        """
+        UPDATE customer_deepdives
+        SET title = ?, overview = ?, strategy_notes = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (
+            data.get('title') or deepdive['title'],
+            data.get('overview') or '',
+            data.get('strategy_notes') or '',
+            deepdive['id'],
+        ),
+        commit=True,
+    )
+
+    db_execute('DELETE FROM customer_deepdive_companies WHERE customer_deepdive_id = ?', (deepdive['id'],), commit=True)
+    for row in data.get('selected', []):
+        try:
+            related_customer_id = int(row.get('related_customer_id') or row.get('id'))
+        except (TypeError, ValueError):
+            continue
+        if related_customer_id == customer_id:
+            continue
+        relationship_type = row.get('relationship_type') if row.get('relationship_type') in ('potential', 'existing') else 'potential'
+        db_execute(
+            """
+            INSERT INTO customer_deepdive_companies
+                (customer_deepdive_id, related_customer_id, relationship_type, notes)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT (customer_deepdive_id, related_customer_id, relationship_type)
+            DO UPDATE SET notes = EXCLUDED.notes, updated_at = CURRENT_TIMESTAMP
+            """,
+            (deepdive['id'], related_customer_id, relationship_type, row.get('notes') or ''),
+            commit=True,
+        )
+
+    return jsonify({'success': True, **_get_customer_deepdive_payload(customer_id), 'can_edit': can_edit})
