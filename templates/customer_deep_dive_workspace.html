@@ -1,26 +1,36 @@
 {% extends "layouts/customer_discovery.html" %}
 {% block customer_discovery_content %}
-<div class="container" data-customer-id="{{ customer.id if customer else '' }}" data-can-edit="{{ 'true' if can_edit else 'false' }}">
+<div class="container-fluid" data-customer-id="{{ customer.id if customer else '' }}" data-can-edit="{{ 'true' if can_edit else 'false' }}">
   <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
     <div>
       <h2 class="h4 mb-1">Customer Deep Dives</h2>
-      <div class="text-muted">Research Perplexity-suggested lookalikes, check whether they already exist in CRM, and save the results as a reusable deep-dive document.</div>
+      <div class="text-muted">Research Perplexity-suggested lookalikes, then either match each result to an existing CRM customer or create a new CRM customer from it.</div>
     </div>
     {% if customer %}<a class="btn btn-outline-secondary" href="{{ url_for('customers.edit_customer', customer_id=customer.id) }}">Back to {{ customer.name }}</a>{% endif %}
   </div>
 
   <form class="card mb-4" method="get" action="{{ url_for('customers.customer_deep_dive_workspace') }}">
     <div class="card-body row g-3 align-items-end">
-      <div class="col-lg-8">
-        <label class="form-label" for="customer_id">Source customer</label>
-        <select class="form-select" name="customer_id" id="customer_id">
-          <option value="">Select a customer...</option>
-          {% for option in customers %}
-            <option value="{{ option.id }}" {% if customer and option.id == customer.id %}selected{% endif %}>{{ option.name }}{% if option.country %} — {{ option.country }}{% endif %}</option>
-          {% endfor %}
-        </select>
+      <div class="col-xl-7 col-lg-8">
+        <label class="form-label" for="deepDiveCustomerSearch">Source customer</label>
+        <input type="hidden" name="customer_id" id="deepDiveCustomerId" value="{{ customer.id if customer else '' }}">
+        <div class="position-relative">
+          <input type="text" id="deepDiveCustomerSearch" class="form-control" placeholder="Search customers using the CRM customer search..." autocomplete="off" value="{{ customer.name if customer else '' }}">
+          <div id="deepDiveCustomerResults" class="list-group position-absolute w-100 shadow-sm" style="z-index: 1020;"></div>
+        </div>
+        <div class="form-text">Uses the same <code>/customers/search</code> route as the top bar.</div>
       </div>
-      <div class="col-lg-4"><button class="btn btn-primary w-100" type="submit">Open Deep Dive</button></div>
+      <div class="col-xl-2 col-lg-4"><button class="btn btn-primary w-100" type="submit">Open Deep Dive</button></div>
+      <div class="col-xl-3">
+        <div class="small text-muted mb-1">Customers with deep dives</div>
+        <div class="d-flex flex-wrap gap-1">
+          {% for option in deepdive_customers %}
+            <a class="badge rounded-pill text-bg-light text-decoration-none border {% if customer and option.id == customer.id %}text-bg-primary{% endif %}" href="{{ url_for('customers.customer_deep_dive_workspace', customer_id=option.id) }}">{{ option.name }}</a>
+          {% else %}
+            <span class="text-muted small">No deep dives created yet.</span>
+          {% endfor %}
+        </div>
+      </div>
     </div>
   </form>
 
@@ -33,17 +43,17 @@
   </div>
 
   <div class="row g-3">
-    <div class="col-xl-5">
+    <div class="col-xxl-8 col-xl-7">
       <div class="card border mb-3">
-        <div class="card-header d-flex justify-content-between align-items-center"><div><h6 class="mb-0">Perplexity Suggestions + CRM Match Check</h6><div class="small text-muted">External company suggestions are matched against existing CRM customers by name/website.</div></div><button type="button" class="btn btn-sm btn-outline-primary" id="generatePerplexityDeepDiveSuggestions"><i class="bi bi-stars me-1"></i> Ask Perplexity</button></div>
-        <div class="card-body p-0"><div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0"><thead><tr><th>Suggested Company</th><th>Why</th><th>CRM Match</th></tr></thead><tbody id="deepDivePerplexityBody"><tr><td colspan="3" class="text-muted p-3">Click Ask Perplexity to research and match companies.</td></tr></tbody></table></div></div>
+        <div class="card-header d-flex justify-content-between align-items-center"><div><h6 class="mb-0">Perplexity Search Results</h6><div class="small text-muted">For each external result, match it to an existing CRM customer or create a new CRM customer, then add it as a target.</div></div><button type="button" class="btn btn-sm btn-outline-primary" id="generatePerplexityDeepDiveSuggestions"><i class="bi bi-stars me-1"></i> Ask Perplexity</button></div>
+        <div class="card-body p-0"><div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0"><thead><tr><th>Suggested Company</th><th>Why</th><th>CRM Action</th></tr></thead><tbody id="deepDivePerplexityBody"><tr><td colspan="3" class="text-muted p-3">Click Ask Perplexity to research companies. Then match each result to an existing CRM customer or create a new customer.</td></tr></tbody></table></div></div>
       </div>
       <div class="card border">
-        <div class="card-header d-flex justify-content-between align-items-center"><div><h6 class="mb-0">Context Customers</h6><div class="small text-muted">CRM lookalikes to use as benchmark/context for the Perplexity research prompt.</div></div><span class="badge text-bg-light" id="deepDiveSuggestionCount">0</span></div>
-        <div class="card-body p-0"><div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0"><thead><tr><th>Customer</th><th>Why</th><th class="text-end">Add</th></tr></thead><tbody id="deepDiveSuggestionsBody"><tr><td colspan="3" class="text-muted p-3">Loading suggestions...</td></tr></tbody></table></div></div>
+        <div class="card-header d-flex justify-content-between align-items-center"><div><h6 class="mb-0">Context Customers</h6><div class="small text-muted">Existing CRM customers used only as benchmark/context for the research prompt.</div></div><span class="badge text-bg-light" id="deepDiveSuggestionCount">0</span></div>
+        <div class="card-body p-0"><div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0"><thead><tr><th>Customer</th><th>Why</th><th class="text-end">Action</th></tr></thead><tbody id="deepDiveSuggestionsBody"><tr><td colspan="3" class="text-muted p-3">Loading suggestions...</td></tr></tbody></table></div></div>
       </div>
     </div>
-    <div class="col-xl-7">
+    <div class="col-xxl-4 col-xl-5">
       <div class="d-flex justify-content-end mb-2"><button type="button" class="btn btn-primary" id="saveCustomerDeepDive" {{ 'disabled' if not can_edit }}><i class="bi bi-save me-1"></i> Save Deep Dive Document</button></div>
       <div class="card border mb-3"><div class="card-header"><h6 class="mb-0">Potential Similar Customers to Market</h6></div><div class="card-body p-0"><div class="table-responsive"><table class="table table-sm align-middle mb-0"><tbody id="deepDivePotentialBody"><tr><td class="text-muted p-3">No potential targets saved yet.</td></tr></tbody></table></div></div></div>
       <div class="card border"><div class="card-header"><h6 class="mb-0">Existing Customer Benchmarks</h6></div><div class="card-body p-0"><div class="table-responsive"><table class="table table-sm align-middle mb-0"><tbody id="deepDiveExistingBody"><tr><td class="text-muted p-3">No benchmark customers saved yet.</td></tr></tbody></table></div></div></div>
@@ -51,6 +61,33 @@
   </div>
   {% endif %}
 </div>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const input = document.getElementById('deepDiveCustomerSearch');
+  const hidden = document.getElementById('deepDiveCustomerId');
+  const results = document.getElementById('deepDiveCustomerResults');
+  if (!input || !hidden || !results) return;
+  const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  input.addEventListener('input', () => {
+    hidden.value = '';
+    clearTimeout(input._timer);
+    const query = input.value.trim();
+    if (query.length < 2) { results.innerHTML = ''; return; }
+    input._timer = setTimeout(async () => {
+      const response = await fetch(`/customers/search?q=${encodeURIComponent(query)}&limit=10`, {headers:{'Accept':'application/json'}});
+      const customers = await response.json();
+      results.innerHTML = customers.map(customer => `<button type="button" class="list-group-item list-group-item-action" data-id="${customer.id}" data-name="${escapeHtml(customer.name)}"><strong>${escapeHtml(customer.name)}</strong><div class="small text-muted">${escapeHtml(customer.country || '')}${customer.assigned_salesperson_name ? ' • ' + escapeHtml(customer.assigned_salesperson_name) : ''}</div></button>`).join('') || '<div class="list-group-item text-muted">No customers found.</div>';
+    }, 250);
+  });
+  results.addEventListener('click', event => {
+    const item = event.target.closest('[data-id]');
+    if (!item) return;
+    hidden.value = item.dataset.id;
+    input.value = item.dataset.name;
+    results.innerHTML = '';
+  });
+});
+</script>
 {% if customer %}
 <script src="{{ url_for('static', filename='js/customer_deep_dive.js') }}"></script>
 {% endif %}
