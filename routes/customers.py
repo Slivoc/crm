@@ -2053,11 +2053,20 @@ def customer_deep_dive_workspace():
         if not can_view:
             flash('You do not have permission to view that customer deep dive.', 'danger')
             return redirect(url_for('customers.prospecting'))
-    customers = get_all_customers()
+    deepdive_customers = db_execute(
+        """
+        SELECT c.id, c.name, c.country, cd.updated_at
+        FROM customer_deepdives cd
+        JOIN customers c ON c.id = cd.customer_id
+        ORDER BY cd.updated_at DESC, c.name
+        LIMIT 40
+        """,
+        fetch='all',
+    ) or []
     return render_template(
         'customer_deep_dive_workspace.html',
         customer=customer_dict,
-        customers=customers,
+        deepdive_customers=[dict(row) for row in deepdive_customers],
         can_edit=can_edit,
         breadcrumbs=generate_breadcrumbs(
             ('Home', url_for('index')),
@@ -8245,6 +8254,39 @@ def customer_deep_dive(customer_id):
         )
 
     return jsonify({'success': True, **_get_customer_deepdive_payload(customer_id), 'can_edit': can_edit})
+
+
+@customers_bp.route('/<int:customer_id>/deep-dive/create-suggested-customer', methods=['POST'])
+@login_required
+def customer_deep_dive_create_suggested_customer(customer_id):
+    customer = get_customer_by_id(customer_id)
+    if not customer:
+        return jsonify({'success': False, 'error': 'Customer not found'}), 404
+    customer_dict = dict(customer) if hasattr(customer, 'keys') else customer
+    can_view, can_edit = _get_customer_permission_flags(customer_dict)
+    if not can_view or not can_edit:
+        return jsonify({'success': False, 'error': 'Forbidden'}), 403
+
+    data = request.get_json(silent=True) or {}
+    name = (data.get('name') or '').strip()
+    if not name:
+        return jsonify({'success': False, 'error': 'Suggested company name is required.'}), 400
+
+    website = (data.get('website') or '').strip() or None
+    country = (data.get('country') or '').strip() or None
+    notes = (data.get('why') or data.get('similarity_basis') or '').strip() or None
+    customer_id_created = insert_customer(
+        name=name,
+        country=country,
+        website=website,
+        notes=notes,
+        status_id=1,
+        salesperson_id=current_user.get_salesperson_id(),
+    )
+    created = get_customer_by_id(customer_id_created)
+    created_dict = dict(created) if created and hasattr(created, 'keys') else {'id': customer_id_created, 'name': name, 'country': country, 'website': website}
+    created_dict['reason'] = 'Created from Perplexity result'
+    return jsonify({'success': True, 'customer': created_dict})
 
 
 @customers_bp.route('/<int:customer_id>/deep-dive/perplexity-suggestions', methods=['POST'])
