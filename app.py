@@ -95,6 +95,7 @@ app.config['TICKETS_BASE_URL'] = os.getenv('TICKETS_BASE_URL', '')
 app.config['APOLLO_BASE_URL'] = 'https://api.apollo.io/v1'  # It's good to keep the base URL in config too
 app.config['EXCHANGE_RATE_API_KEY'] = os.getenv('EXCHANGE_RATE_API_KEY', '')
 app.config['FLIGHTRADAR_API_KEY'] = os.getenv('FLIGHTRADAR_API_KEY', '')
+app.config['ONLINECOMPONENTS_API_KEY'] = os.getenv('ONLINECOMPONENTS_API_KEY', '')
 app.config['FLIGHTRADAR_API_BASE_URL'] = os.getenv('FLIGHTRADAR_API_BASE_URL', 'https://fr24api.flightradar24.com')
 app.config['FLIGHTRADAR_ACCEPT_VERSION'] = os.getenv('FLIGHTRADAR_ACCEPT_VERSION', 'v1')
 app.config['SESSION_TYPE'] = 'filesystem'  # Store sessions in files
@@ -113,6 +114,7 @@ def _load_api_key_overrides_from_db():
         'TICKETS_HUB_API_KEY',
         'EXCHANGE_RATE_API_KEY',
         'FLIGHTRADAR_API_KEY',
+        'ONLINECOMPONENTS_API_KEY',
     )
     try:
         placeholders = ', '.join(['?'] * len(tracked_keys))

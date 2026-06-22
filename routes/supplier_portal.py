@@ -1,11 +1,15 @@
-from flask import Blueprint, render_template, request, jsonify, url_for, session
+from flask import Blueprint, render_template, request, jsonify, url_for, session, current_app
 from flask_login import current_user, login_required
 from models import get_db_connection
 import logging
 import os
+import requests
 from collections import defaultdict
+from urllib.parse import quote
 
 supplier_portal_bp = Blueprint('supplier_portal', __name__, url_prefix='/supplier-portal')
+
+ONLINECOMPONENTS_API_BASE_URL = 'https://api.onlinecomponents.com/wapi'
 
 
 def _using_postgres():
@@ -29,6 +33,99 @@ def _set_supplier_setting(cur, key, value):
         cur.execute("UPDATE app_settings SET value = ? WHERE key = ?", (str(value), key))
     else:
         cur.execute("INSERT INTO app_settings (key, value) VALUES (?, ?)", (key, str(value)))
+
+
+def _get_onlinecomponents_api_key():
+    """Read the saved key first, then fall back to runtime/environment config."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        value = _get_supplier_setting(cur, 'ONLINECOMPONENTS_API_KEY')
+        if value:
+            return value.strip()
+    except Exception:
+        logging.exception("Unable to read the OnlineComponents API key")
+    finally:
+        if conn:
+            conn.close()
+    return (current_app.config.get('ONLINECOMPONENTS_API_KEY') or os.getenv('ONLINECOMPONENTS_API_KEY', '')).strip()
+
+
+@supplier_portal_bp.route('/onlinecomponents')
+@login_required
+def onlinecomponents_test():
+    breadcrumbs = [
+        ('Home', url_for('index')),
+        ('Supplier Portal', url_for('supplier_portal.supplier_portal_home')),
+        ('OnlineComponents API Test', None),
+    ]
+    return render_template(
+        'supplier_portal_onlinecomponents.html',
+        api_key_configured=bool(_get_onlinecomponents_api_key()),
+        breadcrumbs=breadcrumbs,
+    )
+
+
+@supplier_portal_bp.route('/api/onlinecomponents/search', methods=['POST'])
+@login_required
+def onlinecomponents_search():
+    """Proxy an Inventory and Pricing search without exposing the API key."""
+    data = request.get_json(silent=True) or {}
+    api_name = str(data.get('api_name') or '').strip()
+    query = str(data.get('query') or '').strip()
+    version = str(data.get('version') or '1').strip().lstrip('vV')
+
+    if not api_name or not query:
+        return jsonify(success=False, message='API name and search query are required.'), 400
+    if len(api_name) > 100 or len(query) > 1000:
+        return jsonify(success=False, message='API name or search query is too long.'), 400
+    if not version.isdigit() or not 1 <= len(version) <= 3:
+        return jsonify(success=False, message='Version must be a number.'), 400
+
+    try:
+        results_count = int(data.get('results_count', 10))
+    except (TypeError, ValueError):
+        return jsonify(success=False, message='Results count must be a number.'), 400
+    if not 1 <= results_count <= 50:
+        return jsonify(success=False, message='Results count must be between 1 and 50.'), 400
+
+    api_key = _get_onlinecomponents_api_key()
+    if not api_key:
+        return jsonify(success=False, message='OnlineComponents API key is not configured in Settings.'), 400
+
+    in_stock_only = '1' if data.get('in_stock_only', True) else '0'
+    exact_match = '1' if data.get('exact_match', False) else '0'
+    path_values = (version, api_name, query, in_stock_only, exact_match, str(results_count), api_key)
+    encoded_path = '/'.join(quote(value, safe=',') for value in path_values)
+    endpoint = f'{ONLINECOMPONENTS_API_BASE_URL}/v{encoded_path}'
+
+    try:
+        response = requests.get(endpoint, headers={'Accept': 'application/json'}, timeout=(5, 30))
+    except requests.RequestException as exc:
+        # Do not log the exception text: requests may include the key-bearing URL.
+        logging.error('OnlineComponents API request failed (%s)', type(exc).__name__)
+        return jsonify(success=False, message='Could not connect to the OnlineComponents API.'), 502
+
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+
+    if not response.ok:
+        detail = None
+        if isinstance(payload, dict):
+            detail = payload.get('message') or payload.get('error') or payload.get('title')
+        message = f'OnlineComponents returned HTTP {response.status_code}.'
+        if detail:
+            message = f'{message} {detail}'
+        return jsonify(success=False, message=message), 502
+
+    if payload is None:
+        return jsonify(success=False, message='OnlineComponents returned a non-JSON response.'), 502
+
+    results = payload if isinstance(payload, list) else payload.get('results', payload) if isinstance(payload, dict) else payload
+    return jsonify(success=True, results=results, raw=payload)
 
 
 def _get_user_supplier_settings(cur, user_id, supplier_key):

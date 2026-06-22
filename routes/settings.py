@@ -56,6 +56,7 @@ API_SETTING_FIELDS = [
     {'name': 'exchange_rate_api_key', 'storage_key': 'EXCHANGE_RATE_API_KEY', 'label': 'Exchange Rate API Key'},
     {'name': 'tickets_hub_api_key', 'storage_key': 'TICKETS_HUB_API_KEY', 'label': 'Tickets Hub API Key'},
     {'name': 'flightradar_api_key', 'storage_key': 'FLIGHTRADAR_API_KEY', 'label': 'Flightradar24 API Key'},
+    {'name': 'onlinecomponents_api_key', 'storage_key': 'ONLINECOMPONENTS_API_KEY', 'label': 'OnlineComponents API Key'},
     {'name': 'internal_api_key', 'storage_key': 'API_KEY', 'label': 'Internal API Key'},
 ]
 

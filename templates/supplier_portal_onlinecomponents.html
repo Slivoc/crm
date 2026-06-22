@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+
+{% block title %}OnlineComponents API Test{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-start mb-4">
+        <div>
+            <h2><i class="fas fa-microchip"></i> OnlineComponents API Test</h2>
+            <p class="text-muted mb-0">Test the Inventory and Pricing part-number search endpoint.</p>
+        </div>
+        <a href="{{ url_for('supplier_portal.supplier_portal_home') }}" class="btn btn-outline-secondary">Back to Supplier Portal</a>
+    </div>
+
+    {% if not api_key_configured %}
+    <div class="alert alert-warning">
+        No API key is configured. Add the OnlineComponents API Key on the
+        <a class="alert-link" href="{{ url_for('settings.settings') }}">Settings page</a> first.
+    </div>
+    {% endif %}
+
+    <div class="card mb-4">
+        <div class="card-header"><h5 class="mb-0">Search request</h5></div>
+        <div class="card-body">
+            <form id="onlinecomponents-form">
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <label for="api-name" class="form-label">API name</label>
+                        <input id="api-name" class="form-control" required autocomplete="off" placeholder="Provided by OnlineComponents">
+                    </div>
+                    <div class="col-md-5">
+                        <label for="query" class="form-label">Part number / query</label>
+                        <input id="query" class="form-control" required autocomplete="off" placeholder="One part, or comma-separated parts">
+                    </div>
+                    <div class="col-md-2">
+                        <label for="results-count" class="form-label">Results</label>
+                        <input id="results-count" type="number" min="1" max="50" value="10" class="form-control" required>
+                    </div>
+                    <div class="col-md-2">
+                        <label for="version" class="form-label">API version</label>
+                        <input id="version" type="number" min="1" value="1" class="form-control" required>
+                    </div>
+                    <div class="col-12 d-flex flex-wrap gap-4 align-items-center">
+                        <div class="form-check form-switch">
+                            <input id="in-stock-only" class="form-check-input" type="checkbox" checked>
+                            <label class="form-check-label" for="in-stock-only">In-stock only</label>
+                        </div>
+                        <div class="form-check form-switch">
+                            <input id="exact-match" class="form-check-input" type="checkbox">
+                            <label class="form-check-label" for="exact-match">Exact match</label>
+                        </div>
+                        <button class="btn btn-primary ms-md-auto" type="submit" {% if not api_key_configured %}disabled{% endif %}>
+                            <span id="search-spinner" class="spinner-border spinner-border-sm me-1 d-none"></span>
+                            Run search
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="search-message" class="alert d-none" role="alert"></div>
+    <div id="results-card" class="card d-none">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">Results <span id="result-count" class="badge bg-secondary"></span></h5>
+            <button id="toggle-raw" type="button" class="btn btn-sm btn-outline-secondary">Show raw JSON</button>
+        </div>
+        <div class="card-body p-0">
+            <div id="results-table" class="table-responsive"></div>
+            <pre id="raw-json" class="m-0 p-3 bg-light d-none" style="max-height: 600px; overflow: auto;"></pre>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const form = document.getElementById('onlinecomponents-form');
+    const message = document.getElementById('search-message');
+    const card = document.getElementById('results-card');
+    const spinner = document.getElementById('search-spinner');
+    const submit = form.querySelector('button[type="submit"]');
+    const raw = document.getElementById('raw-json');
+
+    const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, char => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+    })[char]);
+    const safeLink = value => /^https:\/\//i.test(value || '') ? value : '';
+    const showMessage = (text, type) => {
+        message.textContent = text;
+        message.className = `alert alert-${type}`;
+    };
+
+    form.addEventListener('submit', async event => {
+        event.preventDefault();
+        message.classList.add('d-none');
+        card.classList.add('d-none');
+        spinner.classList.remove('d-none');
+        submit.disabled = true;
+        try {
+            const response = await fetch('{{ url_for("supplier_portal.onlinecomponents_search") }}', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    api_name: document.getElementById('api-name').value,
+                    query: document.getElementById('query').value,
+                    results_count: document.getElementById('results-count').value,
+                    version: document.getElementById('version').value,
+                    in_stock_only: document.getElementById('in-stock-only').checked,
+                    exact_match: document.getElementById('exact-match').checked
+                })
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) throw new Error(data.message || 'Search failed.');
+            const results = Array.isArray(data.results) ? data.results : [];
+            document.getElementById('result-count').textContent = results.length;
+            const rows = results.map(item => {
+                const productUrl = safeLink(item.productUrl);
+                const datasheetUrl = safeLink(item.datasheetUrl);
+                const prices = Array.isArray(item.price_breaks) ? item.price_breaks.map(p => `${p.pricebreak}: ${p.pricelist}`).join(', ') : '';
+                return `<tr><td><strong>${escapeHtml(item.partNumber)}</strong></td><td>${escapeHtml(item.manufacturer)}</td><td>${escapeHtml(item.description)}</td><td>${escapeHtml(item.quantityAvailableTxt || item.quantityAvailable)}</td><td>${escapeHtml(item.moq)}</td><td>${escapeHtml(prices)}</td><td>${productUrl ? `<a href="${escapeHtml(productUrl)}" target="_blank" rel="noopener">Product</a>` : ''}${productUrl && datasheetUrl ? ' · ' : ''}${datasheetUrl ? `<a href="${escapeHtml(datasheetUrl)}" target="_blank" rel="noopener">Datasheet</a>` : ''}</td></tr>`;
+            }).join('');
+            document.getElementById('results-table').innerHTML = `<table class="table table-sm table-hover align-middle mb-0"><thead class="table-light"><tr><th>Part number</th><th>Manufacturer</th><th>Description</th><th>Available</th><th>MOQ</th><th>Price breaks</th><th>Links</th></tr></thead><tbody>${rows || '<tr><td colspan="7" class="text-center text-muted py-4">No results returned.</td></tr>'}</tbody></table>`;
+            raw.textContent = JSON.stringify(data.raw, null, 2);
+            raw.classList.add('d-none');
+            document.getElementById('toggle-raw').textContent = 'Show raw JSON';
+            card.classList.remove('d-none');
+            showMessage(`Search completed with ${results.length} result(s).`, 'success');
+        } catch (error) {
+            showMessage(error.message || 'Search failed.', 'danger');
+        } finally {
+            spinner.classList.add('d-none');
+            submit.disabled = false;
+        }
+    });
+
+    document.getElementById('toggle-raw').addEventListener('click', event => {
+        raw.classList.toggle('d-none');
+        document.getElementById('results-table').classList.toggle('d-none');
+        event.currentTarget.textContent = raw.classList.contains('d-none') ? 'Show raw JSON' : 'Show table';
+    });
+});
+</script>
+{% endblock %}
