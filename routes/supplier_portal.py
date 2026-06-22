@@ -5,11 +5,16 @@ import logging
 import os
 import requests
 from collections import defaultdict
+from decimal import Decimal, InvalidOperation, ROUND_CEILING
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from urllib.parse import quote
+import re
 
 supplier_portal_bp = Blueprint('supplier_portal', __name__, url_prefix='/supplier-portal')
 
 ONLINECOMPONENTS_API_BASE_URL = 'https://api.onlinecomponents.com/wapi'
+ONLINECOMPONENTS_API_NAME = 'cgpriceavailability'
+ONLINECOMPONENTS_SELECTION_SALT = 'onlinecomponents-sourcing-selection-v1'
 
 
 def _using_postgres():
@@ -52,6 +57,74 @@ def _get_onlinecomponents_api_key():
     return (current_app.config.get('ONLINECOMPONENTS_API_KEY') or os.getenv('ONLINECOMPONENTS_API_KEY', '')).strip()
 
 
+def _onlinecomponents_serializer():
+    return URLSafeTimedSerializer(current_app.secret_key, salt=ONLINECOMPONENTS_SELECTION_SALT)
+
+
+def _normalized_part_number(value):
+    return re.sub(r'[^A-Z0-9]', '', str(value or '').upper())
+
+
+def _number_from_api(value, default=None):
+    match = re.search(r'-?\d[\d,]*(?:\.\d+)?', str(value or ''))
+    if not match:
+        return default
+    try:
+        return Decimal(match.group(0).replace(',', ''))
+    except InvalidOperation:
+        return default
+
+
+def _positive_int_from_api(value, default=1):
+    number = _number_from_api(value)
+    if number is None:
+        return default
+    return max(default, int(number))
+
+
+def _currency_from_price(value):
+    text = str(value or '')
+    if '£' in text or 'GBP' in text.upper():
+        return 'GBP'
+    if '€' in text or 'EUR' in text.upper():
+        return 'EUR'
+    if '$' in text or 'USD' in text.upper():
+        return 'USD'
+    # The configured OnlineComponents storefront/account is GBP.
+    return 'GBP'
+
+
+def _request_onlinecomponents(query, *, results_count=50, in_stock_only=True, exact_match=True):
+    api_key = _get_onlinecomponents_api_key()
+    if not api_key:
+        return None, 'OnlineComponents API key is not configured in Settings.'
+
+    path_values = (
+        '1', ONLINECOMPONENTS_API_NAME, query,
+        '1' if in_stock_only else '0',
+        '1' if exact_match else '0',
+        str(results_count), api_key,
+    )
+    encoded_path = '/'.join(quote(str(value), safe=',') for value in path_values)
+    endpoint = f'{ONLINECOMPONENTS_API_BASE_URL}/v{encoded_path}'
+    try:
+        response = requests.get(endpoint, headers={'Accept': 'application/json'}, timeout=(5, 45))
+    except requests.RequestException as exc:
+        # Do not log the exception text: requests may include the key-bearing URL.
+        logging.error('OnlineComponents API request failed (%s)', type(exc).__name__)
+        return None, 'Could not connect to the OnlineComponents API.'
+
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    if not response.ok:
+        return None, f'OnlineComponents returned HTTP {response.status_code}.'
+    if not isinstance(payload, list):
+        return None, 'OnlineComponents returned an unexpected response.'
+    return payload, None
+
+
 @supplier_portal_bp.route('/onlinecomponents')
 @login_required
 def onlinecomponents_test():
@@ -72,14 +145,13 @@ def onlinecomponents_test():
 def onlinecomponents_search():
     """Proxy an Inventory and Pricing search without exposing the API key."""
     data = request.get_json(silent=True) or {}
-    api_name = str(data.get('api_name') or '').strip()
     query = str(data.get('query') or '').strip()
     version = str(data.get('version') or '1').strip().lstrip('vV')
 
-    if not api_name or not query:
-        return jsonify(success=False, message='API name and search query are required.'), 400
-    if len(api_name) > 100 or len(query) > 1000:
-        return jsonify(success=False, message='API name or search query is too long.'), 400
+    if not query:
+        return jsonify(success=False, message='Search query is required.'), 400
+    if len(query) > 1000:
+        return jsonify(success=False, message='Search query is too long.'), 400
     if not version.isdigit() or not 1 <= len(version) <= 3:
         return jsonify(success=False, message='Version must be a number.'), 400
 
@@ -90,42 +162,271 @@ def onlinecomponents_search():
     if not 1 <= results_count <= 50:
         return jsonify(success=False, message='Results count must be between 1 and 50.'), 400
 
+    # The standalone tester allows a version override; sourcing uses v1.
     api_key = _get_onlinecomponents_api_key()
     if not api_key:
         return jsonify(success=False, message='OnlineComponents API key is not configured in Settings.'), 400
-
-    in_stock_only = '1' if data.get('in_stock_only', True) else '0'
-    exact_match = '1' if data.get('exact_match', False) else '0'
-    path_values = (version, api_name, query, in_stock_only, exact_match, str(results_count), api_key)
-    encoded_path = '/'.join(quote(value, safe=',') for value in path_values)
-    endpoint = f'{ONLINECOMPONENTS_API_BASE_URL}/v{encoded_path}'
-
+    path_values = (
+        version, ONLINECOMPONENTS_API_NAME, query,
+        '1' if data.get('in_stock_only', True) else '0',
+        '1' if data.get('exact_match', False) else '0',
+        str(results_count), api_key,
+    )
+    endpoint = f"{ONLINECOMPONENTS_API_BASE_URL}/v{'/'.join(quote(str(value), safe=',') for value in path_values)}"
     try:
         response = requests.get(endpoint, headers={'Accept': 'application/json'}, timeout=(5, 30))
+        payload = response.json()
     except requests.RequestException as exc:
-        # Do not log the exception text: requests may include the key-bearing URL.
         logging.error('OnlineComponents API request failed (%s)', type(exc).__name__)
         return jsonify(success=False, message='Could not connect to the OnlineComponents API.'), 502
-
-    try:
-        payload = response.json()
     except ValueError:
-        payload = None
-
-    if not response.ok:
-        detail = None
-        if isinstance(payload, dict):
-            detail = payload.get('message') or payload.get('error') or payload.get('title')
-        message = f'OnlineComponents returned HTTP {response.status_code}.'
-        if detail:
-            message = f'{message} {detail}'
-        return jsonify(success=False, message=message), 502
-
-    if payload is None:
         return jsonify(success=False, message='OnlineComponents returned a non-JSON response.'), 502
+    if not response.ok:
+        return jsonify(success=False, message=f'OnlineComponents returned HTTP {response.status_code}.'), 502
+    return jsonify(success=True, results=payload, raw=payload)
 
-    results = payload if isinstance(payload, list) else payload.get('results', payload) if isinstance(payload, dict) else payload
-    return jsonify(success=True, results=results, raw=payload)
+
+@supplier_portal_bp.route('/api/onlinecomponents/parts-list/<int:list_id>/search', methods=['POST'])
+@login_required
+def onlinecomponents_parts_list_search(list_id):
+    """Search uncosted list lines and return signed, reviewable price-break choices."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM parts_lists WHERE id = ?", (list_id,))
+        if not cur.fetchone():
+            return jsonify(success=False, message='Parts list not found.'), 404
+        cur.execute("""
+            SELECT id, line_number, customer_part_number, base_part_number, quantity
+            FROM parts_list_lines
+            WHERE parts_list_id = ? AND chosen_cost IS NULL
+            ORDER BY line_number, id
+        """, (list_id,))
+        lines = [dict(row) for row in cur.fetchall()]
+    finally:
+        if conn:
+            conn.close()
+
+    searchable = []
+    for line in lines:
+        part_number = (line.get('customer_part_number') or line.get('base_part_number') or '').strip()
+        if part_number:
+            line['search_part_number'] = part_number
+            searchable.append(line)
+    if not searchable:
+        return jsonify(success=False, message='There are no uncosted lines with part numbers to search.'), 400
+    if len(searchable) > 100:
+        return jsonify(success=False, message='OnlineComponents sourcing is limited to 100 uncosted lines per search.'), 400
+
+    api_results = []
+    # The documented endpoint accepts comma-separated part numbers. Keep batches small
+    # enough for predictable URL sizes while remaining well below the API rate limit.
+    for offset in range(0, len(searchable), 20):
+        batch = searchable[offset:offset + 20]
+        payload, error = _request_onlinecomponents(
+            ','.join(line['search_part_number'] for line in batch),
+            results_count=50,
+            in_stock_only=True,
+            exact_match=True,
+        )
+        if error:
+            return jsonify(success=False, message=error), 502
+        api_results.extend(payload)
+
+    results_by_part = defaultdict(list)
+    for item in api_results:
+        if isinstance(item, dict):
+            results_by_part[_normalized_part_number(item.get('partNumber'))].append(item)
+
+    serializer = _onlinecomponents_serializer()
+    grouped_lines = []
+    for line in searchable:
+        requested_quantity = max(1, int(line.get('quantity') or 1))
+        product_results = []
+        for item in results_by_part.get(_normalized_part_number(line['search_part_number']), []):
+            price_options = []
+            for price in item.get('price_breaks') or []:
+                break_quantity = _positive_int_from_api(price.get('pricebreak'), default=1)
+                unit_price = _number_from_api(price.get('pricelist'))
+                if unit_price is None or unit_price < 0:
+                    continue
+                currency_code = _currency_from_price(price.get('pricelist'))
+                selection = {
+                    'list_id': list_id,
+                    'line_id': line['id'],
+                    'quoted_part_number': str(item.get('partNumber') or line['search_part_number'])[:100],
+                    'manufacturer': str(item.get('manufacturer') or '')[:500],
+                    'break_quantity': break_quantity,
+                    'unit_price': str(unit_price),
+                    'currency_code': currency_code,
+                    'qty_available': _positive_int_from_api(item.get('quantityAvailable'), default=0),
+                    'moq': _positive_int_from_api(item.get('moq'), default=1),
+                    'multiple': _positive_int_from_api(item.get('multiple'), default=1),
+                    'product_url': str(item.get('productUrl') or '')[:1000],
+                    'datasheet_url': str(item.get('datasheetUrl') or '')[:1000],
+                }
+                price_options.append({
+                    'break_quantity': break_quantity,
+                    'unit_price': float(unit_price),
+                    'currency_code': currency_code,
+                    'token': serializer.dumps(selection),
+                })
+            if not price_options:
+                continue
+            recommended_index = min(
+                range(len(price_options)),
+                key=lambda index: abs(price_options[index]['break_quantity'] - requested_quantity),
+            )
+            product_results.append({
+                'part_number': item.get('partNumber'),
+                'manufacturer': item.get('manufacturer'),
+                'description': item.get('description'),
+                'quantity_available': item.get('quantityAvailableTxt') or item.get('quantityAvailable'),
+                'moq': item.get('moq'),
+                'multiple': item.get('multiple'),
+                'product_url': item.get('productUrl'),
+                'datasheet_url': item.get('datasheetUrl'),
+                'price_options': price_options,
+                'recommended_index': recommended_index,
+            })
+        grouped_lines.append({
+            'line_id': line['id'],
+            'line_number': line.get('line_number'),
+            'part_number': line['search_part_number'],
+            'requested_quantity': requested_quantity,
+            'results': product_results,
+        })
+
+    matched_lines = sum(1 for line in grouped_lines if line['results'])
+    return jsonify(
+        success=True,
+        lines=grouped_lines,
+        searched_lines=len(searchable),
+        matched_lines=matched_lines,
+    )
+
+
+@supplier_portal_bp.route('/api/onlinecomponents/parts-list/<int:list_id>/create-offer', methods=['POST'])
+@login_required
+def onlinecomponents_create_offer(list_id):
+    """Create one supplier quote from signed OnlineComponents selections."""
+    tokens = (request.get_json(silent=True) or {}).get('selection_tokens') or []
+    if not isinstance(tokens, list) or not tokens:
+        return jsonify(success=False, message='Select at least one OnlineComponents result.'), 400
+
+    serializer = _onlinecomponents_serializer()
+    selections = []
+    seen_line_ids = set()
+    try:
+        for token in tokens:
+            selection = serializer.loads(str(token), max_age=1800)
+            if int(selection.get('list_id')) != list_id:
+                raise BadSignature('Wrong parts list')
+            line_id = int(selection.get('line_id'))
+            if line_id in seen_line_ids:
+                return jsonify(success=False, message='Only one result may be selected per parts-list line.'), 400
+            seen_line_ids.add(line_id)
+            selections.append(selection)
+    except SignatureExpired:
+        return jsonify(success=False, message='The search results expired. Run the search again.'), 400
+    except (BadSignature, TypeError, ValueError, KeyError):
+        return jsonify(success=False, message='One or more selections are invalid. Run the search again.'), 400
+
+    currency_codes = {selection.get('currency_code') or 'GBP' for selection in selections}
+    if len(currency_codes) != 1:
+        return jsonify(success=False, message='Selections with different currencies cannot be added to one quote.'), 400
+    currency_code = next(iter(currency_codes))
+
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM parts_lists WHERE id = ?", (list_id,))
+        if not cur.fetchone():
+            return jsonify(success=False, message='Parts list not found.'), 404
+
+        supplier_id = _get_supplier_setting(cur, 'onlinecomponents_supplier_id')
+        if supplier_id:
+            cur.execute("SELECT id FROM suppliers WHERE id = ?", (supplier_id,))
+            supplier_row = cur.fetchone()
+        else:
+            cur.execute("""
+                SELECT id FROM suppliers
+                WHERE LOWER(REPLACE(REPLACE(name, ' ', ''), '.', '')) IN
+                      ('onlinecomponents', 'onlinecomponentscom')
+                ORDER BY id LIMIT 1
+            """)
+            supplier_row = cur.fetchone()
+        if not supplier_row:
+            return jsonify(
+                success=False,
+                message='Configure the OnlineComponents supplier record on the Supplier Portal first.',
+            ), 400
+        supplier_id = supplier_row['id']
+
+        placeholders = ','.join('?' for _ in seen_line_ids)
+        cur.execute(f"""
+            SELECT id, quantity FROM parts_list_lines
+            WHERE parts_list_id = ? AND id IN ({placeholders})
+        """, [list_id, *seen_line_ids])
+        line_rows = {int(row['id']): dict(row) for row in cur.fetchall()}
+        if len(line_rows) != len(seen_line_ids):
+            return jsonify(success=False, message='One or more parts-list lines no longer exist.'), 400
+
+        cur.execute("SELECT id FROM currencies WHERE currency_code = ?", (currency_code,))
+        currency_row = cur.fetchone()
+        if not currency_row:
+            return jsonify(success=False, message=f'Currency {currency_code} is not configured.'), 400
+
+        cur.execute("""
+            INSERT INTO parts_list_supplier_quotes
+            (parts_list_id, supplier_id, quote_reference, quote_date, currency_id, notes, created_by_user_id)
+            VALUES (?, ?, 'OnlineComponents API', CURRENT_DATE, ?, ?, ?)
+            RETURNING id
+        """, (
+            list_id, supplier_id, currency_row['id'],
+            'Imported from OnlineComponents Inventory and Pricing API',
+            current_user.id if getattr(current_user, 'is_authenticated', False) else session.get('user_id'),
+        ))
+        quote_id = cur.fetchone()['id']
+
+        for selection in selections:
+            line_id = int(selection['line_id'])
+            requested_quantity = max(1, int(line_rows[line_id].get('quantity') or 1))
+            break_quantity = max(1, int(selection.get('break_quantity') or 1))
+            moq = max(1, int(selection.get('moq') or 1))
+            multiple = max(1, int(selection.get('multiple') or 1))
+            quantity_quoted = max(requested_quantity, break_quantity, moq)
+            quantity_quoted = int((Decimal(quantity_quoted) / Decimal(multiple)).to_integral_value(rounding=ROUND_CEILING)) * multiple
+            links = []
+            if selection.get('product_url'):
+                links.append(f"Product: {selection['product_url']}")
+            if selection.get('datasheet_url'):
+                links.append(f"Datasheet: {selection['datasheet_url']}")
+            cur.execute("""
+                INSERT INTO parts_list_supplier_quote_lines
+                (supplier_quote_id, parts_list_line_id, quoted_part_number, manufacturer,
+                 quantity_quoted, unit_price, condition_code, is_no_bid,
+                 qty_available, purchase_increment, moq, line_notes)
+                VALUES (?, ?, ?, ?, ?, ?, 'NE', FALSE, ?, ?, ?, ?)
+            """, (
+                quote_id, line_id, selection.get('quoted_part_number'), selection.get('manufacturer'),
+                quantity_quoted, Decimal(str(selection.get('unit_price'))),
+                int(selection.get('qty_available') or 0), multiple, moq, '\n'.join(links) or None,
+            ))
+        conn.commit()
+        return jsonify(
+            success=True,
+            quote_id=quote_id,
+            lines_created=len(selections),
+            message=f'Created OnlineComponents supplier quote with {len(selections)} line(s).',
+        )
+    except Exception:
+        conn.rollback()
+        logging.exception('Failed to create OnlineComponents supplier quote')
+        return jsonify(success=False, message='Failed to create the OnlineComponents supplier quote.'), 500
+    finally:
+        conn.close()
 
 
 def _get_user_supplier_settings(cur, user_id, supplier_key):
@@ -227,6 +528,14 @@ def supplier_portal_home():
             if supplier:
                 proponent_settings['supplier'] = dict(supplier)
 
+        onlinecomponents_settings = {}
+        onlinecomponents_supplier_id = _get_supplier_setting(cur, 'onlinecomponents_supplier_id')
+        if onlinecomponents_supplier_id:
+            cur.execute("SELECT id, name FROM suppliers WHERE id = ?", (onlinecomponents_supplier_id,))
+            supplier = cur.fetchone()
+            if supplier:
+                onlinecomponents_settings['supplier'] = dict(supplier)
+
         # Get all suppliers for dropdown
         cur.execute("SELECT id, name FROM suppliers ORDER BY name")
         all_suppliers = [dict(row) for row in cur.fetchall()]
@@ -241,6 +550,7 @@ def supplier_portal_home():
         return render_template('supplier_portal.html',
                              monroe_settings=monroe_settings,
                              proponent_settings=proponent_settings,
+                             onlinecomponents_settings=onlinecomponents_settings,
                              all_suppliers=all_suppliers,
                              breadcrumbs=breadcrumbs)
 
@@ -255,7 +565,7 @@ def supplier_settings(supplier_key):
     """
     Get or set supplier settings (currently supports 'monroe' and 'proponent').
     """
-    if supplier_key not in ['monroe', 'proponent']:
+    if supplier_key not in ['monroe', 'proponent', 'onlinecomponents']:
         return jsonify(success=False, message="Unknown supplier"), 400
 
     try:

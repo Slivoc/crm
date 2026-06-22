@@ -22,13 +22,10 @@
     <div class="card mb-4">
         <div class="card-header"><h5 class="mb-0">Search request</h5></div>
         <div class="card-body">
+            <p class="small text-muted">Customer API: <code>cgpriceavailability</code></p>
             <form id="onlinecomponents-form">
                 <div class="row g-3">
-                    <div class="col-md-3">
-                        <label for="api-name" class="form-label">API name</label>
-                        <input id="api-name" class="form-control" required autocomplete="off" placeholder="Provided by OnlineComponents">
-                    </div>
-                    <div class="col-md-5">
+                    <div class="col-md-8">
                         <label for="query" class="form-label">Part number / query</label>
                         <input id="query" class="form-control" required autocomplete="off" placeholder="One part, or comma-separated parts">
                     </div>
@@ -101,7 +98,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
-                    api_name: document.getElementById('api-name').value,
                     query: document.getElementById('query').value,
                     results_count: document.getElementById('results-count').value,
                     version: document.getElementById('version').value,
