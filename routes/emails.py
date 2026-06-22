@@ -294,8 +294,11 @@ def _lookup_contact_company(email_address):
         return {
             "contact_name": customer_contact.get("name"),
             "contact_type": "customer",
+            "customer_id": customer_contact.get("customer_id"),
             "company_name": customer_contact.get("customer_name"),
             "company_type": "Customer",
+            "salesperson_id": customer_contact.get("salesperson_id"),
+            "salesperson_name": customer_contact.get("salesperson_name"),
         }
 
     supplier_contact = get_supplier_contact_by_email(email_address)
@@ -314,6 +317,74 @@ def _lookup_contact_company(email_address):
         "company_name": None,
         "company_type": None,
     }
+
+
+def _current_user_id():
+    try:
+        return int(current_user.id)
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _mailbox_salesperson_rows_for_user(user_id):
+    if not user_id:
+        return []
+
+    try:
+        rows = db_execute(
+            """
+            SELECT s.id, s.name, COALESCE(usa.is_default_mailbox_filter, FALSE) AS is_default
+            FROM user_salesperson_assignments usa
+            JOIN salespeople s ON s.id = usa.salesperson_id
+            WHERE usa.user_id = ?
+            ORDER BY s.name
+            """,
+            (user_id,),
+            fetch="all",
+        ) or []
+    except Exception as exc:
+        current_app.logger.warning("Mailbox salesperson assignments unavailable: %s", exc)
+        rows = []
+
+    if rows:
+        return [dict(row) for row in rows]
+
+    legacy_salesperson_id = None
+    if hasattr(current_user, "get_salesperson_id"):
+        legacy_salesperson_id = current_user.get_salesperson_id()
+
+    if legacy_salesperson_id:
+        row = db_execute(
+            "SELECT id, name, TRUE AS is_default FROM salespeople WHERE id = ?",
+            (legacy_salesperson_id,),
+            fetch="one",
+        )
+        return [dict(row)] if row else []
+
+    if hasattr(current_user, "is_administrator") and current_user.is_administrator():
+        rows = db_execute(
+            "SELECT id, name, FALSE AS is_default FROM salespeople ORDER BY name",
+            fetch="all",
+        ) or []
+        return [dict(row) for row in rows]
+
+    return []
+
+
+def _get_mailbox_salesperson_filter_context():
+    user_id = _current_user_id()
+    rows = _mailbox_salesperson_rows_for_user(user_id)
+    filters = [
+        {
+            "id": row.get("id"),
+            "name": row.get("name"),
+            "is_default": bool(row.get("is_default")),
+        }
+        for row in rows
+        if row.get("id")
+    ]
+    default_ids = [item["id"] for item in filters if item["is_default"]]
+    return filters, default_ids
 
 
 def _normalize_email_address(value):
@@ -3072,8 +3143,56 @@ def _is_mobile():
 def mailbox_page():
     graph = _get_graph_settings()
     graph_user = session.get("graph_last_user")
+    salesperson_filters, default_salesperson_filter_ids = _get_mailbox_salesperson_filter_context()
     template = 'emails_mailbox_mobile.html' if _is_mobile() else 'emails_mailbox.html'
-    return render_template(template, graph=graph, graph_user=graph_user)
+    return render_template(
+        template,
+        graph=graph,
+        graph_user=graph_user,
+        salesperson_filters=salesperson_filters,
+        default_salesperson_filter_ids=default_salesperson_filter_ids,
+    )
+
+
+@emails_bp.route('/emails/mailbox/salesperson-filters/defaults', methods=['POST'])
+def mailbox_salesperson_filter_defaults():
+    user_id = _current_user_id()
+    if not user_id:
+        return jsonify({"success": False, "error": "Not authenticated"}), 401
+
+    data = request.get_json(silent=True) or {}
+    raw_ids = data.get("salesperson_ids") or []
+    if not isinstance(raw_ids, list):
+        return jsonify({"success": False, "error": "salesperson_ids must be a list"}), 400
+
+    selected_ids = set()
+    for value in raw_ids:
+        try:
+            selected_ids.add(int(value))
+        except (TypeError, ValueError):
+            return jsonify({"success": False, "error": "Invalid salesperson id"}), 400
+
+    available_rows = _mailbox_salesperson_rows_for_user(user_id)
+    available_ids = {int(row["id"]) for row in available_rows if row.get("id")}
+    invalid_ids = selected_ids - available_ids
+    if invalid_ids:
+        return jsonify({
+            "success": False,
+            "error": "One or more salespeople are not assigned to this user",
+        }), 403
+
+    db_execute(
+        """
+        UPDATE user_salesperson_assignments
+        SET is_default_mailbox_filter = CASE WHEN salesperson_id = ANY(?::int[]) THEN TRUE ELSE FALSE END,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?
+        """,
+        (list(selected_ids), user_id),
+        commit=True,
+    )
+
+    return jsonify({"success": True, "salesperson_ids": sorted(selected_ids)})
 
 
 @emails_bp.route('/emails/mailbox-settings', methods=['GET', 'POST'])

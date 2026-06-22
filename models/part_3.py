@@ -1146,10 +1146,11 @@ def get_contact_by_email(email):
     """Check if contact exists and return it"""
     db = get_db_connection()
     contact = db.execute(
-        'SELECT c.*, cu.name as customer_name '
+        'SELECT c.*, cu.name as customer_name, cu.salesperson_id, s.name as salesperson_name '
         'FROM contacts c '
         'LEFT JOIN customers cu ON c.customer_id = cu.id '
-        'WHERE c.email = ?',
+        'LEFT JOIN salespeople s ON cu.salesperson_id = s.id '
+        'WHERE LOWER(c.email) = LOWER(?)',
         (email,)
     ).fetchone()
     db.close()

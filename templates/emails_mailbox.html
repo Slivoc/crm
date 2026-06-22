@@ -43,6 +43,18 @@
                         <label class="form-check-label small" for="filterSupplierContacts">Supplier contacts</label>
                     </div>
                 </div>
+                {% if salesperson_filters %}
+                <div class="mailbox-salesperson-filter" id="mailboxSalespersonFilter">
+                    {% for salesperson in salesperson_filters %}
+                    <button type="button"
+                            class="mailbox-salesperson-pill"
+                            data-salesperson-id="{{ salesperson.id }}"
+                            aria-pressed="{{ 'true' if salesperson.id in default_salesperson_filter_ids else 'false' }}">
+                        {{ salesperson.name }}
+                    </button>
+                    {% endfor %}
+                </div>
+                {% endif %}
             </div>
             <div class="email-list-body" id="emailListContainer">
                 <div class="email-list-placeholder">
@@ -479,6 +491,7 @@
 
 <script>
 const graphSeed = {{ graph | tojson }};
+const mailboxDefaultSalespersonFilterIds = {{ default_salesperson_filter_ids | default([]) | tojson }};
 const graphStatusEl = document.getElementById('graphStatus');
 const emailListContainer = document.getElementById('emailListContainer');
 const readingPane = document.getElementById('readingPane');
@@ -515,6 +528,7 @@ const mailboxCount = document.getElementById('mailboxCount');
 const emailSearch = document.getElementById('emailSearch');
 const filterCustomerContacts = document.getElementById('filterCustomerContacts');
 const filterSupplierContacts = document.getElementById('filterSupplierContacts');
+const mailboxSalespersonFilter = document.getElementById('mailboxSalespersonFilter');
 const mailboxCustomerSearchInput = document.getElementById('mailboxCustomerSearchInput');
 const mailboxCustomerSearchResults = document.getElementById('mailboxCustomerSearchResults');
 const mailboxSelectedCustomer = document.getElementById('mailboxSelectedCustomer');
@@ -620,6 +634,7 @@ const MAX_ATTACHMENT_SCAN_COUNT = 3;
 const MAX_ATTACHMENT_SCAN_BYTES = 3 * 1024 * 1024;
 const MAILBOX_FORWARD_ADMIN_EMAIL = 'harry@mgcaero.co.uk';
 let mailboxFolderSaveMode = 'file_only';
+let selectedMailboxSalespersonIds = new Set((mailboxDefaultSalespersonFilterIds || []).map(id => Number(id)).filter(Boolean));
 updateLoadImagesButton();
 
 function normalizeMailboxRecipient(recipient, role) {
@@ -2028,6 +2043,7 @@ function getFilteredMessages() {
     const filterCustomers = Boolean(filterCustomerContacts?.checked);
     const filterSuppliers = Boolean(filterSupplierContacts?.checked);
     const hasContactTypeFilter = filterCustomers || filterSuppliers;
+    const selectedSalespersonIds = selectedMailboxSalespersonIds || new Set();
 
     return messageCache.filter(msg => {
         const contactType = (msg.lookup?.contact_type || '').toLowerCase();
@@ -2035,6 +2051,12 @@ function getFilteredMessages() {
             const matchesCustomer = filterCustomers && contactType === 'customer';
             const matchesSupplier = filterSuppliers && contactType === 'supplier';
             if (!matchesCustomer && !matchesSupplier) {
+                return false;
+            }
+        }
+        if (selectedSalespersonIds.size) {
+            const messageSalespersonId = Number(msg.lookup?.salesperson_id || 0);
+            if (contactType !== 'customer' || !selectedSalespersonIds.has(messageSalespersonId)) {
                 return false;
             }
         }
@@ -2053,6 +2075,30 @@ function getFilteredMessages() {
 
 function applyEmailFilters() {
     renderEmailList(getFilteredMessages(), false);
+}
+
+function renderMailboxSalespersonPills() {
+    if (!mailboxSalespersonFilter) return;
+    mailboxSalespersonFilter.querySelectorAll('.mailbox-salesperson-pill').forEach(button => {
+        const salespersonId = Number(button.dataset.salespersonId || 0);
+        const isSelected = selectedMailboxSalespersonIds.has(salespersonId);
+        button.classList.toggle('active', isSelected);
+        button.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+    });
+}
+
+async function saveMailboxSalespersonDefaults() {
+    try {
+        await fetch('/emails/mailbox/salesperson-filters/defaults', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                salesperson_ids: Array.from(selectedMailboxSalespersonIds)
+            })
+        });
+    } catch (error) {
+        console.warn('Failed to save mailbox salesperson filter defaults', error);
+    }
 }
 
 function updateFolderButtonsForEmail(address, rule) {
@@ -2889,6 +2935,21 @@ mailboxLoadMoreBtn?.addEventListener('click', async () => {
     await loadMailboxMessages();
 });
 
+mailboxSalespersonFilter?.addEventListener('click', (event) => {
+    const button = event.target.closest('.mailbox-salesperson-pill');
+    if (!button) return;
+    const salespersonId = Number(button.dataset.salespersonId || 0);
+    if (!salespersonId) return;
+    if (selectedMailboxSalespersonIds.has(salespersonId)) {
+        selectedMailboxSalespersonIds.delete(salespersonId);
+    } else {
+        selectedMailboxSalespersonIds.add(salespersonId);
+    }
+    renderMailboxSalespersonPills();
+    applyEmailFilters();
+    saveMailboxSalespersonDefaults();
+});
+
 loadImagesToggle?.addEventListener('change', async () => {
     mailboxLoadImages = loadImagesToggle.checked;
     localStorage.setItem('mailboxLoadImages', mailboxLoadImages ? 'true' : 'false');
@@ -3353,6 +3414,7 @@ console.log('Mailbox initialized');
 console.log('createTicketBtn element:', createTicketBtn);
 renderSupplierMatchState();
 updatePrimaryMailboxActions();
+renderMailboxSalespersonPills();
 setGraphStatus(graphSeed);
 (async () => {
     await preloadMailboxFolderRules();
@@ -3702,6 +3764,35 @@ mailboxManualPartsInput?.addEventListener('keydown', (event) => {
 .email-list-header {
     padding: 12px;
     border-bottom: 1px solid #e9ecef;
+}
+
+.mailbox-salesperson-filter {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+}
+
+.mailbox-salesperson-pill {
+    border: 1px solid #ced4da;
+    background: #fff;
+    color: #495057;
+    border-radius: 999px;
+    padding: 3px 9px;
+    font-size: 0.75rem;
+    line-height: 1.35;
+    max-width: 100%;
+}
+
+.mailbox-salesperson-pill:hover {
+    border-color: #0d6efd;
+    color: #0d6efd;
+}
+
+.mailbox-salesperson-pill.active {
+    background: #0d6efd;
+    border-color: #0d6efd;
+    color: #fff;
 }
 
 .search-box {

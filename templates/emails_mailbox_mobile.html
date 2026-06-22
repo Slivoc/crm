@@ -31,6 +31,18 @@
                 <label class="form-check-label small" for="filterSupplierContacts">Supplier contacts</label>
             </div>
         </div>
+        {% if salesperson_filters %}
+        <div class="mobile-salesperson-filter" id="mailboxSalespersonFilter">
+            {% for salesperson in salesperson_filters %}
+            <button type="button"
+                    class="mobile-salesperson-pill"
+                    data-salesperson-id="{{ salesperson.id }}"
+                    aria-pressed="{{ 'true' if salesperson.id in default_salesperson_filter_ids else 'false' }}">
+                {{ salesperson.name }}
+            </button>
+            {% endfor %}
+        </div>
+        {% endif %}
     </div>
 
     <!-- Email List -->
@@ -290,10 +302,34 @@
     font-size: 0.8rem;
     margin: 2px;
 }
+
+.mobile-salesperson-filter {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+}
+
+.mobile-salesperson-pill {
+    border: 1px solid #ced4da;
+    background: #fff;
+    color: #495057;
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 0.78rem;
+    line-height: 1.3;
+}
+
+.mobile-salesperson-pill.active {
+    background: #0d6efd;
+    border-color: #0d6efd;
+    color: #fff;
+}
 </style>
 
 <script>
 const graphSeed = {{ graph | tojson }};
+const mailboxDefaultSalespersonFilterIds = {{ default_salesperson_filter_ids | default([]) | tojson }};
 let messageCache = [];
 let selectedMessage = null;
 let selectedMessageId = null;
@@ -309,6 +345,8 @@ const MAILBOX_PAGE_SIZE = 100;
 const emailSearchInput = document.getElementById('emailSearch');
 const filterCustomerContacts = document.getElementById('filterCustomerContacts');
 const filterSupplierContacts = document.getElementById('filterSupplierContacts');
+const mailboxSalespersonFilter = document.getElementById('mailboxSalespersonFilter');
+let selectedMailboxSalespersonIds = new Set((mailboxDefaultSalespersonFilterIds || []).map(id => Number(id)).filter(Boolean));
 
 document.addEventListener('DOMContentLoaded', function() {
     loadEmails();
@@ -330,6 +368,21 @@ document.addEventListener('DOMContentLoaded', function() {
     }, 300));
     filterCustomerContacts?.addEventListener('change', applyEmailFilters);
     filterSupplierContacts?.addEventListener('change', applyEmailFilters);
+    mailboxSalespersonFilter?.addEventListener('click', (event) => {
+        const button = event.target.closest('.mobile-salesperson-pill');
+        if (!button) return;
+        const salespersonId = Number(button.dataset.salespersonId || 0);
+        if (!salespersonId) return;
+        if (selectedMailboxSalespersonIds.has(salespersonId)) {
+            selectedMailboxSalespersonIds.delete(salespersonId);
+        } else {
+            selectedMailboxSalespersonIds.add(salespersonId);
+        }
+        renderMailboxSalespersonPills();
+        applyEmailFilters();
+        saveMailboxSalespersonDefaults();
+    });
+    renderMailboxSalespersonPills();
 
     document.getElementById('createPartsListBtn').addEventListener('click', createPartsList);
     document.getElementById('quickQuoteBtn').addEventListener('click', openQuickQuote);
@@ -458,6 +511,7 @@ function applyEmailFilters() {
     const filterCustomers = Boolean(filterCustomerContacts?.checked);
     const filterSuppliers = Boolean(filterSupplierContacts?.checked);
     const hasContactTypeFilter = filterCustomers || filterSuppliers;
+    const selectedSalespersonIds = selectedMailboxSalespersonIds || new Set();
 
     const filtered = messageCache.filter(msg => {
         const contactType = (msg.lookup?.contact_type || '').toLowerCase();
@@ -465,6 +519,12 @@ function applyEmailFilters() {
             const matchesCustomer = filterCustomers && contactType === 'customer';
             const matchesSupplier = filterSuppliers && contactType === 'supplier';
             if (!matchesCustomer && !matchesSupplier) {
+                return false;
+            }
+        }
+        if (selectedSalespersonIds.size) {
+            const messageSalespersonId = Number(msg.lookup?.salesperson_id || 0);
+            if (contactType !== 'customer' || !selectedSalespersonIds.has(messageSalespersonId)) {
                 return false;
             }
         }
@@ -479,6 +539,30 @@ function applyEmailFilters() {
     });
 
     renderEmailList(filtered);
+}
+
+function renderMailboxSalespersonPills() {
+    if (!mailboxSalespersonFilter) return;
+    mailboxSalespersonFilter.querySelectorAll('.mobile-salesperson-pill').forEach(button => {
+        const salespersonId = Number(button.dataset.salespersonId || 0);
+        const isSelected = selectedMailboxSalespersonIds.has(salespersonId);
+        button.classList.toggle('active', isSelected);
+        button.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+    });
+}
+
+async function saveMailboxSalespersonDefaults() {
+    try {
+        await fetch('/emails/mailbox/salesperson-filters/defaults', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                salesperson_ids: Array.from(selectedMailboxSalespersonIds)
+            })
+        });
+    } catch (error) {
+        console.warn('Failed to save mailbox salesperson filter defaults', error);
+    }
 }
 
 async function openEmail(messageId) {
