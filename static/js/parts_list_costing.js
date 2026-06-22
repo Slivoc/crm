@@ -1286,6 +1286,113 @@ function convertPiecesToLb(pieceCost, pieceQty, ppp) {
     };
 }
 
+function openQuoteAmortizationEditor(triggerButton) {
+    const quoteRow = triggerButton.closest('tr');
+    const useButton = quoteRow?.querySelector('.use-quote-btn, .use-other-offer-btn');
+    if (!quoteRow || !useButton) return;
+
+    document.querySelectorAll('.quote-amortization-editor-row').forEach(row => row.remove());
+
+    const supplierUnitCost = parseFloat(useButton.dataset.cost);
+    const supplierQuantity = parseFloat(useButton.dataset.quotedQuantity);
+    if (!Number.isFinite(supplierUnitCost) || supplierUnitCost < 0 ||
+        !Number.isFinite(supplierQuantity) || supplierQuantity <= 0) {
+        showToast('This supplier offer needs a valid price and quantity before it can be amortized.', 'warning');
+        return;
+    }
+
+    const lineId = useButton.dataset.lineId;
+    const costingRow = document.querySelector(`#costing-table-body tr[data-line-id="${lineId}"]`);
+    const chosenQty = parseFloat(costingRow?.querySelector('.chosen-qty-input')?.value);
+    const requestedQty = parseFloat(costingRow?.querySelector('[data-requested-qty]')?.dataset.requestedQty);
+    const initialCustomerQty = (Number.isFinite(chosenQty) && chosenQty > 0)
+        ? chosenQty
+        : ((Number.isFinite(requestedQty) && requestedQty > 0) ? requestedQty : supplierQuantity);
+    const batchCost = supplierUnitCost * supplierQuantity;
+    const currencyCode = useButton.dataset.currencyCode || '';
+    const currencyLabel = currencyCode ? `${currencyCode} ` : '';
+
+    const editorRow = document.createElement('tr');
+    editorRow.className = 'quote-amortization-editor-row';
+    const editorCell = document.createElement('td');
+    editorCell.colSpan = quoteRow.children.length;
+    editorCell.className = 'p-0';
+    editorCell.innerHTML = `
+        <div class="border-top border-bottom bg-light p-3">
+            <div class="d-flex flex-wrap align-items-end gap-3">
+                <div>
+                    <div class="small text-muted">Supplier batch</div>
+                    <strong>${supplierQuantity.toLocaleString()} × ${currencyLabel}${supplierUnitCost.toFixed(4)}</strong>
+                </div>
+                <div>
+                    <div class="small text-muted">Batch cost to recover</div>
+                    <strong>${currencyLabel}${batchCost.toFixed(2)}</strong>
+                </div>
+                <div style="min-width: 170px;">
+                    <label class="form-label form-label-sm mb-1">Customer quote quantity</label>
+                    <input type="number" class="form-control form-control-sm amortization-customer-qty"
+                           min="1" step="1" value="${initialCustomerQty}">
+                </div>
+                <div>
+                    <div class="small text-muted">Amortized cost per piece</div>
+                    <strong class="amortization-unit-cost text-primary"></strong>
+                </div>
+                <div class="ms-auto d-flex gap-2">
+                    <button type="button" class="btn btn-sm btn-outline-secondary cancel-amortization-btn">Cancel</button>
+                    <button type="button" class="btn btn-sm btn-primary apply-amortization-btn">
+                        Apply amortized cost
+                    </button>
+                </div>
+            </div>
+            <div class="small text-muted mt-2">
+                This updates only the parts-list line cost and customer quantity; the supplier offer is unchanged.
+            </div>
+            <div class="small text-danger mt-2 amortization-error" style="display: none;"></div>
+        </div>
+    `;
+    editorRow.appendChild(editorCell);
+    quoteRow.insertAdjacentElement('afterend', editorRow);
+
+    const quantityInput = editorRow.querySelector('.amortization-customer-qty');
+    const costOutput = editorRow.querySelector('.amortization-unit-cost');
+    const errorOutput = editorRow.querySelector('.amortization-error');
+
+    const calculate = () => {
+        const customerQuantity = parseFloat(quantityInput.value);
+        const valid = Number.isFinite(customerQuantity) && customerQuantity > 0;
+        errorOutput.style.display = valid ? 'none' : 'block';
+        errorOutput.textContent = valid ? '' : 'Enter a customer quantity greater than zero.';
+        costOutput.textContent = valid
+            ? `${currencyLabel}${(batchCost / customerQuantity).toFixed(4)}`
+            : '-';
+        return valid ? { customerQuantity, amortizedCost: batchCost / customerQuantity } : null;
+    };
+
+    quantityInput.addEventListener('input', calculate);
+    editorRow.querySelector('.cancel-amortization-btn').addEventListener('click', () => editorRow.remove());
+    editorRow.querySelector('.apply-amortization-btn').addEventListener('click', () => {
+        const result = calculate();
+        if (!result) return;
+
+        useQuoteForLine(
+            useButton.dataset.lineId,
+            useButton.dataset.quoteLineId,
+            useButton.dataset.supplierId,
+            useButton.dataset.supplierName,
+            result.amortizedCost,
+            parseInt(useButton.dataset.currencyId),
+            useButton.dataset.leadDays ? parseInt(useButton.dataset.leadDays) : null,
+            result.customerQuantity,
+            useButton.dataset.quoteNotes ? decodeURIComponent(useButton.dataset.quoteNotes) : '',
+            { costPrecision: 4 }
+        );
+    });
+
+    calculate();
+    quantityInput.focus();
+    quantityInput.select();
+}
+
 function loadQuotesForLine(lineId) {
     const listId = window.PARTS_LIST_ID;
     if (!listId) {
@@ -1455,6 +1562,7 @@ function displayQuotes(quotes, lineId, requiredQty) {
             <td style="padding: 0.75rem; font-size: 0.8rem; max-width: 120px; overflow: hidden; text-overflow: ellipsis;" title="${quote.certifications || ''}">${quote.certifications || '-'}</td>
             <td style="padding: 0.75rem; text-align: center;">
                 ${!quote.is_no_bid && displayUnitPrice !== null ? `
+                    <div class="d-inline-flex gap-1">
                     <button class="btn btn-sm use-quote-btn" style="background: #0d6efd; color: white; border: none; padding: 0.25rem 0.75rem; font-size: 0.8rem;"
                             data-line-id="${lineId}"
                             data-quote-line-id="${quote.quote_line_id}"
@@ -1464,9 +1572,16 @@ function displayQuotes(quotes, lineId, requiredQty) {
                             data-currency-id="${quote.currency_id}"
                             data-lead-days="${quote.lead_time_days || ''}"
                             data-quoted-quantity="${displayQty}"
+                            data-currency-code="${quote.currency_code || ''}"
                             data-quote-notes="${encodedQuoteNotes}">
                         Use
                     </button>
+                    <button type="button" class="btn btn-sm btn-outline-primary amortize-quote-btn"
+                            title="Recover the supplier batch cost over a different customer quantity"
+                            aria-label="Amortize batch cost">
+                        <i class="bi bi-calculator"></i>
+                    </button>
+                    </div>
                 ` : '-'}
             </td>
         `;
@@ -1488,6 +1603,12 @@ function displayQuotes(quotes, lineId, requiredQty) {
                 this.dataset.quotedQuantity ? parseInt(this.dataset.quotedQuantity) : null,
                 this.dataset.quoteNotes ? decodeURIComponent(this.dataset.quoteNotes) : ''
             );
+        });
+    });
+
+    tbody.querySelectorAll('.amortize-quote-btn').forEach(btn => {
+        btn.addEventListener('click', function () {
+            openQuoteAmortizationEditor(this);
         });
     });
 
@@ -1724,6 +1845,7 @@ function displayOtherOffers(offers, lineId, requiredQty) {
             <td style="padding: 0.6rem; text-align: center;">${offer.lead_time_days ? `${offer.lead_time_days}d` : '-'}</td>
             <td style="padding: 0.6rem; text-align: center;">
                 ${hasUnitPrice ? `
+                    <div class="d-inline-flex gap-1">
                     <button class="btn btn-sm use-other-offer-btn" style="background: transparent; color: #0d6efd; border: 1px solid #0d6efd; padding: 0.2rem 0.5rem; font-size: 0.75rem;"
                             data-line-id="${lineId}"
                             data-quote-line-id="${offer.quote_line_id}"
@@ -1732,10 +1854,17 @@ function displayOtherOffers(offers, lineId, requiredQty) {
                             data-cost="${unitPriceValue}"
                             data-currency-id="${offer.currency_id}"
                             data-lead-days="${offer.lead_time_days || ''}"
-                            data-quoted-quantity="${offer.quantity_quoted || ''}"
+                            data-quoted-quantity="${quotedQty}"
+                            data-currency-code="${offer.currency_code || ''}"
                             data-quote-notes="${encodedOfferNotes}">
                         Use
                     </button>
+                    <button type="button" class="btn btn-sm btn-outline-primary amortize-quote-btn"
+                            title="Recover the supplier batch cost over a different customer quantity"
+                            aria-label="Amortize batch cost">
+                        <i class="bi bi-calculator"></i>
+                    </button>
+                    </div>
                 ` : '-'}
             </td>
         `;
@@ -1756,6 +1885,12 @@ function displayOtherOffers(offers, lineId, requiredQty) {
                 this.dataset.quotedQuantity ? parseInt(this.dataset.quotedQuantity) : null,
                 this.dataset.quoteNotes ? decodeURIComponent(this.dataset.quoteNotes) : ''
             );
+        });
+    });
+
+    tbody.querySelectorAll('.amortize-quote-btn').forEach(btn => {
+        btn.addEventListener('click', function () {
+            openQuoteAmortizationEditor(this);
         });
     });
 }
@@ -1796,7 +1931,7 @@ function useQuoteForLine(lineId, quoteLineId, supplierId, supplierName, cost, cu
 
     // Update cost
     const costInput = row.querySelector('.cost-input');
-    if (costInput) costInput.value = cost.toFixed(2);
+    if (costInput) costInput.value = cost.toFixed(opts.costPrecision || 2);
 
     // Update currency
     const currencySelect = row.querySelector('.currency-select');
