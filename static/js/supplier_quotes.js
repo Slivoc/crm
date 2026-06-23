@@ -217,6 +217,79 @@ function splitLineCheckboxRenderer(instance, td, row, col, prop, value, cellProp
     return td;
 }
 
+function pricePerLbCheckboxRenderer(instance, td, row, col, prop, value, cellProperties) {
+    Handsontable.dom.empty(td);
+    const checked = !!value;
+    td.textContent = checked ? '✓' : '';
+    td.title = checked ? 'Supplier price entered per lb' : 'Supplier price entered per piece';
+    td.style.textAlign = 'center';
+    td.style.cursor = 'pointer';
+    td.style.fontWeight = 'bold';
+    td.style.color = checked ? '#0d6efd' : '';
+
+    td.onclick = function (e) {
+        e.stopPropagation();
+        const current = !!instance.getDataAtCell(row, col);
+        instance.setDataAtCell(row, col, !current);
+    };
+
+    return td;
+}
+
+function parseQuoteNumber(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const parsed = parseFloat(String(value).replace(/,/g, ''));
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function calculatePiecePriceFromLb(row) {
+    if (!quoteLinesTable) return;
+    const priceIsPerLb = !!quoteLinesTable.getDataAtCell(row, 11);
+    if (!priceIsPerLb) return;
+
+    let lbPrice = parseQuoteNumber(quoteLinesTable.getDataAtCell(row, 12));
+    const ppp = parseQuoteNumber(quoteLinesTable.getDataAtCell(row, 13));
+
+    if (lbPrice === null) {
+        const currentUnitPrice = parseQuoteNumber(quoteLinesTable.getDataAtCell(row, 10));
+        if (currentUnitPrice !== null) {
+            lbPrice = currentUnitPrice;
+            quoteLinesTable.setDataAtCell(row, 12, lbPrice, 'lb-price-init');
+        }
+    }
+
+    if (lbPrice === null || ppp === null || ppp <= 0) return;
+
+    quoteLinesTable.setDataAtCell(row, 10, Number((lbPrice / ppp).toFixed(4)), 'lb-price-calc');
+}
+
+function validateLbPriceRows() {
+    if (!quoteLinesTable) return [];
+
+    for (let row = 0; row < quoteLinesTable.countRows(); row++) {
+        calculatePiecePriceFromLb(row);
+    }
+
+    const tableData = quoteLinesTable.getData();
+    const lbInputErrors = [];
+
+    quoteLinesData.forEach((line, index) => {
+        const priceEnteredAsLb = !!tableData[index]?.[11];
+        const isNoBid = !!tableData[index]?.[17];
+        if (!priceEnteredAsLb || isNoBid) return;
+
+        const lbPrice = parseQuoteNumber(tableData[index]?.[12]);
+        const ppp = parseQuoteNumber(tableData[index]?.[13]);
+        const unitPrice = parseQuoteNumber(tableData[index]?.[10]);
+
+        if (lbPrice === null || ppp === null || ppp <= 0 || unitPrice === null) {
+            lbInputErrors.push(line?.line_number || index + 1);
+        }
+    });
+
+    return lbInputErrors;
+}
+
 // Part number normalization
 function normalizePN(pn) {
     if (!pn) return '';
@@ -1153,6 +1226,9 @@ function initializeEmptyQuoteLines(supplierId = null) {
                     purchase_increment: null,
                     moq: null,
                     unit_price: null,
+                    price_entered_as_lb: false,
+                    lb_unit_price: null,
+                    pieces_per_pound_used: line.pieces_per_pound || null,
                     lead_time_days: null,
                     condition_code: '',
                     certifications: '',
@@ -1194,6 +1270,9 @@ function initializeQuoteLinesTable(lines) {
         line.purchase_increment,
         line.moq,
         line.unit_price,
+        !!line.price_entered_as_lb,
+        line.lb_unit_price,
+        line.pieces_per_pound_used || line.pieces_per_pound || null,
         line.lead_time_days,
         line.condition_code,
         line.certifications,
@@ -1201,7 +1280,7 @@ function initializeQuoteLinesTable(lines) {
         line.line_notes,
         line.other_quotes_count || 0,
         !!line.quote_requested,
-        false  // split_line - column 18
+        false  // split_line - column 21
     ]);
 
     quoteLinesTable = new Handsontable(container, {
@@ -1217,7 +1296,10 @@ function initializeQuoteLinesTable(lines) {
             'Qty Avail',
             'Increment',
             'MOQ',
-            'Unit Price',
+            'Unit Price (ea)',
+            'Per lb?',
+            'LB Price',
+            'PPP',
             'Lead Days',
             'Condition',
             'Certifications',
@@ -1238,25 +1320,34 @@ function initializeQuoteLinesTable(lines) {
             { data: 7, type: 'numeric' },
             { data: 8, type: 'numeric' },
             { data: 9, type: 'numeric' },
-            { data: 10, type: 'numeric', numericFormat: { pattern: '0,0.00' } },
-            { data: 11, type: 'numeric' },
-            { data: 12, type: 'text' },
+            { data: 10, type: 'numeric', numericFormat: { pattern: '0,0.0000' } },
             {
-                data: 13,
+                data: 11,
+                type: 'text',
+                renderer: pricePerLbCheckboxRenderer,
+                readOnly: false,
+                className: 'htCenter'
+            },
+            { data: 12, type: 'numeric', numericFormat: { pattern: '0,0.00' } },
+            { data: 13, type: 'numeric', numericFormat: { pattern: '0,0.####' } },
+            { data: 14, type: 'numeric' },
+            { data: 15, type: 'text' },
+            {
+                data: 16,
                 type: 'text'
             },
             {
-                data: 14,
+                data: 17,
                 type: 'text',
                 renderer: noBidCheckboxRenderer,
                 readOnly: false,
                 className: 'htCenter'
             },
-            { data: 15, type: 'text' },
-            { data: 16, type: 'numeric', readOnly: true, className: 'htCenter' },
-            { data: 17, type: 'checkbox', readOnly: true },
+            { data: 18, type: 'text' },
+            { data: 19, type: 'numeric', readOnly: true, className: 'htCenter' },
+            { data: 20, type: 'checkbox', readOnly: true },
             {
-                data: 18,
+                data: 21,
                 type: 'text',
                 renderer: splitLineCheckboxRenderer,
                 readOnly: false,
@@ -1272,7 +1363,7 @@ function initializeQuoteLinesTable(lines) {
         filters: true,
         dropdownMenu: true,
         hiddenColumns: {
-            columns: [17],
+            columns: [20],
             indicators: false
         },
         hiddenRows: {
@@ -1303,8 +1394,14 @@ function initializeQuoteLinesTable(lines) {
                 }
             }
             // Add tooltip to Split column header
-            if (col === 18) {
+            if (col === 21) {
                 TH.title = 'Check to create a new line (e.g., 1.1, 1.2) for this partial quote';
+            }
+            if (col === 11) {
+                TH.title = 'Tick when the supplier price is per lb. Unit Price is saved as the calculated each price.';
+            }
+            if (col === 13) {
+                TH.title = 'Pieces per pound. Defaults from the part record when available.';
             }
         },
         cells: function(row, col) {
@@ -1321,21 +1418,39 @@ function initializeQuoteLinesTable(lines) {
             }
 
             // Other quotes warning
-            if (col === 16 && this.instance.getDataAtCell(row, col) > 0) {
+            if (col === 19 && this.instance.getDataAtCell(row, col) > 0) {
                 cellProperties.className = ((cellProperties.className || '') + ' bg-warning').trim();
             }
 
             // Split line indicator - highlight the row if split is checked
-            if (this.instance.getDataAtCell(row, 18) === true) {
+            if (this.instance.getDataAtCell(row, 21) === true) {
                 cellProperties.className = ((cellProperties.className || '') + ' bg-success bg-opacity-25').trim();
             }
 
+            if (col === 10 && this.instance.getDataAtCell(row, 11) === true) {
+                cellProperties.readOnly = true;
+                cellProperties.className = ((cellProperties.className || '') + ' bg-light').trim();
+            }
+
             // No-bid styling (takes precedence)
-            if (this.instance.getDataAtCell(row, 14) === true) {
+            if (this.instance.getDataAtCell(row, 17) === true) {
                 cellProperties.className = 'bg-secondary text-white';
             }
 
             return cellProperties;
+        },
+        afterChange: function(changes, source) {
+            if (!changes || source === 'loadData' || source === 'lb-price-calc' || source === 'lb-price-init') return;
+
+            const rowsToRecalculate = new Set();
+            changes.forEach(([row, prop]) => {
+                const col = Number(prop);
+                if ([11, 12, 13].includes(col)) {
+                    rowsToRecalculate.add(row);
+                }
+            });
+
+            rowsToRecalculate.forEach(row => calculatePiecePriceFromLb(row));
         }
     });
 }
@@ -1518,11 +1633,11 @@ function applyExtractedDataToTable(extractedLines) {
                 [bestIndex, 8, extracted.purchase_increment],
                 [bestIndex, 9, extracted.moq],
                 [bestIndex, 10, extracted.price],
-                [bestIndex, 11, extracted.lead_time_days],
-                [bestIndex, 12, extracted.condition],
-                [bestIndex, 13, extracted.certifications],
-                [bestIndex, 14, !!extracted.is_no_bid],
-                [bestIndex, 15, extracted.notes]
+                [bestIndex, 14, extracted.lead_time_days],
+                [bestIndex, 15, extracted.condition],
+                [bestIndex, 16, extracted.certifications],
+                [bestIndex, 17, !!extracted.is_no_bid],
+                [bestIndex, 18, extracted.notes]
             ]);
         } else {
             console.warn(`No strong match for extracted PN "${matchPN}", bestScore=${bestScore.toFixed(2)}`);
@@ -1582,6 +1697,14 @@ function saveSupplierQuote() {
         email_conversation_id: window.EMAIL_CONVERSATION_ID || null
     };
 
+    const lbInputErrors = validateLbPriceRows();
+    if (lbInputErrors.length > 0) {
+        showToast(`Rows ${lbInputErrors.join(', ')} are marked per lb but need a valid LB Price and PPP.`, 'danger');
+        saveBtn.innerHTML = originalText;
+        saveBtn.disabled = false;
+        return;
+    }
+
     const headerPromise = currentQuoteId
         ? updateQuoteHeader(currentQuoteId, quoteData)
         : createQuoteHeader(quoteData);
@@ -1609,7 +1732,7 @@ function saveSupplierQuote() {
         })
         .catch(error => {
             console.error('Error:', error);
-            showToast('Error saving quote', 'danger');
+            showToast(error.message || 'Error saving quote', 'danger');
         })
         .finally(() => {
             saveBtn.innerHTML = originalText;
@@ -1662,12 +1785,15 @@ function saveQuoteLines(quoteId) {
         purchase_increment: tableData[index][8],
         moq: tableData[index][9],
         unit_price: tableData[index][10],
-        lead_time_days: tableData[index][11],
-        condition_code: tableData[index][12],
-        certifications: tableData[index][13],
-        is_no_bid: !!tableData[index][14],
-        line_notes: tableData[index][15],
-        split_line: !!tableData[index][18]  // New: split line flag
+        price_entered_as_lb: !!tableData[index][11],
+        lb_unit_price: tableData[index][12],
+        pieces_per_pound_used: tableData[index][13],
+        lead_time_days: tableData[index][14],
+        condition_code: tableData[index][15],
+        certifications: tableData[index][16],
+        is_no_bid: !!tableData[index][17],
+        line_notes: tableData[index][18],
+        split_line: !!tableData[index][21]  // New: split line flag
     }));
 
     return fetch(`/parts_list/parts-lists/${window.PARTS_LIST_ID}/supplier-quotes/${quoteId}/lines/save`, {

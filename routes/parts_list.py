@@ -102,6 +102,30 @@ def _to_float(value):
         return None
 
 
+def _quote_price_entered_as_lb(value):
+    if isinstance(value, str):
+        return value.strip().lower() in ('true', '1', 'yes', 'y', 'on')
+    return bool(value)
+
+
+def _normalise_supplier_quote_price(unit_price_raw, price_entered_as_lb_raw, lb_unit_price_raw, pieces_per_pound_raw):
+    price_entered_as_lb = _quote_price_entered_as_lb(price_entered_as_lb_raw)
+    lb_unit_price = _safe_float(lb_unit_price_raw)
+    pieces_per_pound_used = _safe_float(pieces_per_pound_raw)
+    unit_price = _safe_float(unit_price_raw)
+
+    if price_entered_as_lb:
+        if lb_unit_price is not None and pieces_per_pound_used is not None and pieces_per_pound_used > 0:
+            unit_price = round(lb_unit_price / pieces_per_pound_used, 4)
+        elif lb_unit_price is not None:
+            unit_price = None
+    else:
+        lb_unit_price = None
+        pieces_per_pound_used = None
+
+    return unit_price, price_entered_as_lb, lb_unit_price, pieces_per_pound_used
+
+
 def _get_portal_request_for_parts_list(list_id):
     row = db_execute(
         """
@@ -738,6 +762,9 @@ def get_supplier_quote_details(list_id, quote_id):
                 sql.purchase_increment,
                 sql.moq,
                 sql.unit_price,
+                sql.price_entered_as_lb,
+                sql.lb_unit_price,
+                sql.pieces_per_pound_used,
                 sql.lead_time_days,
                 sql.condition_code,
                 sql.certifications,
@@ -745,6 +772,7 @@ def get_supplier_quote_details(list_id, quote_id):
                 sql.line_notes,
                 pll.customer_part_number,
                 pll.base_part_number,
+                pn.pieces_per_pound,
                 COALESCE(sql.revision, pll.revision) AS revision,
                 pll.quantity as requested_quantity,
                 pll.line_number,
@@ -764,6 +792,7 @@ def get_supplier_quote_details(list_id, quote_id):
             LEFT JOIN parts_list_supplier_quote_lines sql 
                 ON sql.parts_list_line_id = pll.id 
                AND sql.supplier_quote_id = ?
+            LEFT JOIN part_numbers pn ON pn.base_part_number = pll.base_part_number
             WHERE pll.parts_list_id = ?
             ORDER BY pll.line_number ASC
             """,
@@ -969,6 +998,9 @@ def save_supplier_quote_lines(list_id, quote_id):
             purchase_increment_raw = line.get('purchase_increment')
             moq_raw = line.get('moq')
             unit_price_raw = line.get('unit_price')
+            price_entered_as_lb_raw = line.get('price_entered_as_lb', False)
+            lb_unit_price_raw = line.get('lb_unit_price')
+            pieces_per_pound_used_raw = line.get('pieces_per_pound_used')
             lead_time_days_raw = line.get('lead_time_days')
             condition_code_raw = line.get('condition_code')
             certifications_raw = line.get('certifications')
@@ -981,7 +1013,12 @@ def save_supplier_quote_lines(list_id, quote_id):
             qty_available = _safe_int(qty_available_raw)
             purchase_increment = _safe_int(purchase_increment_raw)
             moq = _safe_int(moq_raw)
-            unit_price = _safe_float(unit_price_raw)
+            unit_price, price_entered_as_lb, lb_unit_price, pieces_per_pound_used = _normalise_supplier_quote_price(
+                unit_price_raw,
+                price_entered_as_lb_raw,
+                lb_unit_price_raw,
+                pieces_per_pound_used_raw,
+            )
             lead_time_days = _safe_int(lead_time_days_raw)
             condition_code = _normalize_optional_text(condition_code_raw)
             certifications = _normalize_optional_text(certifications_raw)
@@ -994,6 +1031,14 @@ def save_supplier_quote_lines(list_id, quote_id):
             else:
                 is_no_bid = bool(is_no_bid)
 
+            if not is_no_bid and price_entered_as_lb and (
+                lb_unit_price is None or pieces_per_pound_used is None or pieces_per_pound_used <= 0 or unit_price is None
+            ):
+                return jsonify(
+                    success=False,
+                    message=f"Line {idx + 1} is marked per lb but needs a valid LB Price and PPP."
+                ), 400
+
             # DEBUG: Log all field values
             logging.info(f"quoted_part_number: '{quoted_part_number}' (type: {type(quoted_part_number).__name__})")
             logging.info(f"quantity_quoted: '{quantity_quoted}' (type: {type(quantity_quoted).__name__})")
@@ -1001,6 +1046,9 @@ def save_supplier_quote_lines(list_id, quote_id):
             logging.info(f"purchase_increment: '{purchase_increment}' (type: {type(purchase_increment).__name__})")
             logging.info(f"moq: '{moq}' (type: {type(moq).__name__})")
             logging.info(f"unit_price: '{unit_price}' (type: {type(unit_price).__name__})")
+            logging.info(f"price_entered_as_lb: {price_entered_as_lb}")
+            logging.info(f"lb_unit_price: '{lb_unit_price}'")
+            logging.info(f"pieces_per_pound_used: '{pieces_per_pound_used}'")
             logging.info(f"lead_time_days: '{lead_time_days}' (type: {type(lead_time_days).__name__})")
             logging.info(f"condition_code: '{condition_code}' (type: {type(condition_code).__name__})")
             logging.info(f"certifications: '{certifications}' (type: {type(certifications).__name__})")
@@ -1011,6 +1059,7 @@ def save_supplier_quote_lines(list_id, quote_id):
             # Skip if there's no meaningful data to save
             has_quote_data = (
                     unit_price is not None or
+                    lb_unit_price is not None or
                     qty_available is not None or
                     purchase_increment is not None or
                     moq is not None or
@@ -1071,6 +1120,9 @@ def save_supplier_quote_lines(list_id, quote_id):
                         purchase_increment = ?,
                         moq = ?,
                         unit_price = ?,
+                        price_entered_as_lb = ?,
+                        lb_unit_price = ?,
+                        pieces_per_pound_used = ?,
                         lead_time_days = ?,
                         condition_code = ?,
                         certifications = ?,
@@ -1082,7 +1134,8 @@ def save_supplier_quote_lines(list_id, quote_id):
                     """,
                     (
                         quoted_part_number, revision, quantity_quoted, qty_available, purchase_increment,
-                        moq, unit_price, lead_time_days, condition_code, certifications,
+                        moq, unit_price, price_entered_as_lb, lb_unit_price, pieces_per_pound_used,
+                        lead_time_days, condition_code, certifications,
                         manufacturer, is_no_bid, line_notes, existing['id']
                     ),
                     commit=True,
@@ -1095,14 +1148,16 @@ def save_supplier_quote_lines(list_id, quote_id):
                     INSERT INTO parts_list_supplier_quote_lines
                     (supplier_quote_id, parts_list_line_id, quoted_part_number,
                      revision, manufacturer, quantity_quoted, qty_available, purchase_increment, moq,
-                     unit_price, lead_time_days, condition_code, certifications, is_no_bid, line_notes)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     unit_price, price_entered_as_lb, lb_unit_price, pieces_per_pound_used,
+                     lead_time_days, condition_code, certifications, is_no_bid, line_notes)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         quote_id, parts_list_line_id, quoted_part_number,
                         revision,
                         manufacturer, quantity_quoted, qty_available, purchase_increment, moq,
-                        unit_price, lead_time_days, condition_code, certifications, is_no_bid, line_notes
+                        unit_price, price_entered_as_lb, lb_unit_price, pieces_per_pound_used,
+                        lead_time_days, condition_code, certifications, is_no_bid, line_notes
                     ),
                     commit=True,
                 )
@@ -8718,6 +8773,7 @@ def get_parts_list_lines(list_id):
                     pll.base_part_number,
                     pll.revision,
                     pll.quantity,
+                    pn.pieces_per_pound,
                     COALESCE((
                         SELECT 1 FROM parts_list_line_supplier_emails plse
                         WHERE plse.parts_list_line_id = pll.id
@@ -8725,6 +8781,7 @@ def get_parts_list_lines(list_id):
                         LIMIT 1
                     ), 0) AS quote_requested
                 FROM parts_list_lines pll
+                LEFT JOIN part_numbers pn ON pn.base_part_number = pll.base_part_number
                 WHERE pll.parts_list_id = ?
                 ORDER BY pll.line_number ASC
                 """,
@@ -8741,6 +8798,7 @@ def get_parts_list_lines(list_id):
                     pll.base_part_number,
                     pll.revision,
                     pll.quantity,
+                    pn.pieces_per_pound,
                     pll.chosen_cost,
                     s.name as chosen_supplier_name,
                     c.symbol as chosen_currency_symbol,
@@ -8766,6 +8824,7 @@ def get_parts_list_lines(list_id):
                     ) as line_contacted_suppliers_count,
                     0 AS quote_requested
                 FROM parts_list_lines pll
+                LEFT JOIN part_numbers pn ON pn.base_part_number = pll.base_part_number
                 LEFT JOIN suppliers s ON s.id = pll.chosen_supplier_id
                 LEFT JOIN currencies c ON c.id = pll.chosen_currency_id
                 WHERE pll.parts_list_id = ?
@@ -8784,8 +8843,10 @@ def get_parts_list_lines(list_id):
                     pll.base_part_number,
                     pll.revision,
                     pll.quantity,
+                    pn.pieces_per_pound,
                     0 AS quote_requested
                 FROM parts_list_lines pll
+                LEFT JOIN part_numbers pn ON pn.base_part_number = pll.base_part_number
                 WHERE pll.parts_list_id = ?
                 ORDER BY pll.line_number ASC
                 """,
@@ -8873,6 +8934,9 @@ def get_line_quotes(list_id, line_id):
                     sql.purchase_increment,
                     sql.moq,
                     sql.unit_price,
+                    sql.price_entered_as_lb,
+                    sql.lb_unit_price,
+                    sql.pieces_per_pound_used,
                     sql.lead_time_days,
                     sql.condition_code,
                     sql.certifications,
@@ -8917,6 +8981,9 @@ def get_line_quotes(list_id, line_id):
                     sql.purchase_increment,
                     sql.moq,
                     sql.unit_price,
+                    sql.price_entered_as_lb,
+                    sql.lb_unit_price,
+                    sql.pieces_per_pound_used,
                     sql.lead_time_days,
                     sql.condition_code,
                     sql.certifications,

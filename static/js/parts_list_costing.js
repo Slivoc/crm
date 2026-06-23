@@ -1483,28 +1483,14 @@ function displayQuotes(quotes, lineId, requiredQty) {
         const encodedQuoteNotes = quoteNotes ? encodeURIComponent(quoteNotes) : '';
         const quoteDateBadge = renderQuoteDateBadge(quote.quote_date);
 
-        // Check if PPP conversion is available
-        const ppp = window._currentPiecesPerPound;
-        const hasPPP = ppp && ppp > 0;
-
-        // Store original (lb) values
-        const originalUnitPrice = unitPriceValue;
-        const originalQty = quotedQty;
-
-        // Default to showing piece values if PPP exists
-        let displayUnitPrice = unitPriceValue;
-        let displayQty = quotedQty;
-        let displayMode = 'piece'; // 'piece' or 'lb'
-
-        if (hasPPP && unitPriceValue !== null) {
-            // Assume supplier quote is in pounds, convert to pieces
-            const converted = convertLbToPieces(unitPriceValue, quotedQty, ppp);
-            if (converted) {
-                displayUnitPrice = converted.pieceCost;
-                displayQty = converted.pieceQty;
-                displayMode = 'piece';
-            }
-        }
+        const displayUnitPrice = unitPriceValue;
+        const displayQty = quotedQty;
+        const lbUnitPrice = parseUnitPrice(quote.lb_unit_price);
+        const pppUsed = parseUnitPrice(quote.pieces_per_pound_used);
+        const hasLbSource = !!quote.price_entered_as_lb && lbUnitPrice !== null && pppUsed !== null && pppUsed > 0;
+        const lbSourceText = hasLbSource
+            ? `from ${formatPrice(lbUnitPrice, quote.currency_code)}/lb @ ${pppUsed} PPP`
+            : '';
 
         const displayLineCost = displayUnitPrice !== null ? displayUnitPrice * displayQty : null;
 
@@ -1535,16 +1521,6 @@ function displayQuotes(quotes, lineId, requiredQty) {
                 ` : '<span style="color: #adb5bd;">-</span>'}
             </td>
             <td style="padding: 0.75rem; text-align: right;" class="quote-qty-cell">
-                ${hasPPP && !quote.is_no_bid ? `
-                    <button class="btn btn-sm ppp-toggle-btn" style="border: 1px solid #dee2e6; background: white; padding: 2px 6px; font-size: 0.75rem; margin-right: 4px;"
-                            data-mode="${displayMode}"
-                            data-original-qty="${originalQty}"
-                            data-original-price="${originalUnitPrice}"
-                            data-ppp="${ppp}"
-                            title="Toggle between pieces and pounds">
-                        <i class="bi ${displayMode === 'piece' ? 'bi-grid-3x3' : 'bi-box-seam'}"></i>
-                    </button>
-                ` : ''}
                 <span class="quote-qty-value">${displayQty}</span>
             </td>
             <td style="padding: 0.75rem; text-align: right;">${quote.qty_available || '-'}</td>
@@ -1552,7 +1528,8 @@ function displayQuotes(quotes, lineId, requiredQty) {
             <td style="padding: 0.75rem; text-align: right;">${quote.moq || '-'}</td>
             <td style="padding: 0.75rem; text-align: right; font-weight: 500;" class="quote-price-cell">
                 <span class="quote-price-value">${quote.is_no_bid ? '-' : formatPrice(displayUnitPrice, quote.currency_code)}</span>
-                ${hasPPP && !quote.is_no_bid ? `<span class="quote-unit-badge badge bg-secondary" style="font-size: 0.65rem; margin-left: 4px;">${displayMode === 'piece' ? 'ea' : 'lb'}</span>` : ''}
+                ${!quote.is_no_bid && displayUnitPrice !== null ? `<span class="quote-unit-badge badge bg-secondary" style="font-size: 0.65rem; margin-left: 4px;">ea</span>` : ''}
+                ${lbSourceText ? `<div class="small text-muted">${lbSourceText}</div>` : ''}
             </td>
             <td style="padding: 0.75rem; text-align: right; font-weight: 600; color: #0d6efd;" class="quote-line-cost-cell">
                 ${displayLineCost !== null && !quote.is_no_bid ? formatPrice(displayLineCost, quote.currency_code) : '-'}
@@ -1609,81 +1586,6 @@ function displayQuotes(quotes, lineId, requiredQty) {
     tbody.querySelectorAll('.amortize-quote-btn').forEach(btn => {
         btn.addEventListener('click', function () {
             openQuoteAmortizationEditor(this);
-        });
-    });
-
-    // Attach click handlers to PPP toggle buttons
-    tbody.querySelectorAll('.ppp-toggle-btn').forEach(btn => {
-        btn.addEventListener('click', function(e) {
-            e.stopPropagation();
-            const row = this.closest('tr');
-            const currentMode = this.dataset.mode;
-            const originalQty = parseFloat(this.dataset.originalQty);
-            const originalPrice = parseFloat(this.dataset.originalPrice);
-            const ppp = parseFloat(this.dataset.ppp);
-
-            const qtyCell = row.querySelector('.quote-qty-value');
-            const priceCell = row.querySelector('.quote-price-value');
-            const lineCostCell = row.querySelector('.quote-line-cost-cell');
-            const unitBadge = row.querySelector('.quote-unit-badge');
-            const useBtn = row.querySelector('.use-quote-btn');
-            const iconEl = this.querySelector('i');
-
-            if (currentMode === 'piece') {
-                // Switch to lb view
-                const lbValues = convertPiecesToLb(
-                    originalPrice / ppp, // current displayed piece cost back to lb
-                    parseInt(qtyCell.textContent),
-                    ppp
-                );
-
-                if (lbValues) {
-                    qtyCell.textContent = lbValues.lbQty.toFixed(2);
-
-                    // Extract currency code from current display
-                    const currencyMatch = priceCell.textContent.match(/^([A-Z]{3})\s/);
-                    const currencyCode = currencyMatch ? currencyMatch[1] : '';
-                    priceCell.textContent = currencyCode ? `${currencyCode} ${originalPrice.toFixed(2)}` : originalPrice.toFixed(2);
-
-                    const lineCost = originalPrice * lbValues.lbQty;
-                    lineCostCell.textContent = currencyCode ? `${currencyCode} ${lineCost.toFixed(2)}` : lineCost.toFixed(2);
-
-                    if (unitBadge) unitBadge.textContent = 'lb';
-                    if (iconEl) iconEl.className = 'bi bi-box-seam';
-                    this.dataset.mode = 'lb';
-
-                    // Update Use button with lb values
-                    if (useBtn) {
-                        useBtn.dataset.cost = originalPrice;
-                        useBtn.dataset.quotedQuantity = lbValues.lbQty.toFixed(2);
-                    }
-                }
-            } else {
-                // Switch to piece view
-                const pieceValues = convertLbToPieces(originalPrice, originalQty, ppp);
-
-                if (pieceValues) {
-                    qtyCell.textContent = pieceValues.pieceQty;
-
-                    // Extract currency code from current display
-                    const currencyMatch = priceCell.textContent.match(/^([A-Z]{3})\s/);
-                    const currencyCode = currencyMatch ? currencyMatch[1] : '';
-                    priceCell.textContent = currencyCode ? `${currencyCode} ${pieceValues.pieceCost.toFixed(2)}` : pieceValues.pieceCost.toFixed(2);
-
-                    const lineCost = pieceValues.pieceCost * pieceValues.pieceQty;
-                    lineCostCell.textContent = currencyCode ? `${currencyCode} ${lineCost.toFixed(2)}` : lineCost.toFixed(2);
-
-                    if (unitBadge) unitBadge.textContent = 'ea';
-                    if (iconEl) iconEl.className = 'bi bi-grid-3x3';
-                    this.dataset.mode = 'piece';
-
-                    // Update Use button with piece values
-                    if (useBtn) {
-                        useBtn.dataset.cost = pieceValues.pieceCost;
-                        useBtn.dataset.quotedQuantity = pieceValues.pieceQty;
-                    }
-                }
-            }
         });
     });
 
@@ -2145,8 +2047,6 @@ async function autoAssignCheapestOffers(options) {
                 continue;
             }
 
-            const piecesPerPound = data.pieces_per_pound;
-            const hasPPP = piecesPerPound && piecesPerPound > 0;
             const offers = [];
             let lineHadQtyBlock = false;
 
@@ -2158,31 +2058,20 @@ async function autoAssignCheapestOffers(options) {
                 const quotedQtyRaw = parseFloat(quote.quantity_quoted);
                 const quotedQty = Number.isFinite(quotedQtyRaw) ? quotedQtyRaw : requiredQty;
 
-                if (!offerCoversRequiredQty(quote, requiredQty, piecesPerPound, hasPPP)) {
+                if (!offerCoversRequiredQty(quote, requiredQty, null, false)) {
                     lineHadQtyBlock = true;
                     return;
                 }
 
-                let displayUnitPrice = unitPriceRaw;
-                let displayQty = quotedQty;
-
-                if (hasPPP) {
-                    const converted = convertLbToPieces(unitPriceRaw, quotedQty, piecesPerPound);
-                    if (converted) {
-                        displayUnitPrice = converted.pieceCost;
-                        displayQty = converted.pieceQty;
-                    }
-                }
-
                 offers.push({
                     sourcePriority: 0,
-                    unitPrice: displayUnitPrice,
+                    unitPrice: unitPriceRaw,
                     quoteLineId: quote.quote_line_id,
                     supplierId: quote.supplier_id,
                     supplierName: quote.supplier_name,
                     currencyId: quote.currency_id,
                     leadDays: quote.lead_time_days,
-                    quotedQuantity: displayQty,
+                    quotedQuantity: quotedQty,
                     quoteNotes: quote.line_notes || ''
                 });
             });
@@ -2192,7 +2081,7 @@ async function autoAssignCheapestOffers(options) {
                     const unitPriceRaw = parseUnitPrice(offer.unit_price);
                     if (unitPriceRaw === null) return;
 
-                    if (!offerCoversRequiredQty(offer, requiredQty, piecesPerPound, false)) {
+                    if (!offerCoversRequiredQty(offer, requiredQty, null, false)) {
                         lineHadQtyBlock = true;
                         return;
                     }
