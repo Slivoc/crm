@@ -8377,6 +8377,122 @@ def parts_list_sourcing(list_id):
         return str(e), 500
 
 
+
+@parts_list_bp.route('/ils-supplier-results', methods=['GET'])
+def ils_supplier_results():
+    """Show historical ILS results collated by ILS supplier and part number."""
+    selected_supplier = (request.args.get('supplier') or '').strip()
+    list_id_raw = (request.args.get('list_id') or '').strip()
+    list_id = int(list_id_raw) if list_id_raw.isdigit() else None
+
+    try:
+        suppliers = db_execute(
+            """
+            SELECT
+                ils_company_name,
+                COUNT(*) AS result_count,
+                COUNT(DISTINCT base_part_number) AS part_count,
+                MIN(search_date) AS first_seen,
+                MAX(search_date) AS last_seen
+            FROM ils_search_results
+            WHERE TRIM(COALESCE(ils_company_name, '')) <> ''
+            GROUP BY ils_company_name
+            ORDER BY ils_company_name
+            """,
+            fetch='all',
+        ) or []
+
+        summary = {}
+        results = []
+        if selected_supplier:
+            summary_row = db_execute(
+                """
+                SELECT
+                    COUNT(*) AS total_results,
+                    COUNT(DISTINCT base_part_number) AS unique_parts,
+                    MIN(search_date) AS first_seen,
+                    MAX(search_date) AS last_seen
+                FROM ils_search_results
+                WHERE ils_company_name = ?
+                """,
+                (selected_supplier,),
+                fetch='one',
+            )
+            summary = dict(summary_row) if summary_row else {}
+            summary['first_seen'] = _format_date_display(summary.get('first_seen'))
+            summary['last_seen'] = _format_date_display(summary.get('last_seen'))
+
+            rows = db_execute(
+                """
+                WITH supplier_rows AS (
+                    SELECT
+                        r.*,
+                        COALESCE(NULLIF(TRIM(r.base_part_number), ''), NULLIF(TRIM(r.part_number), ''), NULLIF(TRIM(r.alt_part_number), '')) AS grouping_part_number,
+                        CASE
+                            WHEN TRIM(COALESCE(r.quantity, '')) ~ '^[0-9]+$' THEN CAST(TRIM(r.quantity) AS INTEGER)
+                            ELSE NULL
+                        END AS quantity_int,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY COALESCE(NULLIF(TRIM(r.base_part_number), ''), NULLIF(TRIM(r.part_number), ''), NULLIF(TRIM(r.alt_part_number), ''))
+                            ORDER BY r.search_date DESC NULLS LAST, r.id DESC
+                        ) AS recency_rank
+                    FROM ils_search_results r
+                    WHERE r.ils_company_name = ?
+                ),
+                part_summary AS (
+                    SELECT
+                        grouping_part_number,
+                        COUNT(*) AS frequency,
+                        SUM(quantity_int) AS total_quantity,
+                        MIN(search_date) AS first_seen,
+                        MAX(search_date) AS last_seen
+                    FROM supplier_rows
+                    WHERE grouping_part_number IS NOT NULL
+                    GROUP BY grouping_part_number
+                )
+                SELECT
+                    ps.grouping_part_number AS display_part_number,
+                    latest.base_part_number,
+                    latest.part_number AS latest_part_number,
+                    latest.alt_part_number AS latest_alt_part_number,
+                    ps.frequency,
+                    ps.total_quantity,
+                    latest.quantity AS latest_quantity,
+                    latest.condition_code AS latest_condition_code,
+                    latest.ils_cage_code AS latest_cage_code,
+                    latest.description AS latest_description,
+                    latest.price AS latest_price,
+                    latest.email AS latest_email,
+                    latest.phone AS latest_phone,
+                    ps.first_seen,
+                    ps.last_seen
+                FROM part_summary ps
+                JOIN supplier_rows latest
+                  ON latest.grouping_part_number = ps.grouping_part_number
+                 AND latest.recency_rank = 1
+                ORDER BY ps.frequency DESC, ps.last_seen DESC NULLS LAST, ps.grouping_part_number
+                """,
+                (selected_supplier,),
+                fetch='all',
+            ) or []
+            results = [dict(row) for row in rows]
+            for row in results:
+                row['first_seen'] = _format_date_display(row.get('first_seen'))
+                row['last_seen'] = _format_date_display(row.get('last_seen'))
+
+        return render_template(
+            'parts_list_ils_supplier_results.html',
+            suppliers=[dict(row) for row in suppliers],
+            selected_supplier=selected_supplier,
+            summary=summary,
+            results=results,
+            list_id=list_id,
+        )
+    except Exception as e:
+        logging.exception(e)
+        return str(e), 500
+
+
 # Add this to your parts_list routes file
 
 @parts_list_bp.route('/api/parts-lists/<int:list_id>/lines/<int:line_id>/ils-data', methods=['GET'])

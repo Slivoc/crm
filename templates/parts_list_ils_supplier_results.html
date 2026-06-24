@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+
+{% block title %}ILS Supplier Results{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-start mb-3">
+        <div>
+            <h1 class="h3 mb-1"><i class="bi bi-building me-2 text-warning"></i>ILS Supplier Results</h1>
+            <p class="text-muted mb-0">Choose an ILS supplier to see their historical results, collated by recurring part number with frequency.</p>
+        </div>
+        {% if list_id %}
+            <a class="btn btn-outline-secondary" href="{{ url_for('parts_list.parts_list_sourcing', list_id=list_id) }}">
+                <i class="bi bi-arrow-left me-1"></i>Back to Sourcing
+            </a>
+        {% endif %}
+    </div>
+
+    <div class="card mb-4 shadow-sm">
+        <div class="card-body">
+            <form method="get" class="row g-3 align-items-end">
+                {% if list_id %}<input type="hidden" name="list_id" value="{{ list_id }}">{% endif %}
+                <div class="col-lg-6 col-xl-5">
+                    <label for="supplier" class="form-label fw-semibold">ILS supplier</label>
+                    <select class="form-select" id="supplier" name="supplier" onchange="this.form.submit()">
+                        <option value="">Select a supplier...</option>
+                        {% for supplier in suppliers %}
+                            <option value="{{ supplier.ils_company_name }}" {% if supplier.ils_company_name == selected_supplier %}selected{% endif %}>
+                                {{ supplier.ils_company_name }} ({{ supplier.result_count }} results / {{ supplier.part_count }} parts)
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-auto">
+                    <button class="btn btn-primary" type="submit"><i class="bi bi-search me-1"></i>View Results</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    {% if selected_supplier %}
+        <div class="row g-3 mb-4">
+            <div class="col-md-3"><div class="card text-center h-100"><div class="card-body"><div class="h3 mb-0">{{ summary.total_results or 0 }}</div><div class="text-muted small">Total ILS rows</div></div></div></div>
+            <div class="col-md-3"><div class="card text-center h-100"><div class="card-body"><div class="h3 mb-0">{{ summary.unique_parts or 0 }}</div><div class="text-muted small">Unique parts</div></div></div></div>
+            <div class="col-md-3"><div class="card text-center h-100"><div class="card-body"><div class="h5 mb-0">{{ summary.first_seen or '-' }}</div><div class="text-muted small">First seen</div></div></div></div>
+            <div class="col-md-3"><div class="card text-center h-100"><div class="card-body"><div class="h5 mb-0">{{ summary.last_seen or '-' }}</div><div class="text-muted small">Last seen</div></div></div></div>
+        </div>
+
+        <div class="card shadow-sm">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">{{ selected_supplier }} — collated part results</h5>
+                <span class="badge bg-warning text-dark">{{ results|length }} unique parts</span>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Part number</th>
+                            <th>Latest alt</th>
+                            <th class="text-center">Frequency</th>
+                            <th class="text-end">Total qty</th>
+                            <th>Latest qty</th>
+                            <th>Condition</th>
+                            <th>CAGE</th>
+                            <th>First seen</th>
+                            <th>Last seen</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in results %}
+                            <tr>
+                                <td class="fw-semibold">{{ row.display_part_number or row.base_part_number or '-' }}</td>
+                                <td>{{ row.latest_alt_part_number or '-' }}</td>
+                                <td class="text-center"><span class="badge bg-primary rounded-pill">{{ row.frequency }}</span></td>
+                                <td class="text-end">{{ row.total_quantity or '-' }}</td>
+                                <td>{{ row.latest_quantity or '-' }}</td>
+                                <td>{{ row.latest_condition_code or '-' }}</td>
+                                <td>{{ row.latest_cage_code or '-' }}</td>
+                                <td>{{ row.first_seen or '-' }}</td>
+                                <td>{{ row.last_seen or '-' }}</td>
+                                <td class="small text-muted" style="max-width: 340px;">{{ row.latest_description or '-' }}</td>
+                            </tr>
+                        {% else %}
+                            <tr><td colspan="10" class="text-center text-muted py-4">No ILS rows found for this supplier.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    {% else %}
+        <div class="alert alert-info">Select an ILS supplier to view their historical parts and frequencies.</div>
+    {% endif %}
+</div>
+{% endblock %}
