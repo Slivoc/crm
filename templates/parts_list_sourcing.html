@@ -334,6 +334,10 @@
     </button>
     <input type="file" id="ils-file-input-compact" accept=".csv" style="display: none;">
 
+    <a class="btn btn-sm btn-outline-warning" href="{{ url_for('parts_list.ils_supplier_results', list_id=list_id) }}">
+        <i class="bi bi-building me-1"></i>ILS Supplier Results
+    </a>
+
     <!-- Scrape Monroe Button -->
     <button type="button" class="btn btn-sm btn-warning" id="scrape-monroe-btn">
         <i class="bi bi-cloud-download me-1"></i>Scrape Monroe
