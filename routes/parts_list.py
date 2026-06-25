@@ -1008,6 +1008,7 @@ def save_supplier_quote_lines(list_id, quote_id):
             revision_raw = line.get('revision')
             is_no_bid = line.get('is_no_bid', False)
             line_notes_raw = line.get('line_notes')
+            per_lb_quantity_converted_raw = line.get('per_lb_quantity_converted', False)
 
             quantity_quoted = _safe_int(quantity_quoted_raw)
             qty_available = _safe_int(qty_available_raw)
@@ -1031,6 +1032,11 @@ def save_supplier_quote_lines(list_id, quote_id):
             else:
                 is_no_bid = bool(is_no_bid)
 
+            if isinstance(per_lb_quantity_converted_raw, str):
+                per_lb_quantity_converted = per_lb_quantity_converted_raw.strip().lower() in ('true', '1', 'yes', 'y')
+            else:
+                per_lb_quantity_converted = bool(per_lb_quantity_converted_raw)
+
             if not is_no_bid and price_entered_as_lb and (
                 lb_unit_price is None or pieces_per_pound_used is None or pieces_per_pound_used <= 0 or unit_price is None
             ):
@@ -1038,6 +1044,25 @@ def save_supplier_quote_lines(list_id, quote_id):
                     success=False,
                     message=f"Line {idx + 1} is marked per lb but needs a valid LB Price and PPP."
                 ), 400
+
+            if not is_no_bid and price_entered_as_lb and not per_lb_quantity_converted and quantity_quoted is not None and pieces_per_pound_used:
+                existing_lb_quote = db_execute(
+                    """
+                    SELECT price_entered_as_lb
+                    FROM parts_list_supplier_quote_lines
+                    WHERE supplier_quote_id = ? AND parts_list_line_id = ?
+                    """,
+                    (quote_id, parts_list_line_id),
+                    fetch='one',
+                )
+                already_saved_as_lb = bool(_safe_row_get(existing_lb_quote, 'price_entered_as_lb')) if existing_lb_quote else False
+                if not already_saved_as_lb:
+                    original_quantity_quoted = quantity_quoted
+                    quantity_quoted = int(round(quantity_quoted * pieces_per_pound_used))
+                    logging.info(
+                        "Converted per-lb quoted quantity for line %s from %s lb at %s PPP to %s pieces",
+                        idx + 1, original_quantity_quoted, pieces_per_pound_used, quantity_quoted
+                    )
 
             # DEBUG: Log all field values
             logging.info(f"quoted_part_number: '{quoted_part_number}' (type: {type(quoted_part_number).__name__})")
