@@ -263,6 +263,26 @@ function calculatePiecePriceFromLb(row) {
     quoteLinesTable.setDataAtCell(row, 10, Number((lbPrice / ppp).toFixed(4)), 'lb-price-calc');
 }
 
+function getPerLbQuotedQuantityConversion(row, tableData, originalLine = {}) {
+    const priceEnteredAsLb = !!tableData[row]?.[11];
+    const wasAlreadySavedPerLb = !!originalLine.price_entered_as_lb;
+    if (!priceEnteredAsLb || wasAlreadySavedPerLb) return null;
+
+    const lbQty = parseQuoteNumber(tableData[row]?.[6]);
+    const ppp = parseQuoteNumber(tableData[row]?.[13]);
+    if (lbQty === null || lbQty <= 0 || ppp === null || ppp <= 0) return null;
+
+    const pieceQty = Math.round(lbQty * ppp);
+    if (!Number.isFinite(pieceQty) || pieceQty <= 0 || pieceQty === lbQty) return null;
+
+    return {
+        lineNumber: originalLine?.line_number || row + 1,
+        lbQty,
+        ppp,
+        pieceQty
+    };
+}
+
 function validateLbPriceRows() {
     if (!quoteLinesTable) return [];
 
@@ -1440,7 +1460,7 @@ function initializeQuoteLinesTable(lines) {
             return cellProperties;
         },
         afterChange: function(changes, source) {
-            if (!changes || source === 'loadData' || source === 'lb-price-calc' || source === 'lb-price-init') return;
+            if (!changes || ['loadData', 'lb-price-calc', 'lb-price-init', 'lb-quantity-calc'].includes(source)) return;
 
             const rowsToRecalculate = new Set();
             changes.forEach(([row, prop]) => {
@@ -1774,27 +1794,46 @@ function updateQuoteHeader(quoteId, quoteData) {
 
 function saveQuoteLines(quoteId) {
     const tableData = quoteLinesTable.getData();
+    const quantityConversions = [];
 
-    const lines = quoteLinesData.map((line, index) => ({
-        parts_list_line_id: line.parts_list_line_id,
-        quoted_part_number: tableData[index][3],
-        manufacturer: tableData[index][4],
-        revision: tableData[index][5],
-        quantity_quoted: tableData[index][6],
-        qty_available: tableData[index][7],
-        purchase_increment: tableData[index][8],
-        moq: tableData[index][9],
-        unit_price: tableData[index][10],
-        price_entered_as_lb: !!tableData[index][11],
-        lb_unit_price: tableData[index][12],
-        pieces_per_pound_used: tableData[index][13],
-        lead_time_days: tableData[index][14],
-        condition_code: tableData[index][15],
-        certifications: tableData[index][16],
-        is_no_bid: !!tableData[index][17],
-        line_notes: tableData[index][18],
-        split_line: !!tableData[index][21]  // New: split line flag
-    }));
+    const lines = quoteLinesData.map((line, index) => {
+        const quantityConversion = getPerLbQuotedQuantityConversion(index, tableData, line);
+        if (quantityConversion) {
+            quantityConversions.push(quantityConversion);
+            quoteLinesTable.setDataAtCell(index, 6, quantityConversion.pieceQty, 'lb-quantity-calc');
+        }
+
+        return {
+            parts_list_line_id: line.parts_list_line_id,
+            quoted_part_number: tableData[index][3],
+            manufacturer: tableData[index][4],
+            revision: tableData[index][5],
+            quantity_quoted: quantityConversion ? quantityConversion.pieceQty : tableData[index][6],
+            qty_available: tableData[index][7],
+            purchase_increment: tableData[index][8],
+            moq: tableData[index][9],
+            unit_price: tableData[index][10],
+            price_entered_as_lb: !!tableData[index][11],
+            lb_unit_price: tableData[index][12],
+            pieces_per_pound_used: tableData[index][13],
+            lead_time_days: tableData[index][14],
+            condition_code: tableData[index][15],
+            certifications: tableData[index][16],
+            is_no_bid: !!tableData[index][17],
+            line_notes: tableData[index][18],
+            split_line: !!tableData[index][21],  // New: split line flag
+            per_lb_quantity_converted: !!quantityConversion
+        };
+    });
+
+    if (quantityConversions.length > 0) {
+        const preview = quantityConversions
+            .slice(0, 3)
+            .map(item => `line ${item.lineNumber}: ${item.lbQty} lb × ${item.ppp} PPP = ${item.pieceQty} pcs`)
+            .join('; ');
+        const suffix = quantityConversions.length > 3 ? ` (+${quantityConversions.length - 3} more)` : '';
+        showToast(`Per-lb quoted quantities converted to pieces: ${preview}${suffix}.`, 'warning');
+    }
 
     return fetch(`/parts_list/parts-lists/${window.PARTS_LIST_ID}/supplier-quotes/${quoteId}/lines/save`, {
         method: 'POST',
