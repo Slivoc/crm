@@ -994,6 +994,7 @@ def save_supplier_quote_lines(list_id, quote_id):
 
             quoted_part_number = line.get('quoted_part_number')
             quantity_quoted_raw = line.get('quantity_quoted')
+            quoted_quantity_lbs_raw = line.get('quoted_quantity_lbs')
             qty_available_raw = line.get('qty_available')
             purchase_increment_raw = line.get('purchase_increment')
             moq_raw = line.get('moq')
@@ -1036,6 +1037,17 @@ def save_supplier_quote_lines(list_id, quote_id):
                 per_lb_quantity_converted = per_lb_quantity_converted_raw.strip().lower() in ('true', '1', 'yes', 'y')
             else:
                 per_lb_quantity_converted = bool(per_lb_quantity_converted_raw)
+
+            quoted_quantity_lbs = _safe_float(quoted_quantity_lbs_raw)
+            if not is_no_bid and quoted_quantity_lbs is not None:
+                price_entered_as_lb = True
+                if pieces_per_pound_used is None or pieces_per_pound_used <= 0:
+                    return jsonify(
+                        success=False,
+                        message=f"Line {idx + 1} has a quoted lbs amount but needs a valid PPP."
+                    ), 400
+                quantity_quoted = int(round(quoted_quantity_lbs * pieces_per_pound_used))
+                per_lb_quantity_converted = True
 
             if not is_no_bid and price_entered_as_lb and (
                 lb_unit_price is None or pieces_per_pound_used is None or pieces_per_pound_used <= 0 or unit_price is None
@@ -5120,6 +5132,9 @@ def correct_line_part_number(list_id, line_id):
                 DELETE FROM monroe_search_results
                 WHERE parts_list_line_id = ?
             """, (line_id,))
+
+        user_id = current_user.id if current_user.is_authenticated else session.get('user_id')
+        trigger_monroe_auto_check(list_id, [line_id], user_id=user_id)
 
         return jsonify(
             success=True,
