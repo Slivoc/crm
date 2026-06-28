@@ -156,6 +156,24 @@
     white-space: normal;
     line-height: 1.8;
 }
+.quantity-suggestion-cell {
+    min-width: 150px;
+    font-size: 0.8rem;
+}
+.quantity-suggestion-main {
+    font-weight: 600;
+    color: #495057;
+}
+.quantity-suggestion-detail {
+    color: #6c757d;
+    line-height: 1.25;
+}
+.quantity-suggestion-low {
+    color: #856404;
+}
+.quantity-suggestion-empty {
+    color: #adb5bd;
+}
 .ils-listed-context-row td {
     background: #fff3cd !important;
     box-shadow: inset 4px 0 0 #ffc107;
@@ -360,6 +378,12 @@
                     <button class="btn btn-sm btn-outline-success me-2" id="uploadILSBtn">
                         📤 Upload ILS
                     </button>
+                    {% if list_id %}
+                    <button class="btn btn-sm btn-outline-secondary me-2" id="quantitySuggestionBtn"
+                            title="Experimental: calculate rough buy quantity and expected cost from past quotes/orders">
+                        Qty ideas
+                    </button>
+                    {% endif %}
                     <input type="file" id="ilsFileInput" accept=".csv" style="display: none;">
                     <a href="{{ url_for('parts_list.parts_list') }}" class="btn btn-sm btn-outline-secondary">
                         Back to Parts List
@@ -572,6 +596,7 @@
                             {% else %}
                                 <th>Source</th>
                             {% endif %}
+                            <th class="text-center qty-suggestion-col d-none">Qty idea</th>
                             <th class="text-center" style="min-width: 180px;">Status</th>
                         </tr>
                     </thead>
@@ -624,6 +649,10 @@
                                     <span class="badge badge-sm bg-source">{{ part.get('source_type', 'manual').upper() }}</span>
                                 </td>
                             {% endif %}
+                            <td class="text-center quantity-suggestion-cell qty-suggestion-col d-none"
+                                data-line-id="{{ part.line_id or '' }}">
+                                <span class="quantity-suggestion-empty">--</span>
+                            </td>
                             <td class="text-center status-cell">
                                 {% if part.has_chosen_cost %}
                                     <span class="badge badge-sm bg-costed">✓ Costed</span>
@@ -717,6 +746,10 @@
                                     <span class="badge badge-sm bg-source">{{ part.get('source_type', 'manual').upper() }}</span>
                                 </td>
                             {% endif %}
+                            <td class="text-center quantity-suggestion-cell qty-suggestion-col d-none"
+                                data-line-id="{{ part.line_id or '' }}">
+                                <span class="quantity-suggestion-empty">--</span>
+                            </td>
                             <td class="text-center status-cell">
                                 {% if part.has_chosen_cost %}
                                     <span class="badge badge-sm bg-costed">âœ“ Costed</span>
@@ -1455,6 +1488,128 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('filterPartNumber').addEventListener('input', applyFilters);
 
     fetchSupplierScoresForEmailSuppliers();
+
+    function formatGbp(value, fractionDigits = 2) {
+        const number = Number(value);
+        if (!Number.isFinite(number)) return null;
+        return `GBP ${number.toLocaleString(undefined, {
+            minimumFractionDigits: fractionDigits,
+            maximumFractionDigits: fractionDigits
+        })}`;
+    }
+
+    function revealQuantitySuggestionColumn() {
+        document.querySelectorAll('.qty-suggestion-col').forEach(el => {
+            el.classList.remove('d-none');
+        });
+        document.querySelectorAll('td[colspan]').forEach(cell => {
+            const current = Number.parseInt(cell.getAttribute('colspan'), 10);
+            if (Number.isFinite(current) && cell.dataset.qtySuggestionColspanAdjusted !== '1') {
+                cell.setAttribute('colspan', String(current + 1));
+                cell.dataset.qtySuggestionColspanAdjusted = '1';
+            }
+        });
+    }
+
+    function renderQuantitySuggestionCell(cell, suggestion) {
+        cell.innerHTML = '';
+
+        if (!suggestion) {
+            const empty = document.createElement('span');
+            empty.className = 'quantity-suggestion-empty';
+            empty.textContent = 'No history';
+            cell.appendChild(empty);
+            return;
+        }
+
+        const requestedQty = Number.parseInt(suggestion.requested_quantity, 10);
+        const suggestedQty = Number.parseInt(suggestion.suggested_quantity, 10);
+        const hasUplift = Number.isFinite(suggestedQty)
+            && Number.isFinite(requestedQty)
+            && suggestedQty > requestedQty;
+
+        const main = document.createElement('div');
+        main.className = hasUplift ? 'quantity-suggestion-main quantity-suggestion-low' : 'quantity-suggestion-main';
+        main.textContent = hasUplift ? `Try ${suggestedQty}` : `Keep ${requestedQty || suggestedQty || '-'}`;
+        cell.appendChild(main);
+
+        const details = [];
+        const expectedTotal = formatGbp(suggestion.expected_total_cost_gbp);
+        const requestedTotal = formatGbp(suggestion.requested_total_cost_gbp);
+        const unitCost = formatGbp(suggestion.expected_unit_cost_gbp, 4);
+        if (expectedTotal) details.push(`${expectedTotal} est.`);
+        if (hasUplift && requestedTotal) details.push(`${requestedTotal} at requested qty`);
+        if (unitCost) details.push(`${unitCost}/ea`);
+        if (suggestion.history_count) details.push(`${suggestion.history_count} history row${suggestion.history_count === 1 ? '' : 's'}`);
+        if (suggestion.confidence && suggestion.confidence !== 'none') details.push(`${suggestion.confidence} confidence`);
+
+        details.forEach(text => {
+            const detail = document.createElement('div');
+            detail.className = 'quantity-suggestion-detail';
+            detail.textContent = text;
+            cell.appendChild(detail);
+        });
+
+        if (suggestion.reason) {
+            cell.title = `Experimental suggestion: ${suggestion.reason}`;
+        }
+    }
+
+    async function fetchQuantitySuggestions() {
+        const button = document.getElementById('quantitySuggestionBtn');
+        if (!button || !currentListId) return;
+
+        const lineIds = Array.from(document.querySelectorAll('.part-checkbox'))
+            .map(cb => Number.parseInt(cb.dataset.lineId, 10))
+            .filter(Number.isFinite);
+        const uniqueLineIds = [...new Set(lineIds)];
+
+        if (!uniqueLineIds.length) {
+            alert('No list line IDs found for these rows.');
+            return;
+        }
+
+        revealQuantitySuggestionColumn();
+        document.querySelectorAll('.quantity-suggestion-cell').forEach(cell => {
+            cell.innerHTML = '<span class="text-muted">Loading...</span>';
+        });
+
+        const originalText = button.textContent;
+        button.disabled = true;
+        button.textContent = 'Checking...';
+
+        try {
+            const resp = await fetch(`/parts_list/parts-lists/${currentListId}/quantity-suggestions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ line_ids: uniqueLineIds })
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.success) {
+                throw new Error(data.message || 'Unable to calculate quantity ideas');
+            }
+
+            const suggestions = data.suggestions || {};
+            document.querySelectorAll('.quantity-suggestion-cell').forEach(cell => {
+                const lineId = cell.dataset.lineId;
+                renderQuantitySuggestionCell(cell, suggestions[lineId]);
+            });
+        } catch (error) {
+            console.warn('Quantity suggestions failed', error);
+            document.querySelectorAll('.quantity-suggestion-cell').forEach(cell => {
+                cell.innerHTML = '<span class="text-warning">Unavailable</span>';
+            });
+            alert(error.message || 'Unable to calculate quantity ideas.');
+        } finally {
+            button.disabled = false;
+            button.textContent = originalText;
+        }
+    }
+
+    const quantitySuggestionBtn = document.getElementById('quantitySuggestionBtn');
+    if (quantitySuggestionBtn) {
+        quantitySuggestionBtn.addEventListener('click', fetchQuantitySuggestions);
+    }
 
     document.querySelectorAll('.room-101-unmap-btn').forEach(btn => {
         btn.addEventListener('click', async function() {

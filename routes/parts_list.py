@@ -4274,6 +4274,232 @@ def _get_recent_no_bid_lookup(cursor, supplier_ids, base_part_numbers, days=30):
     return lookup
 
 
+def _median_number(values):
+    cleaned = sorted(value for value in values if value is not None and value > 0)
+    if not cleaned:
+        return None
+    midpoint = len(cleaned) // 2
+    if len(cleaned) % 2:
+        return cleaned[midpoint]
+    return (cleaned[midpoint - 1] + cleaned[midpoint]) / 2
+
+
+def _round_quantity_suggestion(quantity):
+    if quantity is None:
+        return None
+    try:
+        quantity = int(ceil(float(quantity)))
+    except (TypeError, ValueError):
+        return None
+    if quantity <= 1:
+        return 1
+
+    breaks = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000]
+    for break_qty in breaks:
+        if quantity <= break_qty:
+            return break_qty
+    return int(ceil(quantity / 1000) * 1000)
+
+
+def _quantity_suggestion_confidence(cost_count, quantity_count):
+    evidence = (cost_count or 0) + (quantity_count or 0)
+    if evidence >= 8:
+        return 'high'
+    if evidence >= 3:
+        return 'medium'
+    if evidence > 0:
+        return 'low'
+    return 'none'
+
+
+@parts_list_bp.route('/parts-lists/<int:list_id>/quantity-suggestions', methods=['POST'])
+def get_parts_list_quantity_suggestions(list_id):
+    """
+    Experimental, opt-in quantity/value helper for the Email Suppliers page.
+    Uses existing history only; it does not mutate parts-list lines or email quantities.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        raw_line_ids = data.get('line_ids') or []
+        line_ids = []
+        for raw_id in raw_line_ids:
+            try:
+                line_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            if line_id > 0 and line_id not in line_ids:
+                line_ids.append(line_id)
+
+        if not line_ids:
+            return jsonify(success=False, message="line_ids are required"), 400
+
+        line_ids = line_ids[:500]
+        placeholders = ",".join(["?"] * len(line_ids))
+
+        with db_cursor() as cursor:
+            lines = _execute_with_cursor(cursor, f"""
+                SELECT
+                    id,
+                    line_number,
+                    customer_part_number,
+                    base_part_number,
+                    quantity
+                FROM parts_list_lines
+                WHERE parts_list_id = ?
+                  AND id IN ({placeholders})
+                  AND base_part_number IS NOT NULL
+            """, [list_id, *line_ids]).fetchall() or []
+
+            if not lines:
+                return jsonify(success=True, suggestions={})
+
+            base_part_numbers = sorted({
+                row['base_part_number']
+                for row in lines
+                if row.get('base_part_number')
+            })
+            base_placeholders = ",".join(["?"] * len(base_part_numbers))
+
+            supplier_quote_rows = _execute_with_cursor(cursor, f"""
+                SELECT
+                    pll.base_part_number,
+                    sql.quantity_quoted AS quantity,
+                    CASE
+                        WHEN sql.unit_price IS NULL THEN NULL
+                        ELSE sql.unit_price / COALESCE(NULLIF(c.exchange_rate_to_base, 0), 1)
+                    END AS unit_cost_gbp,
+                    COALESCE(sq.quote_date, sql.date_created) AS history_date,
+                    'supplier_quote' AS source_type
+                FROM parts_list_supplier_quote_lines sql
+                JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                JOIN parts_list_lines pll ON pll.id = sql.parts_list_line_id
+                LEFT JOIN currencies c ON c.id = sq.currency_id
+                WHERE pll.base_part_number IN ({base_placeholders})
+                  AND COALESCE(sql.is_no_bid, FALSE) = FALSE
+                  AND sql.unit_price IS NOT NULL
+                ORDER BY COALESCE(sq.quote_date, sql.date_created) DESC, sql.id DESC
+                LIMIT 2500
+            """, base_part_numbers).fetchall() or []
+
+            po_rows = _execute_with_cursor(cursor, f"""
+                SELECT
+                    pol.base_part_number,
+                    pol.quantity,
+                    CASE
+                        WHEN pol.price IS NULL THEN NULL
+                        ELSE pol.price / COALESCE(NULLIF(c.exchange_rate_to_base, 0), 1)
+                    END AS unit_cost_gbp,
+                    po.date_issued AS history_date,
+                    'purchase_order' AS source_type
+                FROM purchase_order_lines pol
+                JOIN purchase_orders po ON po.id = pol.purchase_order_id
+                LEFT JOIN currencies c ON c.id = po.currency_id
+                WHERE pol.base_part_number IN ({base_placeholders})
+                  AND pol.price IS NOT NULL
+                ORDER BY po.date_issued DESC, pol.id DESC
+                LIMIT 2500
+            """, base_part_numbers).fetchall() or []
+
+            stock_rows = _execute_with_cursor(cursor, f"""
+                SELECT
+                    base_part_number,
+                    quantity,
+                    cost_per_unit AS unit_cost_gbp,
+                    movement_date AS history_date,
+                    'stock_receipt' AS source_type
+                FROM stock_movements
+                WHERE base_part_number IN ({base_placeholders})
+                  AND movement_type = 'IN'
+                  AND cost_per_unit IS NOT NULL
+                ORDER BY movement_date DESC, id DESC
+                LIMIT 2500
+            """, base_part_numbers).fetchall() or []
+
+        history_by_base = {base: [] for base in base_part_numbers}
+        for row in [*supplier_quote_rows, *po_rows, *stock_rows]:
+            base_part_number = row.get('base_part_number')
+            if base_part_number in history_by_base:
+                history_by_base[base_part_number].append(row)
+
+        suggestions = {}
+        target_low_value_total_gbp = 50
+
+        for line in lines:
+            line_id = str(line['id'])
+            requested_qty = _safe_float(line.get('quantity')) or 1
+            requested_qty_int = max(1, int(ceil(requested_qty)))
+            history = history_by_base.get(line.get('base_part_number'), [])
+
+            costs = []
+            quantities = []
+            source_types = set()
+            for row in history:
+                unit_cost = _safe_float(row.get('unit_cost_gbp'))
+                quantity = _safe_float(row.get('quantity'))
+                if unit_cost is not None and unit_cost > 0:
+                    costs.append(unit_cost)
+                    source_types.add(row.get('source_type') or 'history')
+                if quantity is not None and quantity > 0:
+                    quantities.append(quantity)
+
+            expected_unit_cost = _median_number(costs[:25])
+            median_history_qty = _median_number(quantities[:25])
+
+            target_qty = requested_qty_int
+            reason_parts = []
+            if median_history_qty and median_history_qty > target_qty:
+                target_qty = int(ceil(median_history_qty))
+                reason_parts.append(f"median historical buy qty is {int(round(median_history_qty))}")
+
+            current_expected_total = None
+            if expected_unit_cost:
+                current_expected_total = requested_qty_int * expected_unit_cost
+                if current_expected_total < target_low_value_total_gbp:
+                    low_value_qty = int(ceil(target_low_value_total_gbp / expected_unit_cost))
+                    if low_value_qty > target_qty:
+                        target_qty = low_value_qty
+                        reason_parts.append(f"current qty is about GBP {current_expected_total:.2f}")
+
+            suggested_qty = _round_quantity_suggestion(target_qty)
+            if suggested_qty is None:
+                suggested_qty = requested_qty_int
+            if suggested_qty < requested_qty_int:
+                suggested_qty = requested_qty_int
+
+            expected_total_cost = expected_unit_cost * suggested_qty if expected_unit_cost else None
+            requested_total_cost = expected_unit_cost * requested_qty_int if expected_unit_cost else None
+            history_count = len(history)
+            confidence = _quantity_suggestion_confidence(len(costs), len(quantities))
+
+            if not reason_parts:
+                if history_count:
+                    reason_parts.append("history found, but no clear uplift signal")
+                else:
+                    reason_parts.append("no usable cost history found")
+
+            suggestions[line_id] = {
+                'line_id': line['id'],
+                'base_part_number': line.get('base_part_number'),
+                'requested_quantity': requested_qty_int,
+                'suggested_quantity': suggested_qty,
+                'expected_unit_cost_gbp': round(expected_unit_cost, 4) if expected_unit_cost else None,
+                'expected_total_cost_gbp': round(expected_total_cost, 2) if expected_total_cost else None,
+                'requested_total_cost_gbp': round(requested_total_cost, 2) if requested_total_cost else None,
+                'history_count': history_count,
+                'cost_sample_count': len(costs),
+                'quantity_sample_count': len(quantities),
+                'confidence': confidence,
+                'source_types': sorted(source_types),
+                'reason': '; '.join(reason_parts),
+            }
+
+        return jsonify(success=True, suggestions=suggestions)
+
+    except Exception as e:
+        logging.exception("Failed to calculate quantity suggestions")
+        return jsonify(success=False, message=str(e)), 500
+
+
 def process_ils_suppliers(email_data, cursor, cutoff_date, request_cutoff, list_id=None):
     """
     Process ILS supplier data (existing logic)
