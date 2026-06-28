@@ -4411,7 +4411,7 @@ def get_parts_list_quantity_suggestions(list_id):
                 WHERE base_part_number IN ({base_placeholders})
                   AND movement_type = 'IN'
                   AND cost_per_unit IS NOT NULL
-                ORDER BY movement_date DESC, id DESC
+                ORDER BY movement_date DESC, movement_id DESC
                 LIMIT 2500
             """, base_part_numbers).fetchall() or []
 
