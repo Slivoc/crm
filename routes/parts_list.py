@@ -93,6 +93,20 @@ def _ensure_part_number(base_part_number, part_number):
     )
 
 
+def _update_part_pieces_per_pound(base_part_number, pieces_per_pound):
+    if not base_part_number or pieces_per_pound is None or pieces_per_pound <= 0:
+        return
+    db_execute(
+        """
+        UPDATE part_numbers
+        SET pieces_per_pound = ?
+        WHERE base_part_number = ?
+        """,
+        (pieces_per_pound, base_part_number),
+        commit=True,
+    )
+
+
 def _to_float(value):
     try:
         if value is None or value == '':
@@ -1015,6 +1029,7 @@ def save_supplier_quote_lines(list_id, quote_id):
             qty_available = _safe_int(qty_available_raw)
             purchase_increment = _safe_int(purchase_increment_raw)
             moq = _safe_int(moq_raw)
+            part_pieces_per_pound = _safe_float(pieces_per_pound_used_raw)
             unit_price, price_entered_as_lb, lb_unit_price, pieces_per_pound_used = _normalise_supplier_quote_price(
                 unit_price_raw,
                 price_entered_as_lb_raw,
@@ -1131,6 +1146,10 @@ def save_supplier_quote_lines(list_id, quote_id):
                 line_customer = _safe_row_get(line_info, 'customer_part_number')
                 part_value = quoted_part_number or line_customer or line_base
                 base_part_number = create_base_part_number(part_value) if part_value else line_base
+                actual_base_part_number = line_base or base_part_number
+                if actual_base_part_number:
+                    _ensure_part_number(actual_base_part_number, line_customer or actual_base_part_number)
+                    _update_part_pieces_per_pound(actual_base_part_number, part_pieces_per_pound)
                 if base_part_number:
                     _ensure_part_number(base_part_number, part_value)
 

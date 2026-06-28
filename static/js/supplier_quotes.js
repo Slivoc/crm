@@ -11,6 +11,32 @@ let activePdfPreviewUrl = null;
 let latestExtractionMatchDebug = null;
 let supplierMetaById = {};
 
+function ensureSupplierQuoteGridStyles() {
+    if (document.getElementById('supplier-quote-grid-styles')) return;
+
+    const style = document.createElement('style');
+    style.id = 'supplier-quote-grid-styles';
+    style.textContent = `
+        #quote-lines-table-container .handsontable td.lb-quote-cell {
+            background-color: #eef8ff;
+            border-left-color: #c7e7ff;
+            border-right-color: #c7e7ff;
+        }
+
+        #quote-lines-table-container .handsontable td.lb-quote-cell.current,
+        #quote-lines-table-container .handsontable td.lb-quote-cell.area,
+        #quote-lines-table-container .handsontable td.lb-quote-cell.highlight {
+            background-color: #dff1ff;
+        }
+
+        #quote-lines-table-container .handsontable th.lb-quote-header {
+            background: #dff1ff;
+            color: #0b4f71;
+        }
+    `;
+    document.head.appendChild(style);
+}
+
 function getPreselectedIlsLineIds() {
     return new Set(
         (Array.isArray(window.PRESELECTED_SUPPLIER_ILS_LINE_IDS) ? window.PRESELECTED_SUPPLIER_ILS_LINE_IDS : [])
@@ -1283,6 +1309,8 @@ function initializeEmptyQuoteLines(supplierId = null) {
 }
 
 function initializeQuoteLinesTable(lines) {
+    ensureSupplierQuoteGridStyles();
+
     quoteLinesData = lines.map(line => ({
         ...line,
         quote_requested: line.quote_requested || 0,
@@ -1360,9 +1388,9 @@ function initializeQuoteLinesTable(lines) {
             { data: 10, type: 'numeric', numericFormat: { pattern: '0,0.0000' } },
             { data: 11, type: 'text' },
             { data: 12, type: 'numeric' },
-            { data: 13, type: 'numeric', numericFormat: { pattern: '0,0.####' } },
-            { data: 14, type: 'numeric', numericFormat: { pattern: '0,0.00' } },
-            { data: 15, type: 'numeric', numericFormat: { pattern: '0,0.####' } },
+            { data: 13, type: 'numeric', numericFormat: { pattern: '0,0.####' }, className: 'htRight lb-quote-cell' },
+            { data: 14, type: 'numeric', numericFormat: { pattern: '0,0.00' }, className: 'htRight lb-quote-cell' },
+            { data: 15, type: 'numeric', numericFormat: { pattern: '0,0.####' }, className: 'htRight lb-quote-cell' },
             { data: 16, type: 'text' },
             {
                 data: 17,
@@ -1432,17 +1460,24 @@ function initializeQuoteLinesTable(lines) {
                 TH.title = 'Supplier lead time in days.';
             }
             if (col === 13) {
+                TH.classList.add('lb-quote-header');
                 TH.title = 'Quoted pounds. Qty Quoted is calculated as Lbs multiplied by PPP.';
             }
             if (col === 14) {
+                TH.classList.add('lb-quote-header');
                 TH.title = 'Supplier price per lb. Unit Price is saved as the calculated each price.';
             }
             if (col === 15) {
+                TH.classList.add('lb-quote-header');
                 TH.title = 'Pieces per pound. Defaults from the part record when available.';
             }
         },
         cells: function(row, col) {
             const cellProperties = {};
+
+            if ([13, 14, 15].includes(col)) {
+                cellProperties.className = ((cellProperties.className || '') + ' htRight lb-quote-cell').trim();
+            }
 
             // Highlight rows that were sent to this supplier
             if (quoteLinesData[row].quote_requested) {
