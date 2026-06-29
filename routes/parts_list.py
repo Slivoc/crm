@@ -1945,13 +1945,17 @@ def extract_supplier_quote_data(quote_text, context_parts=""):
         if _is_peerless_quote(quote_text):
             peerless_lookup_requested, peerless_lookup_quoted = _build_peerless_part_lookup(quote_text)
 
+        today = date.today()
+        today_label = today.strftime('%A, %B %d, %Y')
+
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {
                     "role": "system",
-                    "content": """You are an assistant that extracts supplier quote information from emails or text responses.
+                    "content": f"""You are an assistant that extracts supplier quote information from emails or text responses.
 We are in the aerospace hardware industry.
+Today's date is {today_label}. Use this as the reference date for interpreting delivery dates and lead times.
 
 Output ONLY a valid JSON array of objects with DOUBLE QUOTES for all keys and string values.
 Do NOT use markdown formatting like ```json or any wrappers. Output raw JSON only.
@@ -1974,6 +1978,7 @@ Do NOT use markdown formatting like ```json or any wrappers. Output raw JSON onl
 Look for common patterns:
 - "No quote", "Not available", "NQ", "N/A" = is_no_bid: true
 - Lead times like "3-4 weeks", "Stock", "ARO" should be converted to days (weeks * 7)
+- Delivery dates or month/year phrases should be converted to lead_time_days from today's date. For example, "October 2026" means days until October 1, 2026 unless the text says "end October", which means days until October 31, 2026. If a delivery date is in the past or too ambiguous to estimate, use null.
 - Condition codes are usually 2 letters
 - Prices might have currency symbols - extract just the number
 - IMPORTANT: When suppliers quote alternative part numbers (e.g., "CR3212-4-04 / Quoting: NAS9301B-5-10"), the part_number field MUST be the alternative/quoted part (NAS9301B-5-10), NOT the requested part (CR3212-4-04)
@@ -1983,6 +1988,8 @@ Look for common patterns:
                 {
                     "role": "user",
                     "content": f"""Extract quote information from this supplier response.
+
+Today's date for lead-time calculations: {today_label}.
 
 Parts we requested:
 {context_parts}
