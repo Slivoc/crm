@@ -1703,9 +1703,9 @@ function applyExtractedDataToTable(extractedLines) {
                 [bestIndex, 8, extracted.purchase_increment],
                 [bestIndex, 9, extracted.moq],
                 [bestIndex, 10, extracted.price],
-                [bestIndex, 14, extracted.lead_time_days],
-                [bestIndex, 15, extracted.condition],
-                [bestIndex, 16, extracted.certifications],
+                [bestIndex, 11, extracted.certifications],
+                [bestIndex, 12, extracted.lead_time_days],
+                [bestIndex, 16, extracted.condition],
                 [bestIndex, 17, !!extracted.is_no_bid],
                 [bestIndex, 18, extracted.notes]
             ]);
