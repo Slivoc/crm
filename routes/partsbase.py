@@ -79,6 +79,49 @@ def _coerce_marketplace_price(value):
     return price if price >= 0 else ''
 
 
+def _form_bool(name: str, *, default: bool = False) -> bool:
+    value = request.form.get(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _clean_inventory_action_code(value) -> str:
+    action_code = str(value or 'A').strip().upper()[:1]
+    return action_code if action_code in {'A', 'R', 'U', 'D'} else 'A'
+
+
+def _load_saved_nightly_marketplace_parts():
+    from routes.marketplace import _fetch_marketplace_parts_by_references, _load_marketplace_job_payload
+
+    payload, payload_error = _load_marketplace_job_payload()
+    if payload_error:
+        raise PartsBaseError(payload_error)
+
+    references = [
+        str(value).strip()
+        for value in (payload.get('base_part_numbers') or [])
+        if str(value).strip()
+    ]
+    references = list(dict.fromkeys(references))
+    if not references:
+        raise PartsBaseError('Saved nightly marketplace payload contains no base part numbers.')
+
+    matched_rows = []
+    batch_size = 200
+    for index in range(0, len(references), batch_size):
+        matched_rows.extend(_fetch_marketplace_parts_by_references(references[index:index + batch_size]))
+
+    return references, matched_rows, {
+        'base_part_count': len(references),
+        'export_mode': payload.get('export_mode'),
+        'import_mode': payload.get('import_mode'),
+        'source_mode': payload.get('source_mode'),
+        'include_alt_stock_rollup': payload.get('include_alt_stock_rollup'),
+        'include_non_hqpl_alts': payload.get('include_non_hqpl_alts'),
+    }
+
+
 def _load_marketplace_parts(reference_lines):
     from routes.marketplace import _MASTER_LIST_TEST_REFERENCE_MAP, _fetch_marketplace_parts_by_references, get_parts_for_export
 
@@ -92,7 +135,7 @@ def _load_marketplace_parts(reference_lines):
         json={
             'stock_filter': 'stock_only',
             'category_filter': 'all',
-            'pricing_only': True,
+            'pricing_only': False,
             'max_results': 10,
             'source_mode': 'filters',
         },
@@ -125,7 +168,16 @@ def _load_marketplace_parts(reference_lines):
     return references, matched_rows
 
 
-def _build_marketplace_upload_rows(matched_rows, *, condition_code, uom, traceability, trace_to):
+def _build_marketplace_upload_rows(
+    matched_rows,
+    *,
+    action_code,
+    condition_code,
+    uom,
+    traceability,
+    trace_to,
+    include_prices,
+):
     upload_rows = []
     preview_rows = []
     skipped = []
@@ -142,10 +194,10 @@ def _build_marketplace_upload_rows(matched_rows, *, condition_code, uom, traceab
             skipped.append({'reference': requested_reference, 'reason': 'CRM part is missing a part number'})
             continue
 
-        price_value = crm_part.get('estimated_price_gbp')
+        price_value = crm_part.get('estimated_price_gbp') if include_prices else None
         quantity_value = _coerce_marketplace_quantity(crm_part.get('stock_qty'))
         upload_row = {
-            'action_code': 'A',
+            'action_code': action_code,
             'part_number': part_number,
             'description': str(
                 crm_part.get('mkp_description')
@@ -180,6 +232,7 @@ def _build_marketplace_upload_rows(matched_rows, *, condition_code, uom, traceab
             'manufacturer': upload_row['manufacturer'],
             'quantity': upload_row['quantity'],
             'unit_price': upload_row['unit_price'],
+            'action_code': upload_row['action_code'],
             'condition_code': upload_row['condition_code'],
             'uom': upload_row['uom'],
             'price_source': crm_part.get('price_source'),
@@ -249,13 +302,19 @@ def partsbase_home():
         },
         'marketplace_reference_input': '',
         'marketplace_defaults': {
+            'action_code': 'A',
             'condition_code': 'AR',
             'uom': 'EA',
             'traceability': 'C of C',
             'trace_to': '',
+            'include_prices': False,
         },
         'marketplace_preview_rows': [],
+        'marketplace_preview_total': 0,
+        'marketplace_preview_display_limit': 200,
         'marketplace_preview_skipped': [],
+        'marketplace_preview_skipped_total': 0,
+        'nightly_payload_summary': None,
     }
 
     if request.method != 'POST':
@@ -311,42 +370,64 @@ def partsbase_home():
             context['inventory_status_response'] = response
             flash(f'Inventory upload status request completed for {request_id}.', 'success')
 
-        elif action in ('marketplace_preview', 'marketplace_submit'):
+        elif action in (
+            'marketplace_preview',
+            'marketplace_submit',
+            'nightly_marketplace_preview',
+            'nightly_marketplace_submit',
+        ):
             submitted_refs = request.form.get('marketplace_references', '').strip()
+            action_code = _clean_inventory_action_code(request.form.get('marketplace_action_code', 'A'))
             condition_code = (request.form.get('marketplace_condition_code', '') or 'AR').strip() or 'AR'
             uom = (request.form.get('marketplace_uom', '') or 'EA').strip() or 'EA'
             traceability = request.form.get('marketplace_traceability', '').strip()
             trace_to = request.form.get('marketplace_trace_to', '').strip()
+            include_prices = _form_bool('marketplace_include_prices', default=False)
             context['marketplace_reference_input'] = submitted_refs
             context['marketplace_defaults'] = {
+                'action_code': action_code,
                 'condition_code': condition_code,
                 'uom': uom,
                 'traceability': traceability,
                 'trace_to': trace_to,
+                'include_prices': include_prices,
             }
 
-            references, matched_rows = _load_marketplace_parts(submitted_refs.splitlines())
+            if action in ('nightly_marketplace_preview', 'nightly_marketplace_submit'):
+                references, matched_rows, payload_summary = _load_saved_nightly_marketplace_parts()
+                context['nightly_payload_summary'] = payload_summary
+            else:
+                references, matched_rows = _load_marketplace_parts(submitted_refs.splitlines())
             upload_rows, preview_rows, skipped_rows = _build_marketplace_upload_rows(
                 matched_rows,
+                action_code=action_code,
                 condition_code=condition_code,
                 uom=uom,
                 traceability=traceability,
                 trace_to=trace_to,
+                include_prices=include_prices,
             )
             context['marketplace_reference_input'] = '\n'.join(references)
-            context['marketplace_preview_rows'] = preview_rows
-            context['marketplace_preview_skipped'] = skipped_rows
+            context['marketplace_preview_total'] = len(preview_rows)
+            context['marketplace_preview_rows'] = preview_rows[:context['marketplace_preview_display_limit']]
+            context['marketplace_preview_skipped_total'] = len(skipped_rows)
+            context['marketplace_preview_skipped'] = skipped_rows[:context['marketplace_preview_display_limit']]
 
-            if action == 'marketplace_preview':
+            if action in ('marketplace_preview', 'nightly_marketplace_preview'):
                 if preview_rows:
-                    flash(f'Loaded {len(preview_rows)} marketplace-derived row(s) for PartsBase preview.', 'success')
+                    flash(f'Loaded {len(preview_rows)} stock upload row(s) for PartsBase preview.', 'success')
                 else:
                     flash('Marketplace source did not produce any usable PartsBase rows.', 'warning')
                 if skipped_rows:
                     flash(f'Skipped {len(skipped_rows)} reference(s) that could not be mapped cleanly.', 'warning')
             else:
                 zip_payload = PartsBaseClient.create_inventory_upload_zip(upload_rows)
-                response = client.submit_inventory_import_zip(zip_payload, filename='partsbase-marketplace-test.zip')
+                filename = (
+                    'partsbase-nightly-marketplace-stock.zip'
+                    if action == 'nightly_marketplace_submit'
+                    else 'partsbase-marketplace-test.zip'
+                )
+                response = client.submit_inventory_import_zip(zip_payload, filename=filename)
                 context['last_submit_response'] = response
                 context['last_submit_kind'] = 'inventory_upload'
                 request_id = _find_request_id(response)
@@ -354,7 +435,7 @@ def partsbase_home():
                     context['last_submit_request_id'] = request_id
                     context['inventory_status_request_id'] = request_id
                     flash(
-                        f'Marketplace-derived inventory upload submitted to PartsBase. Request ID: {request_id}',
+                        f'Stock upload submitted to PartsBase. Request ID: {request_id}',
                         'success',
                     )
                 else:

@@ -62,6 +62,16 @@
                             <div class="form-text">One per line. Blank uses a small stock-only sample from the marketplace export.</div>
                         </div>
                         <div class="col-lg-2">
+                            <label for="marketplace_action_code" class="form-label">Upload mode</label>
+                            <select id="marketplace_action_code" name="marketplace_action_code" class="form-select">
+                                <option value="A" {% if marketplace_defaults.action_code == 'A' %}selected{% endif %}>Add/update</option>
+                                <option value="R" {% if marketplace_defaults.action_code == 'R' %}selected{% endif %}>Replace all</option>
+                                <option value="U" {% if marketplace_defaults.action_code == 'U' %}selected{% endif %}>Update only</option>
+                                <option value="D" {% if marketplace_defaults.action_code == 'D' %}selected{% endif %}>Delete listed</option>
+                            </select>
+                            <div class="form-text">Replace all clears PartsBase inventory to this file's rows.</div>
+                        </div>
+                        <div class="col-lg-2">
                             <label for="marketplace_condition_code" class="form-label">Condition</label>
                             <input id="marketplace_condition_code" name="marketplace_condition_code" class="form-control" value="{{ marketplace_defaults.condition_code }}">
                         </div>
@@ -77,11 +87,28 @@
                             <label for="marketplace_trace_to" class="form-label">Trace To</label>
                             <input id="marketplace_trace_to" name="marketplace_trace_to" class="form-control" value="{{ marketplace_defaults.trace_to }}">
                         </div>
-                        <div class="col-12 d-flex gap-2">
+                        <div class="col-lg-4 d-flex align-items-end">
+                            <div class="form-check mb-2">
+                                <input id="marketplace_include_prices" name="marketplace_include_prices" class="form-check-input" type="checkbox" value="1" {% if marketplace_defaults.include_prices %}checked{% endif %}>
+                                <label for="marketplace_include_prices" class="form-check-label">Include unit prices</label>
+                                <div class="form-text">Off by default; sends blank <code>UNITPRICE</code> values.</div>
+                            </div>
+                        </div>
+                        <div class="col-12 d-flex gap-2 flex-wrap">
                             <button type="submit" name="action" value="marketplace_preview" class="btn btn-outline-primary">Preview Stock Upload Rows</button>
                             <button type="submit" name="action" value="marketplace_submit" class="btn btn-warning">Upload Stock to PartsBase</button>
+                            <button type="submit" name="action" value="nightly_marketplace_preview" class="btn btn-outline-dark">Load Saved Nightly Selection</button>
+                            <button type="submit" name="action" value="nightly_marketplace_submit" class="btn btn-danger">Upload Saved Nightly Selection</button>
                         </div>
                     </form>
+                    {% if nightly_payload_summary %}
+                    <div class="alert alert-secondary mt-3 mb-0">
+                        Saved nightly payload loaded:
+                        <strong>{{ nightly_payload_summary.base_part_count }}</strong> base part(s),
+                        export mode <code>{{ nightly_payload_summary.export_mode or 'unknown' }}</code>,
+                        source mode <code>{{ nightly_payload_summary.source_mode or 'unknown' }}</code>.
+                    </div>
+                    {% endif %}
                     {% if last_submit_kind == 'inventory_upload' and last_submit_request_id %}
                     <div class="alert alert-info mt-3 mb-0">
                         Inventory upload request ID: <code>{{ last_submit_request_id }}</code>. Use the inventory upload status check below for this ID.
@@ -186,19 +213,25 @@
         {% if marketplace_preview_rows %}
         <div class="col-12">
             <div class="card">
-                <div class="card-header"><strong>Stock Upload Preview Rows</strong></div>
+                <div class="card-header">
+                    <strong>Stock Upload Preview Rows</strong>
+                    {% if marketplace_preview_total > marketplace_preview_rows|length %}
+                    <span class="text-muted small ms-2">Showing {{ marketplace_preview_rows|length }} of {{ marketplace_preview_total }}</span>
+                    {% endif %}
+                </div>
                 <div class="card-body p-0">
                     <div class="table-responsive">
                         <table class="table table-sm table-striped mb-0">
                             <thead>
                                 <tr>
+                                    <th>Mode</th>
                                     <th>Requested Ref</th>
                                     <th>Part</th>
                                     <th>Alt</th>
                                     <th>Description</th>
                                     <th>Manufacturer</th>
                                     <th>Qty</th>
-                                    <th>Price GBP</th>
+                                    <th>Unit Price</th>
                                     <th>Condition</th>
                                     <th>UOM</th>
                                     <th>Price Source</th>
@@ -207,16 +240,17 @@
                             <tbody>
                                 {% for row in marketplace_preview_rows %}
                                 <tr>
+                                    <td>{{ row.action_code }}</td>
                                     <td>{{ row.requested_reference }}</td>
                                     <td>{{ row.part_number }}</td>
-                                    <td>{{ row.alternate_part_number or '—' }}</td>
+                                    <td>{{ row.alternate_part_number or '&mdash;'|safe }}</td>
                                     <td>{{ row.description }}</td>
-                                    <td>{{ row.manufacturer or '—' }}</td>
+                                    <td>{{ row.manufacturer or '&mdash;'|safe }}</td>
                                     <td>{{ row.quantity }}</td>
-                                    <td>{{ row.unit_price if row.unit_price != '' else '—' }}</td>
+                                    <td>{{ row.unit_price if row.unit_price != '' else '&mdash;'|safe }}</td>
                                     <td>{{ row.condition_code }}</td>
                                     <td>{{ row.uom }}</td>
-                                    <td>{{ row.price_source or '—' }}</td>
+                                    <td>{{ row.price_source or '&mdash;'|safe }}</td>
                                 </tr>
                                 {% endfor %}
                             </tbody>
@@ -230,7 +264,12 @@
         {% if marketplace_preview_skipped %}
         <div class="col-12">
             <div class="card border-warning">
-                <div class="card-header"><strong>Skipped Stock Upload References</strong></div>
+                <div class="card-header">
+                    <strong>Skipped Stock Upload References</strong>
+                    {% if marketplace_preview_skipped_total > marketplace_preview_skipped|length %}
+                    <span class="text-muted small ms-2">Showing {{ marketplace_preview_skipped|length }} of {{ marketplace_preview_skipped_total }}</span>
+                    {% endif %}
+                </div>
                 <div class="card-body">
                     <pre class="bg-light p-3 border rounded small mb-0">{{ marketplace_preview_skipped | tojson(indent=2) }}</pre>
                 </div>
