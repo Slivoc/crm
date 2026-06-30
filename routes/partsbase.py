@@ -43,8 +43,20 @@ def _partsbase_error_hint(message: str) -> str:
         return "Upload transport issue: send multipart form-data with one ZIP file field."
     if '"code": 14' in msg or 'schema or data file has invalid data' in msg:
         return (
-            "PartsBase accepted the ZIP but rejected row-level content during processing. "
-            "Use the request ID and ask PartsBase Support for the processing error log."
+            "PartsBase accepted the ZIP but rejected the manifest or row values during processing. "
+            "If this came from the old stock upload test, it was likely caused by sending stock-upload rows "
+            "to the batch-search endpoint. If it happens again, preview the rows and check condition, quantity, "
+            "UOM, traceability, and manufacturer values."
+        )
+    if 'get /api/inventoryavailabilities/' in msg and 'failed: 404' in msg:
+        return (
+            "Batch search result not found yet. Check the batch search status first and only download after "
+            "PartsBase reports the request has completed."
+        )
+    if 'get /api/inventoryimportstocks/' in msg and 'failed: 404' in msg:
+        return (
+            "Inventory upload status was not found for that ID. Make sure this is an inventory upload request ID, "
+            "not a batch search request ID."
         )
     return ''
 
@@ -217,8 +229,11 @@ def partsbase_home():
         'submitted_parts': '',
         'last_submit_response': None,
         'last_submit_request_id': '',
+        'last_submit_kind': '',
         'status_request_id': '',
         'status_response': None,
+        'inventory_status_request_id': '',
+        'inventory_status_response': None,
         'result_request_id': '',
         'show_download_hint': False,
         'token_test_response': None,
@@ -267,6 +282,7 @@ def partsbase_home():
             zip_payload = PartsBaseClient.create_test_search_zip(parts)
             response = client.submit_inventory_availability_zip(zip_payload)
             context['last_submit_response'] = response
+            context['last_submit_kind'] = 'batch_search'
             request_id = _find_request_id(response)
             if request_id:
                 context['last_submit_request_id'] = request_id
@@ -285,6 +301,15 @@ def partsbase_home():
             response = client.get_inventory_availability_status(request_id)
             context['status_response'] = response
             flash(f'Status request completed for {request_id}.', 'success')
+
+        elif action == 'inventory_status_check':
+            request_id = request.form.get('inventory_status_request_id', '').strip()
+            context['inventory_status_request_id'] = request_id
+            if not request_id:
+                raise PartsBaseError('Request ID is required for inventory upload status checks.')
+            response = client.get_inventory_import_status(request_id)
+            context['inventory_status_response'] = response
+            flash(f'Inventory upload status request completed for {request_id}.', 'success')
 
         elif action in ('marketplace_preview', 'marketplace_submit'):
             submitted_refs = request.form.get('marketplace_references', '').strip()
@@ -321,13 +346,13 @@ def partsbase_home():
                     flash(f'Skipped {len(skipped_rows)} reference(s) that could not be mapped cleanly.', 'warning')
             else:
                 zip_payload = PartsBaseClient.create_inventory_upload_zip(upload_rows)
-                response = client.submit_inventory_availability_zip(zip_payload, filename='partsbase-marketplace-test.zip')
+                response = client.submit_inventory_import_zip(zip_payload, filename='partsbase-marketplace-test.zip')
                 context['last_submit_response'] = response
+                context['last_submit_kind'] = 'inventory_upload'
                 request_id = _find_request_id(response)
                 if request_id:
                     context['last_submit_request_id'] = request_id
-                    context['status_request_id'] = request_id
-                    context['result_request_id'] = request_id
+                    context['inventory_status_request_id'] = request_id
                     flash(
                         f'Marketplace-derived inventory upload submitted to PartsBase. Request ID: {request_id}',
                         'success',

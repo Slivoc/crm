@@ -21,11 +21,11 @@
             </h5>
         </div>
         <div class="card-body">
-            <p class="mb-2 text-muted">Use this module to validate authentication and test the 3-step inventory availability workflow.</p>
+            <p class="mb-2 text-muted">Use this module to test PartsBase stock uploads separately from PartsBase availability searches.</p>
             <ul class="mb-0 text-muted">
-                <li>Step 1: Upload a ZIP with part numbers</li>
-                <li>Step 2: Check request status by ID</li>
-                <li>Step 3: Download the result file by ID</li>
+                <li>Stock upload: sends CRM stock rows to <code>/api/inventoryImportStocks</code></li>
+                <li>Availability search: sends part-number search rows to <code>/api/inventoryAvailabilities</code></li>
+                <li>Only availability searches have a downloadable result file in this console</li>
             </ul>
             <hr>
             <div class="small text-muted">Loaded PartsBase environment</div>
@@ -52,14 +52,14 @@
 
         <div class="col-12">
             <div class="card">
-                <div class="card-header"><strong>Marketplace-Derived PartsBase Test</strong></div>
+                <div class="card-header"><strong>Stock Upload: CRM Stock to PartsBase Inventory</strong></div>
                 <div class="card-body">
-                    <p class="text-muted mb-3">Use Airbus/Mirakl-style CRM part selection as the source for a PartsBase inventory ZIP. Leave references blank to use the existing marketplace master-list test set.</p>
+                    <p class="text-muted mb-3">Uploads stock rows to PartsBase inventory using <code>/api/inventoryImportStocks</code>. Preview first to inspect the exact rows before sending them.</p>
                     <form method="post" class="row g-3">
                         <div class="col-lg-6">
                             <label for="marketplace_references" class="form-label">References</label>
                             <textarea id="marketplace_references" name="marketplace_references" rows="6" class="form-control" placeholder="21215DC2405J&#10;MS20470AD4-8&#10;ASNA0045BC100L">{{ marketplace_reference_input }}</textarea>
-                            <div class="form-text">One per line. Blank uses the marketplace test references already hard-coded in the Airbus route.</div>
+                            <div class="form-text">One per line. Blank uses a small stock-only sample from the marketplace export.</div>
                         </div>
                         <div class="col-lg-2">
                             <label for="marketplace_condition_code" class="form-label">Condition</label>
@@ -78,27 +78,13 @@
                             <input id="marketplace_trace_to" name="marketplace_trace_to" class="form-control" value="{{ marketplace_defaults.trace_to }}">
                         </div>
                         <div class="col-12 d-flex gap-2">
-                            <button type="submit" name="action" value="marketplace_preview" class="btn btn-outline-primary">Preview Marketplace Rows</button>
-                            <button type="submit" name="action" value="marketplace_submit" class="btn btn-warning">Upload Marketplace Test ZIP</button>
+                            <button type="submit" name="action" value="marketplace_preview" class="btn btn-outline-primary">Preview Stock Upload Rows</button>
+                            <button type="submit" name="action" value="marketplace_submit" class="btn btn-warning">Upload Stock to PartsBase</button>
                         </div>
                     </form>
-                </div>
-            </div>
-        </div>
-
-        <div class="col-lg-6">
-            <div class="card h-100">
-                <div class="card-header"><strong>Step 1: Submit Batch Search</strong></div>
-                <div class="card-body">
-                    <form method="post">
-                        <input type="hidden" name="action" value="batch_search">
-                        <label for="parts" class="form-label">Part numbers (one per line)</label>
-                        <textarea id="parts" name="parts" rows="8" class="form-control" placeholder="MS24566-8\n2N2222\nSN74HC00N">{{ submitted_parts }}</textarea>
-                        <button type="submit" class="btn btn-success mt-3">Upload Test ZIP</button>
-                    </form>
-                    {% if last_submit_request_id %}
+                    {% if last_submit_kind == 'inventory_upload' and last_submit_request_id %}
                     <div class="alert alert-info mt-3 mb-0">
-                        Request ID detected: <code>{{ last_submit_request_id }}</code>
+                        Inventory upload request ID: <code>{{ last_submit_request_id }}</code>. Use the inventory upload status check below for this ID.
                     </div>
                     {% endif %}
                 </div>
@@ -107,7 +93,26 @@
 
         <div class="col-lg-6">
             <div class="card h-100">
-                <div class="card-header"><strong>Step 2: Check Status</strong></div>
+                <div class="card-header"><strong>Availability Search: Submit Part Search ZIP</strong></div>
+                <div class="card-body">
+                    <form method="post">
+                        <input type="hidden" name="action" value="batch_search">
+                        <label for="parts" class="form-label">Part numbers (one per line)</label>
+                        <textarea id="parts" name="parts" rows="8" class="form-control" placeholder="MS24566-8\n2N2222\nSN74HC00N">{{ submitted_parts }}</textarea>
+                        <button type="submit" class="btn btn-success mt-3">Upload Availability Search ZIP</button>
+                    </form>
+                    {% if last_submit_kind == 'batch_search' and last_submit_request_id %}
+                    <div class="alert alert-info mt-3 mb-0">
+                        Availability search request ID: <code>{{ last_submit_request_id }}</code>. Use the batch search status and result download controls for this ID.
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-6">
+            <div class="card h-100">
+                <div class="card-header"><strong>Availability Search Status</strong></div>
                 <div class="card-body">
                     <form method="post" class="row g-2 align-items-end">
                         <input type="hidden" name="action" value="status_check">
@@ -116,7 +121,7 @@
                             <input id="status_request_id" name="status_request_id" class="form-control" value="{{ status_request_id }}" required>
                         </div>
                         <div class="col-12">
-                            <button type="submit" class="btn btn-outline-primary">Check Status</button>
+                            <button type="submit" class="btn btn-outline-primary">Check Availability Search Status</button>
                         </div>
                     </form>
                     {% if status_response %}
@@ -129,7 +134,29 @@
 
         <div class="col-lg-6">
             <div class="card h-100">
-                <div class="card-header"><strong>Step 3: Download Result File</strong></div>
+                <div class="card-header"><strong>Inventory Upload Status</strong></div>
+                <div class="card-body">
+                    <form method="post" class="row g-2 align-items-end">
+                        <input type="hidden" name="action" value="inventory_status_check">
+                        <div class="col-12">
+                            <label for="inventory_status_request_id" class="form-label">Request ID</label>
+                            <input id="inventory_status_request_id" name="inventory_status_request_id" class="form-control" value="{{ inventory_status_request_id }}" required>
+                        </div>
+                        <div class="col-12">
+                            <button type="submit" class="btn btn-outline-primary">Check Inventory Upload Status</button>
+                        </div>
+                    </form>
+                    {% if inventory_status_response %}
+                    <hr>
+                    <pre class="bg-light p-3 border rounded small mb-0">{{ inventory_status_response | tojson(indent=2) }}</pre>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-6">
+            <div class="card h-100">
+                <div class="card-header"><strong>Availability Search Result Download</strong></div>
                 <div class="card-body">
                     <form method="post" class="row g-2 align-items-end">
                         <input type="hidden" name="action" value="download_result">
@@ -159,7 +186,7 @@
         {% if marketplace_preview_rows %}
         <div class="col-12">
             <div class="card">
-                <div class="card-header"><strong>Marketplace Preview Rows</strong></div>
+                <div class="card-header"><strong>Stock Upload Preview Rows</strong></div>
                 <div class="card-body p-0">
                     <div class="table-responsive">
                         <table class="table table-sm table-striped mb-0">
@@ -203,7 +230,7 @@
         {% if marketplace_preview_skipped %}
         <div class="col-12">
             <div class="card border-warning">
-                <div class="card-header"><strong>Skipped Marketplace References</strong></div>
+                <div class="card-header"><strong>Skipped Stock Upload References</strong></div>
                 <div class="card-body">
                     <pre class="bg-light p-3 border rounded small mb-0">{{ marketplace_preview_skipped | tojson(indent=2) }}</pre>
                 </div>

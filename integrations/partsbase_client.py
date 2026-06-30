@@ -54,9 +54,18 @@ class PartsBaseClient:
         files = {'file': (filename, zip_bytes, 'application/zip')}
         return self._request('POST', '/api/inventoryAvailabilities', token=token, files=files)
 
+    def submit_inventory_import_zip(self, zip_bytes: bytes, *, filename: str = 'parts.zip') -> Dict[str, Any]:
+        token = self.get_access_token()
+        files = {'file': (filename, zip_bytes, 'application/zip')}
+        return self._request('POST', '/api/inventoryImportStocks', token=token, files=files)
+
     def get_inventory_availability_status(self, request_id: str) -> Dict[str, Any]:
         token = self.get_access_token()
         return self._request('GET', f'/api/inventoryAvailabilities/{request_id}/status', token=token)
+
+    def get_inventory_import_status(self, request_id: str) -> Dict[str, Any]:
+        token = self.get_access_token()
+        return self._request('GET', f'/api/inventoryImportStocks/{request_id}/status', token=token)
 
     def get_inventory_availability_result(self, request_id: str) -> Tuple[bytes, str]:
         token = self.get_access_token()
@@ -140,54 +149,33 @@ class PartsBaseClient:
         if not normalized:
             raise ValueError('At least one part number is required.')
 
-        # Based on the provided PartsBase sample, inventory uploads must contain
-        # exactly two files in the ZIP: `Manifest.xml` and `Data.dat`.
-        # `Data.dat` is tab-delimited with fields in the manifest order.
         data_rows = []
         for index, part in enumerate(normalized, start=1):
-            part_value = part.replace(' ', '')
-            row = [
-                'A',        # ACTION_CODE (Add/Update)
-                part_value, # PARTNUMBER
-                'DESCRIPTION_1',  # DESCRIPTION
-                'Alternate_1',    # ALTERNATEPARTNUMBER
-                'AR',       # CONDITIONCODE
-                '1',        # QUANTITY
-                'EA',       # UOM
-                'Manufacturer_1', # MANUFACTURER
-                '1.0',      # UNITPRICE
-                'TestAir1', # AIRCRAFT_TYPE
-                'TestEN1',  # ENGINE_TYPE
-                f'serialN{index}', # SERIALNUMBER
-                'JAA Form 1', # TRACEABILITY
-                'TraceTo1', # TRACETO
-                '',         # IMAGEURL
-                '',         # DOCUMENTATIONURL
-                '',         # DOCUMENTATIONCAPTION
+            data_rows.append(''.join([
+                PartsBaseClient._fixed_width(index, 10),
+                PartsBaseClient._fixed_width(part.replace(' ', ''), 50),
+                PartsBaseClient._fixed_width('', 80),
+                PartsBaseClient._fixed_width('', 5),
+            ]))
+
+        manifest_payload = '\n'.join(
+            [
+                '<?xml version="1.0" encoding="unicode"?>',
+                '<FIELDS>',
+                '  <FIELD NAME="LINE_INDEX" LENGTH="10" TYPE="DECIMAL" />',
+                '  <FIELD NAME="PARTNUMBER" LENGTH="50" TYPE="CHAR" />',
+                '  <FIELD NAME="DESCRIPTION" LENGTH="80" TYPE="CHAR" />',
+                '  <FIELD NAME="CONDITION" LENGTH="5" TYPE="CHAR" />',
+                '</FIELDS>',
             ]
-            data_rows.append('\t'.join(row))
-        return PartsBaseClient.create_inventory_upload_zip([
-            {
-                'action_code': 'A',
-                'part_number': part.replace(' ', ''),
-                'description': 'DESCRIPTION_1',
-                'alternate_part_number': 'Alternate_1',
-                'condition_code': 'AR',
-                'quantity': 1,
-                'uom': 'EA',
-                'manufacturer': 'Manufacturer_1',
-                'unit_price': '1.0',
-                'aircraft_type': 'TestAir1',
-                'engine_type': 'TestEN1',
-                'serial_number': f'serialN{index}',
-                'traceability': 'JAA Form 1',
-                'trace_to': 'TraceTo1',
-                'image_url': '',
-                'documentation_url': '',
-                'documentation_caption': '',
-            }
-            for index, part in enumerate(normalized, start=1)
-        ])
+        ).encode('utf-16')
+        data_payload = '\r\n'.join(data_rows).encode('utf-8')
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, mode='w', compression=zipfile.ZIP_DEFLATED) as zip_file:
+            zip_file.writestr('Data.dat', data_payload)
+            zip_file.writestr('Manifest.xml', manifest_payload)
+        return buffer.getvalue()
 
     @staticmethod
     def _build_manifest_payload() -> bytes:
@@ -204,8 +192,8 @@ class PartsBaseClient:
                 '  <FIELD NAME="UOM" TYPE="CHAR" />',
                 '  <FIELD NAME="MANUFACTURER" TYPE="CHAR" />',
                 '  <FIELD NAME="UNITPRICE" TYPE="DECIMAL" />',
-                '  <FIELD NAME="AIRCRAFT_TYPE" TYPE="CHAR" />',
-                '  <FIELD NAME="ENGINE_TYPE" TYPE="CHAR" />',
+                '  <FIELD NAME="AIRCRAFTTYPE" TYPE="CHAR" />',
+                '  <FIELD NAME="ENGINETYPE" TYPE="CHAR" />',
                 '  <FIELD NAME="SERIALNUMBER" TYPE="CHAR" />',
                 '  <FIELD NAME="TRACEABILITY" TYPE="CHAR" />',
                 '  <FIELD NAME="TRACETO" TYPE="CHAR" />',
@@ -215,6 +203,10 @@ class PartsBaseClient:
                 '</FIELDS>',
             ]
         ).encode('utf-16')
+
+    @staticmethod
+    def _fixed_width(value: Any, length: int) -> str:
+        return str(value or '')[:length].ljust(length)
 
     @staticmethod
     def _safe_error(response: requests.Response) -> str:
