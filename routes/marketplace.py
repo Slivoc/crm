@@ -113,16 +113,23 @@ def _mask_api_key(value):
     return f"{text[:4]}...{text[-4:]}"
 
 
-def _get_airbus_hardware_reference_workbook_path():
+def _get_airbus_hardware_reference_workbook_paths():
     docs_dir = os.path.join(os.getcwd(), 'docs')
+    paths = []
     for filename in (
         '[16.04.26] Masterlist Hardware.xlsx',
+        'Copy of 12.12.25 Masterlist Hardware.xlsx',
         'Copy of All Hardware References sept 2025.xlsx',
     ):
         path = os.path.join(docs_dir, filename)
         if os.path.exists(path):
-            return path
-    return ''
+            paths.append(path)
+    return paths
+
+
+def _get_airbus_hardware_reference_workbook_path():
+    paths = _get_airbus_hardware_reference_workbook_paths()
+    return paths[0] if paths else ''
 
 
 def _upsert_portal_setting(cursor, key, value):
@@ -1227,8 +1234,8 @@ def _sanitize_marketplace_lead_time_days(value, *, default=7):
 def _get_airbus_hardware_reference_maps():
     global _AIRBUS_HARDWARE_REFERENCE_CACHE, _AIRBUS_HARDWARE_REFERENCE_CACHE_MTIME
 
-    workbook_path = _get_airbus_hardware_reference_workbook_path()
-    if not workbook_path or not os.path.exists(workbook_path):
+    workbook_paths = _get_airbus_hardware_reference_workbook_paths()
+    if not workbook_paths:
         return {
             'exact_titles': set(),
             'normalized_titles': set(),
@@ -1236,8 +1243,8 @@ def _get_airbus_hardware_reference_maps():
             'alias_normalized': {},
         }
 
-    mtime = os.path.getmtime(workbook_path)
-    if _AIRBUS_HARDWARE_REFERENCE_CACHE is not None and _AIRBUS_HARDWARE_REFERENCE_CACHE_MTIME == mtime:
+    mtimes = tuple((path, os.path.getmtime(path)) for path in workbook_paths)
+    if _AIRBUS_HARDWARE_REFERENCE_CACHE is not None and _AIRBUS_HARDWARE_REFERENCE_CACHE_MTIME == mtimes:
         return _AIRBUS_HARDWARE_REFERENCE_CACHE
 
     exact_titles = set()
@@ -1245,54 +1252,55 @@ def _get_airbus_hardware_reference_maps():
     alias_exact_candidates = {}
     alias_normalized_candidates = {}
 
-    wb = load_workbook(workbook_path, read_only=True, data_only=True)
-    try:
-        ws = wb['Data'] if 'Data' in wb.sheetnames else wb.active
-        rows = ws.iter_rows(values_only=True)
-        first_row = next(rows, None)
-        second_row = next(rows, None)
+    for workbook_path in workbook_paths:
+        wb = load_workbook(workbook_path, read_only=True, data_only=True)
+        try:
+            ws = wb['Data'] if 'Data' in wb.sheetnames else wb.active
+            rows = ws.iter_rows(values_only=True)
+            first_row = next(rows, None)
+            second_row = next(rows, None)
 
-        def has_reference_headers(header_row):
-            normalized_headers = {_normalize_import_header(value) for value in (header_row or [])}
-            return 'mpntitle' in normalized_headers and 'alternativepartreflist' in normalized_headers
+            def has_reference_headers(header_row):
+                normalized_headers = {_normalize_import_header(value) for value in (header_row or [])}
+                return 'mpntitle' in normalized_headers and 'alternativepartreflist' in normalized_headers
 
-        if has_reference_headers(second_row):
-            headers = second_row
-            data_rows = rows
-        else:
-            headers = first_row
-            data_rows = itertools.chain([second_row], rows) if second_row else rows
+            if has_reference_headers(second_row):
+                headers = second_row
+                data_rows = rows
+            else:
+                headers = first_row
+                data_rows = itertools.chain([second_row], rows) if second_row else rows
 
-        for row in data_rows:
-            row_data = {
-                str(header or '').strip(): row[idx] if idx < len(row) else None
-                for idx, header in enumerate(headers or [])
-                if str(header or '').strip()
-            }
-            _, raw_title = _get_import_row_value(row_data, 'mpnTitle')
-            _, raw_alts = _get_import_row_value(row_data, 'alternativePartRefList')
-            mpn_title = str(raw_title or '').strip()
-            if not mpn_title:
-                continue
+            for row in data_rows:
+                row_data = {
+                    str(header or '').strip(): row[idx] if idx < len(row) else None
+                    for idx, header in enumerate(headers or [])
+                    if str(header or '').strip()
+                }
+                _, raw_title = _get_import_row_value(row_data, 'mpnTitle')
+                _, raw_alts = _get_import_row_value(row_data, 'alternativePartRefList')
+                mpn_title = str(raw_title or '').strip()
+                if not mpn_title:
+                    continue
 
-            exact_titles.add(mpn_title.upper())
-            normalized_title = _normalize_part_reference(mpn_title)
-            if normalized_title:
-                normalized_titles.add(normalized_title)
+                exact_titles.add(mpn_title.upper())
+                normalized_title = _normalize_part_reference(mpn_title)
+                if normalized_title:
+                    normalized_titles.add(normalized_title)
 
-            alt_tokens = [
-                token.strip()
-                for token in str(raw_alts or '').split('|')
-                if token and str(token).strip()
-            ]
-            for token in alt_tokens:
-                token_upper = token.upper()
-                alias_exact_candidates.setdefault(token_upper, set()).add(mpn_title)
-                normalized_token = _normalize_part_reference(token)
-                if normalized_token:
-                    alias_normalized_candidates.setdefault(normalized_token, set()).add(mpn_title)
-    finally:
-        wb.close()
+                alt_tokens = [
+                    token.strip()
+                    for token in str(raw_alts or '').split('|')
+                    if token and str(token).strip()
+                ]
+                for token in alt_tokens:
+                    token_upper = token.upper()
+                    alias_exact_candidates.setdefault(token_upper, set()).add(mpn_title)
+                    normalized_token = _normalize_part_reference(token)
+                    if normalized_token:
+                        alias_normalized_candidates.setdefault(normalized_token, set()).add(mpn_title)
+        finally:
+            wb.close()
 
     alias_exact = {
         key: next(iter(values))
@@ -1311,7 +1319,7 @@ def _get_airbus_hardware_reference_maps():
         'alias_exact': alias_exact,
         'alias_normalized': alias_normalized,
     }
-    _AIRBUS_HARDWARE_REFERENCE_CACHE_MTIME = mtime
+    _AIRBUS_HARDWARE_REFERENCE_CACHE_MTIME = mtimes
     return _AIRBUS_HARDWARE_REFERENCE_CACHE
 
 

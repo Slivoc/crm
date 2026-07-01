@@ -43,6 +43,10 @@ been observed in this repo, not generic Mirakl theory.
     references.
   - Useful as a business filter / candidate set, not as a product-ID source
     unless the sheet explicitly contains Mirakl IDs.
+- `docs/Copy of 12.12.25 Masterlist Hardware.xlsx`
+  - Older Airbus hardware master list.
+  - Kept as a supplemental alias source for parts missing from the newer April
+    master list.
 - `docs/Copy of All Hardware References sept 2025.xlsx`
   - Older Airbus hardware reference dictionary with:
     - `mpnTitle`
@@ -130,10 +134,14 @@ been observed in this repo, not generic Mirakl theory.
   - Purpose:
     - exact `mpnTitle` lookup
     - alternate reference -> canonical `mpnTitle` rewrite
+- `docs/Copy of 12.12.25 Masterlist Hardware.xlsx`
+  - Use this as a supplemental alias normalization source for references not
+    present in the newer April list.
 - `docs/Copy of All Hardware References sept 2025.xlsx`
   - Use this as a fallback alias normalization source only.
 
-These two files solve different problems and should stay separate.
+The resolver combines the available files in newest-to-oldest order, so an
+older workbook can resolve a part that is missing from the latest master list.
 
 ## Error status
 
