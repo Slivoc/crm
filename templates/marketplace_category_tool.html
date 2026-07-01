@@ -87,6 +87,7 @@ const INITIAL_MONTHS = {{ (initial_months or 24)|tojson }};
 const INITIAL_STATUS_FILTER = {{ (initial_status_filter or '')|tojson }};
 const INITIAL_LIMIT = {{ (initial_limit or 100)|tojson }};
 const INITIAL_PART_QUERY = {{ (initial_part_query or '')|tojson }};
+const INITIAL_IGNORE_REFERENCE_READINESS = {{ initial_ignore_reference_readiness|tojson }};
 
 $(document).ready(function() {
     if (INITIAL_SOURCE) {
@@ -169,6 +170,7 @@ function loadUncategorizedParts() {
             rankedParams.months = INITIAL_MONTHS || 24;
             rankedParams.status_filter = INITIAL_STATUS_FILTER || 'missing_category';
             rankedParams.part_query = $('#uncategorizedFilter').val() || '';
+            rankedParams.ignore_reference_readiness = INITIAL_IGNORE_REFERENCE_READINESS ? '1' : '0';
         }
         $.get('/marketplace/categorization-tool/uncategorized-ranked', rankedParams).done(function(response) {
             if (!response.success) {

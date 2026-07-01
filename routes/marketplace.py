@@ -2663,6 +2663,7 @@ def categorization_tool_page():
         initial_status_filter=(request.args.get('status_filter') or '').strip(),
         initial_limit=max(min(_coerce_int(request.args.get('limit'), default=100), 500), 1),
         initial_part_query=(request.args.get('part_query') or '').strip(),
+        initial_ignore_reference_readiness=_coerce_bool(request.args.get('ignore_reference_readiness'), default=False),
     )
 
 
@@ -2832,6 +2833,7 @@ def categorization_tool_uncategorized_ranked():
 
     if source == 'hqpl_opportunities':
         months = max(_coerce_int(request.args.get('months'), default=24), 0)
+        ignore_reference_readiness = _coerce_bool(request.args.get('ignore_reference_readiness'), default=False)
         status_filter = _coerce_text(
             request.args.get('status_filter'),
             default='missing_category',
@@ -2851,6 +2853,7 @@ def categorization_tool_uncategorized_ranked():
             part_query=part_query,
             status_filter=status_filter,
             limit=limit,
+            ignore_reference_readiness=ignore_reference_readiness,
         )
         parts = [
             {
@@ -3319,7 +3322,14 @@ def _table_exists(cursor, table_name):
             return False
 
 
-def _build_hqpl_activity_report_rows(*, months=24, part_query='', status_filter='not_listed_or_not_ready', limit=500):
+def _build_hqpl_activity_report_rows(
+    *,
+    months=24,
+    part_query='',
+    status_filter='not_listed_or_not_ready',
+    limit=500,
+    ignore_reference_readiness=False,
+):
     today = datetime.utcnow().date()
     cutoff = _months_ago(today, months) if months and months > 0 else None
 
@@ -3593,7 +3603,8 @@ def _build_hqpl_activity_report_rows(*, months=24, part_query='', status_filter=
             reasons.append('Missing category')
         if not _row_get(row, 'mkp_offer_product_id'):
             reasons.append('No stored product ID')
-        if reference_resolution.get('reference_status') in ('unknown', 'missing'):
+        reference_unresolved = reference_resolution.get('reference_status') in ('unknown', 'missing')
+        if reference_unresolved and not ignore_reference_readiness:
             reasons.append('Unresolved MPN title')
         if not has_positive_price:
             reasons.append('No positive price history')
@@ -3603,7 +3614,7 @@ def _build_hqpl_activity_report_rows(*, months=24, part_query='', status_filter=
         not_listed_or_not_ready = (
             not _row_get(row, 'mkp_offer_product_id')
             or not _row_get(row, 'mkp_category')
-            or reference_resolution.get('reference_status') in ('unknown', 'missing')
+            or (reference_unresolved and not ignore_reference_readiness)
         )
 
         if status_filter == 'missing_category' and _row_get(row, 'mkp_category'):
@@ -3612,7 +3623,7 @@ def _build_hqpl_activity_report_rows(*, months=24, part_query='', status_filter=
             continue
         if status_filter == 'no_price' and has_positive_price:
             continue
-        if status_filter == 'unknown_reference' and reference_resolution.get('reference_status') not in ('unknown', 'missing'):
+        if status_filter == 'unknown_reference' and not reference_unresolved:
             continue
         if status_filter == 'not_listed_or_not_ready' and not not_listed_or_not_ready:
             continue
@@ -3678,6 +3689,7 @@ def hqpl_opportunities_report():
     limit = max(min(_coerce_int(request.args.get('limit'), default=500), 5000), 1)
     part_query = _coerce_text(request.args.get('part_query'), default='').strip()
     status_filter = _coerce_text(request.args.get('status_filter'), default='not_listed_or_not_ready').strip()
+    ignore_reference_readiness = _coerce_bool(request.args.get('ignore_reference_readiness'), default=False)
     allowed_filters = {'not_listed_or_not_ready', 'missing_category', 'no_product_id', 'no_price', 'unknown_reference', 'all'}
     if status_filter not in allowed_filters:
         status_filter = 'not_listed_or_not_ready'
@@ -3687,6 +3699,7 @@ def hqpl_opportunities_report():
         part_query=part_query,
         status_filter=status_filter,
         limit=limit,
+        ignore_reference_readiness=ignore_reference_readiness,
     )
     summary = {
         'rows': len(rows),
@@ -3704,6 +3717,7 @@ def hqpl_opportunities_report():
         limit=limit,
         part_query=part_query,
         status_filter=status_filter,
+        ignore_reference_readiness=ignore_reference_readiness,
     )
 
 
@@ -3713,11 +3727,13 @@ def hqpl_opportunities_report_csv():
     limit = max(min(_coerce_int(request.args.get('limit'), default=5000), 20000), 1)
     part_query = _coerce_text(request.args.get('part_query'), default='').strip()
     status_filter = _coerce_text(request.args.get('status_filter'), default='not_listed_or_not_ready').strip()
+    ignore_reference_readiness = _coerce_bool(request.args.get('ignore_reference_readiness'), default=False)
     rows = _build_hqpl_activity_report_rows(
         months=months,
         part_query=part_query,
         status_filter=status_filter,
         limit=limit,
+        ignore_reference_readiness=ignore_reference_readiness,
     )
     fieldnames = [
         'part_number',

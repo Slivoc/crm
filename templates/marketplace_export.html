@@ -280,8 +280,11 @@
                 <div class="form-check mt-2">
                     <input class="form-check-input" type="checkbox" id="applyMasterListFilter">
                     <label class="form-check-label" for="applyMasterListFilter">
-                        Restrict to active Airbus master list
+                        Also restrict to active Airbus master list
                     </label>
+                    <div class="form-text">
+                        Leave off to rely only on rotary HQPL approval.
+                    </div>
                 </div>
             </div>
         </div>
@@ -877,7 +880,7 @@ $(document).ready(function() {
         $('#partNumberSearch').val('');
         $('#maxResults').val('');
         $('#defaultQuantity').val(1);
-        $('#applyMasterListFilter').prop('checked', !!activeMasterListSummary);
+        $('#applyMasterListFilter').prop('checked', false);
         applySavedMarketplaceDefaults();
         setPartSourceMode('filters');
     });
@@ -934,7 +937,7 @@ $(document).ready(function() {
         saveMarketplaceDefaults();
     });
 
-    $('#includeNonHqplAlts, #includeAltStockRollup').change(function() {
+    $('#applyMasterListFilter, #includeNonHqplAlts, #includeAltStockRollup').change(function() {
         if (allParts.length > 0) {
             loadParts();
             return;
@@ -1121,7 +1124,9 @@ function finishLoadParts(parts, mergedReferenceSummary, response, filters, rawLo
         $('#statsRow').show();
         $('#exportCard').show();
         const sourceLabel = partSourceMode === 'baseline' ? 'uploaded Airbus list' : 'CRM filters';
-        const masterListText = response && response.master_list_applied ? ' Master list filter active.' : '';
+        const masterListText = response && response.master_list_applied
+            ? ' HQPL + active master list filter active.'
+            : ' HQPL-only eligibility active.';
         const aliasCount = (referenceSummary.alias || 0) + (referenceSummary.alias_normalized || 0);
         const unknownCount = referenceSummary.unknown || 0;
         const exactCount = (referenceSummary.exact || 0) + (referenceSummary.exact_normalized || 0);
@@ -1301,14 +1306,13 @@ function renderMasterListSummary(summary) {
     const uploadedAt = activeMasterListSummary.uploaded_at
         ? new Date(activeMasterListSummary.uploaded_at).toLocaleString()
         : 'Unknown';
-    $('#applyMasterListFilter').prop('checked', true);
     $('#masterListSummary').html(`
         <div class="fw-bold mb-1">${activeMasterListSummary.filename || 'Active master list'}</div>
         <div class="text-muted small">
             Uploaded ${uploadedAt}. Processed ${activeMasterListSummary.processed_rows || 0} row(s),
             matched ${activeMasterListSummary.matched_rows || 0},
             unmatched ${activeMasterListSummary.unmatched_rows || 0},
-            invalid ${activeMasterListSummary.skipped_invalid || 0}.
+            invalid ${activeMasterListSummary.skipped_invalid || 0}. Use the checkbox below to apply it as an extra filter.
         </div>
     `);
 }
