@@ -1665,7 +1665,7 @@ def _get_portal_estimates(parts, customer_id):
     }
 
 
-def _fetch_marketplace_parts_by_references(references):
+def _fetch_marketplace_parts_by_references(references, *, hqpl_only=True):
     cleaned_refs = [ref.strip() for ref in references if ref and ref.strip()]
     if not cleaned_refs:
         return []
@@ -1702,6 +1702,10 @@ def _fetch_marketplace_parts_by_references(references):
 
     db = get_db()
     cursor = db.cursor()
+    hqpl_clause = ''
+    if hqpl_only:
+        hqpl_clause = f" AND {_build_rotary_hqpl_exists_clause('pn')}"
+        params.append(AIRBUS_ROTARY_APPROVAL_LIST_TYPE)
     cursor.execute(
         f"""
         SELECT
@@ -1716,10 +1720,10 @@ def _fetch_marketplace_parts_by_references(references):
         FROM part_numbers pn
         {_MARKETPLACE_MANUFACTURER_JOIN}
         WHERE {' OR '.join(where_clauses)}
-          AND {_build_rotary_hqpl_exists_clause('pn')}
+        {hqpl_clause}
         ORDER BY pn.part_number
         """,
-        params + [AIRBUS_ROTARY_APPROVAL_LIST_TYPE],
+        params,
     )
     rows = cursor.fetchall()
 
@@ -3756,6 +3760,7 @@ def get_parts_for_export():
         include_non_hqpl_alts = _coerce_bool(data.get('include_non_hqpl_alts'), default=False)
         include_alt_stock_rollup = _coerce_bool(data.get('include_alt_stock_rollup'), default=False)
         apply_master_list = _coerce_bool(data.get('apply_master_list'), default=False)
+        hqpl_only = _coerce_bool(data.get('hqpl_only'), default=True)
         source_mode = _coerce_text(data.get('source_mode'), default='filters')
         if source_mode not in ('filters', 'baseline'):
             source_mode = 'filters'
@@ -3773,12 +3778,13 @@ def get_parts_for_export():
 
         logger.info(
             "Marketplace export parts request: source_mode=%s stock_filter=%s category_filter=%s "
-            "pricing_only=%s apply_master_list=%s part_number_search=%s selected_count=%s max_results=%s offset=%s",
+            "pricing_only=%s apply_master_list=%s hqpl_only=%s part_number_search=%s selected_count=%s max_results=%s offset=%s",
             source_mode,
             stock_filter,
             category_filter,
             pricing_only,
             apply_master_list,
+            hqpl_only,
             part_number_search or "<none>",
             len(selected_base_part_numbers),
             max_results or "<none>",
@@ -3822,8 +3828,10 @@ def get_parts_for_export():
             WHERE 1=1
         """
 
-        params = [AIRBUS_ROTARY_APPROVAL_LIST_TYPE]
-        query += " AND " + _build_rotary_hqpl_exists_clause('pn')
+        params = []
+        if hqpl_only:
+            query += " AND " + _build_rotary_hqpl_exists_clause('pn')
+            params.append(AIRBUS_ROTARY_APPROVAL_LIST_TYPE)
 
         if master_list_applied:
             query += """

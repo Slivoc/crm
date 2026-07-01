@@ -94,6 +94,13 @@
                                 <div class="form-text">Off by default; sends blank <code>UNITPRICE</code> values.</div>
                             </div>
                         </div>
+                        <div class="col-lg-4 d-flex align-items-end">
+                            <div class="form-check mb-2">
+                                <input id="marketplace_hqpl_only" name="marketplace_hqpl_only" class="form-check-input" type="checkbox" value="1" {% if marketplace_defaults.hqpl_only %}checked{% endif %}>
+                                <label for="marketplace_hqpl_only" class="form-check-label">Restrict to Airbus HQPL parts</label>
+                                <div class="form-text">Off by default for PartsBase.</div>
+                            </div>
+                        </div>
                         <div class="col-12 d-flex gap-2 flex-wrap">
                             <button type="submit" name="action" value="marketplace_preview" class="btn btn-outline-primary">Preview Stock Upload Rows</button>
                             <button type="submit" name="action" value="marketplace_submit" class="btn btn-warning">Upload Stock to PartsBase</button>

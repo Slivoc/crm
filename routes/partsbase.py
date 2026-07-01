@@ -91,7 +91,7 @@ def _clean_inventory_action_code(value) -> str:
     return action_code if action_code in {'A', 'R', 'U', 'D'} else 'A'
 
 
-def _load_saved_nightly_marketplace_parts():
+def _load_saved_nightly_marketplace_parts(*, hqpl_only=False):
     from routes.marketplace import _fetch_marketplace_parts_by_references, _load_marketplace_job_payload
 
     payload, payload_error = _load_marketplace_job_payload()
@@ -110,7 +110,10 @@ def _load_saved_nightly_marketplace_parts():
     matched_rows = []
     batch_size = 200
     for index in range(0, len(references), batch_size):
-        matched_rows.extend(_fetch_marketplace_parts_by_references(references[index:index + batch_size]))
+        matched_rows.extend(_fetch_marketplace_parts_by_references(
+            references[index:index + batch_size],
+            hqpl_only=hqpl_only,
+        ))
 
     return references, matched_rows, {
         'base_part_count': len(references),
@@ -122,12 +125,12 @@ def _load_saved_nightly_marketplace_parts():
     }
 
 
-def _load_marketplace_parts(reference_lines):
+def _load_marketplace_parts(reference_lines, *, hqpl_only=False):
     from routes.marketplace import _MASTER_LIST_TEST_REFERENCE_MAP, _fetch_marketplace_parts_by_references, get_parts_for_export
 
     references = [line.strip() for line in reference_lines if line and line.strip()]
     if references:
-        return references, _fetch_marketplace_parts_by_references(references)
+        return references, _fetch_marketplace_parts_by_references(references, hqpl_only=hqpl_only)
 
     with current_app.test_request_context(
         '/marketplace/get-parts-for-export',
@@ -136,6 +139,7 @@ def _load_marketplace_parts(reference_lines):
             'stock_filter': 'stock_only',
             'category_filter': 'all',
             'pricing_only': False,
+            'hqpl_only': hqpl_only,
             'max_results': 10,
             'source_mode': 'filters',
         },
@@ -164,7 +168,7 @@ def _load_marketplace_parts(reference_lines):
     references = [row['requested_reference'] for row in matched_rows]
     if not references:
         references = list(_MASTER_LIST_TEST_REFERENCE_MAP.keys())
-        return references, _fetch_marketplace_parts_by_references(references)
+        return references, _fetch_marketplace_parts_by_references(references, hqpl_only=hqpl_only)
     return references, matched_rows
 
 
@@ -308,6 +312,7 @@ def partsbase_home():
             'traceability': 'C of C',
             'trace_to': '',
             'include_prices': False,
+            'hqpl_only': False,
         },
         'marketplace_preview_rows': [],
         'marketplace_preview_total': 0,
@@ -383,6 +388,7 @@ def partsbase_home():
             traceability = request.form.get('marketplace_traceability', '').strip()
             trace_to = request.form.get('marketplace_trace_to', '').strip()
             include_prices = _form_bool('marketplace_include_prices', default=False)
+            hqpl_only = _form_bool('marketplace_hqpl_only', default=False)
             context['marketplace_reference_input'] = submitted_refs
             context['marketplace_defaults'] = {
                 'action_code': action_code,
@@ -391,13 +397,14 @@ def partsbase_home():
                 'traceability': traceability,
                 'trace_to': trace_to,
                 'include_prices': include_prices,
+                'hqpl_only': hqpl_only,
             }
 
             if action in ('nightly_marketplace_preview', 'nightly_marketplace_submit'):
-                references, matched_rows, payload_summary = _load_saved_nightly_marketplace_parts()
+                references, matched_rows, payload_summary = _load_saved_nightly_marketplace_parts(hqpl_only=hqpl_only)
                 context['nightly_payload_summary'] = payload_summary
             else:
-                references, matched_rows = _load_marketplace_parts(submitted_refs.splitlines())
+                references, matched_rows = _load_marketplace_parts(submitted_refs.splitlines(), hqpl_only=hqpl_only)
             upload_rows, preview_rows, skipped_rows = _build_marketplace_upload_rows(
                 matched_rows,
                 action_code=action_code,
