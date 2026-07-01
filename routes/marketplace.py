@@ -8,6 +8,7 @@ import csv
 from datetime import datetime, date, timedelta
 from html import escape
 import io
+import itertools
 import logging
 import os
 import time
@@ -114,9 +115,13 @@ def _mask_api_key(value):
 
 def _get_airbus_hardware_reference_workbook_path():
     docs_dir = os.path.join(os.getcwd(), 'docs')
-    preferred = os.path.join(docs_dir, 'Copy of All Hardware References sept 2025.xlsx')
-    if os.path.exists(preferred):
-        return preferred
+    for filename in (
+        '[16.04.26] Masterlist Hardware.xlsx',
+        'Copy of All Hardware References sept 2025.xlsx',
+    ):
+        path = os.path.join(docs_dir, filename)
+        if os.path.exists(path):
+            return path
     return ''
 
 
@@ -1242,13 +1247,30 @@ def _get_airbus_hardware_reference_maps():
 
     wb = load_workbook(workbook_path, read_only=True, data_only=True)
     try:
-        ws = wb.active
+        ws = wb['Data'] if 'Data' in wb.sheetnames else wb.active
         rows = ws.iter_rows(values_only=True)
-        next(rows, None)
+        first_row = next(rows, None)
+        second_row = next(rows, None)
 
-        for row in rows:
-            raw_title = row[0] if len(row) > 0 else None
-            raw_alts = row[1] if len(row) > 1 else None
+        def has_reference_headers(header_row):
+            normalized_headers = {_normalize_import_header(value) for value in (header_row or [])}
+            return 'mpntitle' in normalized_headers and 'alternativepartreflist' in normalized_headers
+
+        if has_reference_headers(second_row):
+            headers = second_row
+            data_rows = rows
+        else:
+            headers = first_row
+            data_rows = itertools.chain([second_row], rows) if second_row else rows
+
+        for row in data_rows:
+            row_data = {
+                str(header or '').strip(): row[idx] if idx < len(row) else None
+                for idx, header in enumerate(headers or [])
+                if str(header or '').strip()
+            }
+            _, raw_title = _get_import_row_value(row_data, 'mpnTitle')
+            _, raw_alts = _get_import_row_value(row_data, 'alternativePartRefList')
             mpn_title = str(raw_title or '').strip()
             if not mpn_title:
                 continue

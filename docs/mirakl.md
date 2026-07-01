@@ -35,18 +35,21 @@ been observed in this repo, not generic Mirakl theory.
     - `This product is not available for sale`
     - invalid `leadtime-to-ship`
     - `The product linked to the new offer is different from the product linked to the existing offer.`
-- `docs/Copy of All Hardware References sept 2025.xlsx`
-  - Airbus hardware reference dictionary with:
-    - `mpnTitle`
-    - `alternativePartRefList`
-  - Useful for canonicalizing aliases.
-  - Does not contain Airbus product IDs.
 - `docs/[16.04.26] Masterlist Hardware.xlsx`
   - Newer Airbus hardware master list.
   - Treat this as the current approved hardware universe until replaced by a
     newer Airbus list.
+  - Primary local reference for canonicalizing `mpnTitle` values and alternate
+    references.
   - Useful as a business filter / candidate set, not as a product-ID source
     unless the sheet explicitly contains Mirakl IDs.
+- `docs/Copy of All Hardware References sept 2025.xlsx`
+  - Older Airbus hardware reference dictionary with:
+    - `mpnTitle`
+    - `alternativePartRefList`
+  - Kept as a fallback for alias normalization if the newer master list is not
+    available.
+  - Does not contain Airbus product IDs.
 
 ## What the April 15, 2026 call clarified
 
@@ -121,17 +124,14 @@ been observed in this repo, not generic Mirakl theory.
 
 ## Reference handling
 
-- `docs/Copy of All Hardware References sept 2025.xlsx`
-  - Use this for alias normalization only.
+- `docs/[16.04.26] Masterlist Hardware.xlsx`
+  - Use this as the current Airbus hardware candidate set and primary alias
+    normalization source.
   - Purpose:
     - exact `mpnTitle` lookup
     - alternate reference -> canonical `mpnTitle` rewrite
-- `docs/[16.04.26] Masterlist Hardware.xlsx`
-  - Use this as the approved Airbus hardware candidate set.
-  - Purpose:
-    - decide which CRM parts are worth exporting as Airbus hardware offers
-    - flag CRM parts that are outside the current Airbus master list
-    - reduce user error by keeping exports focused on known Airbus hardware
+- `docs/Copy of All Hardware References sept 2025.xlsx`
+  - Use this as a fallback alias normalization source only.
 
 These two files solve different problems and should stay separate.
 
