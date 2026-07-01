@@ -1374,6 +1374,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let originalPersonalSalesData = null;
     let originalAccountSalesData = null;
     let monthlyGoal = null;
+    let includeCurrentMonth = false;
 
     // Create labels for last 24 months
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -1483,28 +1484,70 @@ document.addEventListener('DOMContentLoaded', function() {
         };
     };
 
-    const applySalesChartOverlays = (chartData, rollingAverageLabel = '3 Month Rolling Avg') => {
+    const stripSalesChartOverlays = (chartData) => {
         if (!chartData || !Array.isArray(chartData.datasets)) {
-            return;
+            return chartData;
         }
-
         chartData.datasets = chartData.datasets.filter(dataset => !dataset.isMonthlyGoal && !dataset.isRollingAverage);
+        return chartData;
+    };
 
-        const primaryDataset = chartData.datasets[0];
-        const averageDataset = buildRollingAverageDataset(primaryDataset, chartData.labels || [], rollingAverageLabel);
+    const shouldExcludeCurrentMonth = (labelSet = labels) => {
+        if (includeCurrentMonth || !Array.isArray(labelSet) || labelSet.length === 0) {
+            return false;
+        }
+        return labelSet[labelSet.length - 1] === labels[labels.length - 1];
+    };
+
+    const trimCurrentMonthFromChartData = (chartData) => {
+        if (!shouldExcludeCurrentMonth(chartData && chartData.labels)) {
+            return chartData;
+        }
+
+        chartData.labels = chartData.labels.slice(0, -1);
+        if (Array.isArray(chartData.datasets)) {
+            chartData.datasets.forEach(dataset => {
+                if (Array.isArray(dataset.data)) {
+                    dataset.data = dataset.data.slice(0, -1);
+                }
+            });
+        }
+        return chartData;
+    };
+
+    const cloneChartDataForDisplay = (chartData) => ({
+        ...chartData,
+        labels: Array.isArray(chartData.labels) ? chartData.labels.slice() : [],
+        datasets: Array.isArray(chartData.datasets)
+            ? chartData.datasets.map(dataset => ({
+                ...dataset,
+                data: Array.isArray(dataset.data) ? dataset.data.slice() : dataset.data
+            }))
+            : []
+    });
+
+    const prepareSalesChartData = (chartData, rollingAverageLabel = '3 Month Rolling Avg') => {
+        if (!chartData || !Array.isArray(chartData.datasets)) {
+            return chartData;
+        }
+
+        const displayData = cloneChartDataForDisplay(chartData);
+        stripSalesChartOverlays(displayData);
+        trimCurrentMonthFromChartData(displayData);
+
+        const primaryDataset = displayData.datasets[0];
+        const averageDataset = buildRollingAverageDataset(primaryDataset, displayData.labels || [], rollingAverageLabel);
         if (averageDataset) {
-            chartData.datasets.push(averageDataset);
+            displayData.datasets.push(averageDataset);
         }
 
-        const goalDataset = buildMonthlyGoalDataset(monthlyGoal, chartData.labels || []);
+        const goalDataset = buildMonthlyGoalDataset(monthlyGoal, displayData.labels || []);
         if (goalDataset) {
-            chartData.datasets.push(goalDataset);
+            displayData.datasets.push(goalDataset);
         }
+        return displayData;
     };
 
-    const applyMonthlyGoalDataset = (chartData) => {
-        applySalesChartOverlays(chartData);
-    };
 
     // Initialize chart data with modern styling
     let personalSalesData = {
@@ -1657,6 +1700,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 },
                 tooltip: {
                     enabled: true,
+                    events: ['click'],
                     mode: 'index',
                     intersect: false,
                     backgroundColor: 'rgba(17, 24, 39, 0.95)',
@@ -1673,103 +1717,31 @@ document.addEventListener('DOMContentLoaded', function() {
                     padding: 16,
                     bodyFont: { size: 13 },
                     titleFont: { size: 14, weight: '600' },
+                    filter: function(tooltipItem) {
+                        const dataset = tooltipItem.dataset || {};
+                        return Boolean(dataset.isRollingAverage || dataset.isMonthlyGoal);
+                    },
                     callbacks: {
                         title: function(tooltipItems) {
-                            let suffix = '';
-                            if (currentCustomerFilter) {
-                                suffix = ' (customer-specific)';
-                            } else if (excludedCustomers.size > 0) {
-                                suffix = ` (${excludedCustomers.size} customer${excludedCustomers.size !== 1 ? 's' : ''} excluded)`;
-                            }
-                            return tooltipItems[0].label + suffix + ' (click for details)';
+                            return tooltipItems[0].label;
                         },
-                        beforeBody: function(tooltipItems) {
-                            if (currentCustomerFilter) {
-                                return ['', `Customer: ${currentCustomerFilter.name}`, ''];
+                        label: function(tooltipItem) {
+                            const dataset = tooltipItem.dataset || {};
+                            const value = tooltipItem.parsed.y || 0;
+                            const formattedValue = `£${value.toLocaleString('en-GB', {
+                                minimumFractionDigits: 0,
+                                maximumFractionDigits: 0
+                            })}`;
+
+                            if (dataset.isMonthlyGoal) {
+                                return `Monthly Goal: ${formattedValue}`;
                             }
 
-                            const monthIndex = tooltipItems[0].dataIndex;
-                            const currentView = document.getElementById('personal-sales-btn').classList.contains('active')
-                                ? 'personal' : 'account';
-
-                            if (!monthlyCustomerData[currentView]) {
-                                return ['', 'Sales Details:'];
+                            if (dataset.isRollingAverage) {
+                                return `${dataset.label || 'Rolling Average'}: ${formattedValue}`;
                             }
 
-                            const monthData = monthlyCustomerData[currentView][monthIndex];
-                            if (!monthData || !Array.isArray(monthData) || monthData.length === 0) {
-                                return ['', 'Sales Details:'];
-                            }
-
-                            return ['', 'Top Customers:'];
-                        },
-                        afterLabel: function(tooltipItem) {
-                            const monthIndex = tooltipItem.dataIndex;
-                            const salesValue = tooltipItem.parsed.y;
-
-                            if (currentCustomerFilter && customerSalesData) {
-                                const monthDetails = customerSalesData.monthly_details[monthIndex];
-                                if (!monthDetails || salesValue === 0) {
-                                    return ['', 'No sales recorded for this month'];
-                                }
-
-                                return ['',
-                                    `Total Sales: £${salesValue.toLocaleString('en-US', {
-                                        minimumFractionDigits: 0,
-                                        maximumFractionDigits: 0
-                                    })}`,
-                                    `Orders: ${monthDetails.order_count}`,
-                                    `Part Numbers: ${monthDetails.part_count}`,
-                                    `Total Quantity: ${monthDetails.total_quantity}`
-                                ];
-                            }
-
-                            const currentView = document.getElementById('personal-sales-btn').classList.contains('active')
-                                ? 'personal' : 'account';
-                            const monthData = monthlyCustomerData[currentView] && monthlyCustomerData[currentView][monthIndex];
-
-                            if (!monthData || !Array.isArray(monthData) || monthData.length === 0) {
-                                if (salesValue > 0) {
-                                    return ['', `Total Sales: £${salesValue.toLocaleString('en-US', {
-                                        minimumFractionDigits: 0,
-                                        maximumFractionDigits: 0
-                                    })}`, '', 'Detailed customer breakdown not available'];
-                                } else {
-                                    return ['', 'No sales recorded for this month'];
-                                }
-                            }
-
-                            // Filter out excluded customers from tooltip
-                            const filteredMonthData = monthData.filter(customer =>
-                                !excludedCustomers.has(customer.customer_id.toString())
-                            );
-
-                            const topCustomers = filteredMonthData.slice(0, 5);
-                            const customerLines = [''];
-
-                            topCustomers.forEach((customer, index) => {
-                                const rank = index + 1;
-                                const name = customer.customer_name.length > 20
-                                    ? customer.customer_name.substring(0, 20) + '...'
-                                    : customer.customer_name;
-                                const value = `£${customer.total_value.toLocaleString('en-US', {
-                                    minimumFractionDigits: 0,
-                                    maximumFractionDigits: 0
-                                })}`;
-
-                                customerLines.push(`${rank}. ${name} - ${value}`);
-                            });
-
-                            if (filteredMonthData.length > 5) {
-                                const remaining = filteredMonthData.length - 5;
-                                customerLines.push(`   ...and ${remaining} more`);
-                            }
-
-                            if (excludedCustomers.size > 0) {
-                                customerLines.push('', `(${excludedCustomers.size} customer${excludedCustomers.size !== 1 ? 's' : ''} excluded from view)`);
-                            }
-
-                            return customerLines;
+                            return null;
                         }
                     }
                 },
@@ -1796,8 +1768,18 @@ document.addEventListener('DOMContentLoaded', function() {
     const comparedCustomersList = document.getElementById('comparedCustomersList');
     const excludedCustomersList = document.getElementById('excludedCustomersList');
     const chartInfoText = document.getElementById('chartInfoText');
+    const includeCurrentMonthToggle = document.getElementById('includeCurrentMonthToggle');
 
     // Event listeners
+    if (includeCurrentMonthToggle) {
+        includeCurrentMonthToggle.checked = includeCurrentMonth;
+        includeCurrentMonthToggle.addEventListener('change', function() {
+            includeCurrentMonth = this.checked;
+            updateChart();
+            updateChartInfoText();
+        });
+    }
+
     customerFilter.addEventListener('change', function() {
         const customerId = this.value;
         if (customerId && customerId !== '') {
@@ -2051,8 +2033,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 pointHitRadius: 20
             }]
         };
-        applySalesChartOverlays(customerChartData, `${customerSalesData.customer_name} 3 Month Avg`);
-        salesChart.data = customerChartData;
+        salesChart.data = prepareSalesChartData(customerChartData, `${customerSalesData.customer_name} 3 Month Avg`);
                 scheduleRender(() => {
                     salesChart.update();
                 }, 50);
@@ -2069,10 +2050,10 @@ document.addEventListener('DOMContentLoaded', function() {
             // Calculate excluded sales data
             const baseData = isPersonalView ? originalPersonalSalesData : originalAccountSalesData;
             const excludedData = calculateExcludedSalesData(baseData, isPersonalView);
-            salesChart.data = excludedData;
+            salesChart.data = prepareSalesChartData(excludedData);
         } else {
             // Show original data
-            salesChart.data = isPersonalView ? personalSalesData : accountSalesData;
+            salesChart.data = prepareSalesChartData(isPersonalView ? personalSalesData : accountSalesData);
         }
         salesChart.update();
     }
@@ -2108,8 +2089,6 @@ document.addEventListener('DOMContentLoaded', function() {
         excludedData.datasets[0].data = newValues;
         excludedData.datasets[0].label = excludedData.datasets[0].label +
             ` (${excludedCustomers.size} customer${excludedCustomers.size !== 1 ? 's' : ''} excluded)`;
-        applySalesChartOverlays(excludedData);
-
         return excludedData;
     }
 
@@ -2178,26 +2157,18 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
-    const baselineAverageDataset = buildRollingAverageDataset(baselineDataset, labels, 'Baseline 3 Month Avg');
-    if (baselineAverageDataset) {
-        datasets.push(baselineAverageDataset);
-    }
-
-    const goalDataset = buildMonthlyGoalDataset(monthlyGoal, labels);
-    if (goalDataset) {
-        datasets.push(goalDataset);
-    }
-
-    salesChart.data = {
+    salesChart.data = prepareSalesChartData({
         labels: labels,
         datasets: datasets
-    };
+    }, 'Baseline 3 Month Avg');
 
     salesChart.update();
 }
 
     function updateChartInfoText() {
-        let infoText = 'Click on any point to see detailed breakdown for that month';
+        let infoText = includeCurrentMonth
+            ? 'Including the in-progress current month. Click any point to see detailed breakdown for that month'
+            : 'Current month hidden to keep trends stable. Toggle it on to include month-to-date sales';
 
         if (currentCustomerFilter) {
             infoText = `Viewing ${currentCustomerFilter.name} - ` + infoText;
@@ -2330,17 +2301,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 monthlyGoal = data.monthly_goal_series || data.monthly_goal || null;
 
                 if (personalUpdated) {
-                    applyMonthlyGoalDataset(personalSalesData);
+                    stripSalesChartOverlays(personalSalesData);
                     originalPersonalSalesData = JSON.parse(JSON.stringify(personalSalesData));
                 }
 
                 if (accountUpdated) {
-                    applyMonthlyGoalDataset(accountSalesData);
+                    stripSalesChartOverlays(accountSalesData);
                     originalAccountSalesData = JSON.parse(JSON.stringify(accountSalesData));
                 }
 
                 scheduleRender(() => {
-                    salesChart.update();
+                    updateChart();
                 }, 50);
                 logActivityTiming('sales_data_render');
                 if (console.timeEnd) {
