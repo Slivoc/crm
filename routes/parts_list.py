@@ -5574,12 +5574,12 @@ def top_parts_list_quotes():
                 COUNT(DISTINCT pll.id) AS line_count,
                   COUNT(DISTINCT CASE 
                       WHEN cql.quoted_status = 'quoted' 
-                           AND COALESCE(cql.is_no_bid::int, 0) = 0
+                           AND COALESCE(CAST(cql.is_no_bid AS INTEGER), 0) = 0
                            AND cql.quote_price_gbp > 0 
                       THEN pll.id END) AS quoted_lines,
                   COALESCE(SUM(CASE 
                       WHEN cql.quoted_status = 'quoted' 
-                           AND COALESCE(cql.is_no_bid::int, 0) = 0
+                           AND COALESCE(CAST(cql.is_no_bid AS INTEGER), 0) = 0
                            AND cql.quote_price_gbp > 0
                       THEN cql.quote_price_gbp * COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0)
                       ELSE 0 END), 0) AS quoted_value_gbp
@@ -5592,7 +5592,7 @@ def top_parts_list_quotes():
             GROUP BY pl.id, pl.name, pl.status_id, pl.date_modified, c.name, pls.name
               HAVING COALESCE(SUM(CASE 
                   WHEN cql.quoted_status = 'quoted' 
-                       AND COALESCE(cql.is_no_bid::int, 0) = 0
+                       AND COALESCE(CAST(cql.is_no_bid AS INTEGER), 0) = 0
                        AND cql.quote_price_gbp > 0
                   THEN cql.quote_price_gbp * COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0)
                   ELSE 0 END), 0) > 0
@@ -5713,7 +5713,7 @@ def _get_quote_report_rows(start_date, end_date, salesperson_id=None):
           AND cql.quoted_on IS NOT NULL
           AND cql.quoted_on >= ?::date
           AND cql.quoted_on < ?::date
-          AND COALESCE(cql.is_no_bid::int, 0) = 0
+          AND COALESCE(CAST(cql.is_no_bid AS INTEGER), 0) = 0
           AND COALESCE(cql.quote_price_gbp, 0) > 0
           {salesperson_clause}
         ORDER BY customer.name NULLS LAST, pl.name, cql.quoted_on DESC, pll.line_number ASC, pll.id ASC
@@ -5933,6 +5933,24 @@ def view_parts_lists():
             except ValueError:
                 quoted_date_filter = None
 
+        default_end_date = date.today()
+        default_start_date = default_end_date - timedelta(days=45)
+        start_date_raw = (request.args.get('start_date') or '').strip()
+        end_date_raw = (request.args.get('end_date') or '').strip()
+
+        def _parse_filter_date(raw_value, fallback):
+            if not raw_value:
+                return fallback
+            try:
+                return datetime.strptime(raw_value, '%Y-%m-%d').date()
+            except ValueError:
+                return fallback
+
+        start_date_filter = _parse_filter_date(start_date_raw, default_start_date)
+        end_date_filter = _parse_filter_date(end_date_raw, default_end_date)
+        if start_date_filter > end_date_filter:
+            start_date_filter, end_date_filter = end_date_filter, start_date_filter
+
         current_user_salesperson_id = None
         if current_user.is_authenticated:
             user_salesperson = db_execute(
@@ -5959,6 +5977,8 @@ def view_parts_lists():
             request.args.get('salesperson_id'),
             request.args.get('quoted_date'),
             request.args.get('q'),
+            request.args.get('start_date'),
+            request.args.get('end_date'),
         ])
         if raw_status_id is None and not has_explicit_filters:
             status_id = 1
@@ -6045,7 +6065,7 @@ def view_parts_lists():
                         )) AS qpl_line_count
                     ,(SELECT COALESCE(SUM(CASE
                         WHEN cql.quoted_status = 'quoted'
-                             AND COALESCE(cql.is_no_bid::int, 0) = 0
+                             AND COALESCE(CAST(cql.is_no_bid AS INTEGER), 0) = 0
                              AND cql.quote_price_gbp > 0
                         THEN cql.quote_price_gbp * COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0)
                         ELSE 0 END), 0)
@@ -6098,6 +6118,14 @@ def view_parts_lists():
                 where_clauses.append("pl.salesperson_id = ?")
                 params.append(salesperson_id)
 
+            if start_date_filter:
+                where_clauses.append("DATE(pl.date_created) >= ?")
+                params.append(start_date_filter.isoformat())
+
+            if end_date_filter:
+                where_clauses.append("DATE(pl.date_created) <= ?")
+                params.append(end_date_filter.isoformat())
+
             if quoted_date_filter:
                 where_clauses.append("""
                     EXISTS (
@@ -6126,22 +6154,51 @@ def view_parts_lists():
                 placeholders = ','.join('?' for _ in parts_list_ids)
                 line_rows = db_execute(
                     f"""
-                    SELECT parts_list_id, customer_part_number, base_part_number
-                    FROM parts_list_lines
-                    WHERE parts_list_id IN ({placeholders})
-                    ORDER BY parts_list_id, line_number ASC, id ASC
+                    SELECT
+                        pll.id,
+                        pll.parts_list_id,
+                        pll.line_number,
+                        pll.customer_part_number,
+                        pll.base_part_number,
+                        pll.quantity,
+                        CASE WHEN EXISTS (
+                            SELECT 1
+                            FROM customer_quote_lines cql
+                            WHERE cql.parts_list_line_id = pll.id
+                              AND cql.quoted_status = 'quoted'
+                              AND COALESCE(CAST(cql.is_no_bid AS INTEGER), 0) = 0
+                        ) THEN 1 ELSE 0 END AS is_customer_quoted,
+                        (SELECT COUNT(DISTINCT se.supplier_id)
+                         FROM parts_list_line_supplier_emails se
+                         WHERE se.parts_list_line_id = pll.id) AS contacted_supplier_count,
+                        (SELECT COUNT(*)
+                         FROM parts_list_supplier_quote_lines sql
+                         WHERE sql.parts_list_line_id = pll.id
+                           AND COALESCE(CAST(sql.is_no_bid AS INTEGER), 0) = 0
+                           AND sql.unit_price IS NOT NULL) AS offer_count,
+                        (SELECT COUNT(*)
+                         FROM parts_list_supplier_quote_lines sql
+                         WHERE sql.parts_list_line_id = pll.id
+                           AND COALESCE(CAST(sql.is_no_bid AS INTEGER), 0) <> 0) AS no_bid_count
+                    FROM parts_list_lines pll
+                    WHERE pll.parts_list_id IN ({placeholders})
+                    ORDER BY pll.parts_list_id, pll.line_number ASC, pll.id ASC
                     """,
                     tuple(parts_list_ids),
                     fetch='all',
                 )
+                detail_map = {}
                 for line in line_rows or []:
-                    preview_lines = preview_map.setdefault(line['parts_list_id'], [])
+                    line_dict = dict(line)
+                    preview_lines = preview_map.setdefault(line_dict['parts_list_id'], [])
                     if len(preview_lines) < 5:
-                        preview_lines.append(line['customer_part_number'] or line['base_part_number'])
+                        preview_lines.append(line_dict.get('customer_part_number') or line_dict.get('base_part_number'))
+                    detail_map.setdefault(line_dict['parts_list_id'], []).append(line_dict)
 
                 for list_dict in lists_data:
                     preview_lines = preview_map.get(list_dict['id'], [])
                     list_dict['preview_parts'] = ', '.join(filter(None, preview_lines)) if preview_lines else ''
+                    list_dict['line_details'] = detail_map.get(list_dict['id'], [])
 
         selected_customer_name = None
         if customer_id:
@@ -6170,6 +6227,8 @@ def view_parts_lists():
                                selected_salesperson_id=salesperson_id,
                                explicit_salesperson_id=salesperson_id_param,
                                selected_quoted_date=quoted_date_filter,
+                               selected_start_date=start_date_filter.isoformat() if start_date_filter else '',
+                               selected_end_date=end_date_filter.isoformat() if end_date_filter else '',
                                initial_part_search=part_search)
     except Exception as e:
         logging.exception(e)
@@ -6182,6 +6241,8 @@ def view_parts_lists():
                                current_user_salesperson_id=None,
                                selected_project_filter='none',
                                selected_quoted_date=None,
+                               selected_start_date='',
+                               selected_end_date='',
                                initial_part_search=part_search)
 
 def _get_common_parts_report_customer_filters():
