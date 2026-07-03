@@ -59,6 +59,40 @@
     .card .card-body.table-container {
         padding: 0 !important;
     }
+
+    .sortable-header {
+        cursor: pointer;
+        user-select: none;
+    }
+
+    .sortable-header .sort-icon {
+        opacity: 0.35;
+        font-size: 0.75rem;
+    }
+
+    .sortable-header.sort-asc .sort-icon,
+    .sortable-header.sort-desc .sort-icon {
+        opacity: 1;
+    }
+
+    .line-status-detail {
+        background: #f8f9fa;
+    }
+
+    .line-status-pill {
+        white-space: nowrap;
+    }
+
+    .pin-icon-btn {
+        border: 0;
+        background: transparent;
+        padding: 0.15rem 0.35rem;
+        line-height: 1;
+    }
+
+    .pin-icon-btn:hover {
+        background: rgba(255, 193, 7, 0.12);
+    }
 </style>
 <div class="container-fluid mt-4">
     <div class="row mb-3 align-items-center">
@@ -225,6 +259,16 @@
                     </select>
                 </div>
 
+                <div class="col-md-3">
+                    <label class="form-label">Created Date Range</label>
+                    <div class="input-group">
+                        <input type="date" id="startDateFilter" class="form-control" value="{{ selected_start_date or '' }}">
+                        <input type="date" id="endDateFilter" class="form-control" value="{{ selected_end_date or '' }}">
+                        <button class="btn btn-outline-secondary" type="button" onclick="applyDateRangeFilter()">Apply</button>
+                    </div>
+                    <small class="text-muted">Defaults to lists created in the last 45 days.</small>
+                </div>
+
             </div>
         </div>
     </div>
@@ -288,30 +332,36 @@
                 <table class="table table-hover align-middle mb-0" id="partsListsTable">
                     <thead>
     <tr>
-        <th class="text-nowrap">List #</th>
-        <th>Name</th>
-        <th>Customer</th>
+        <th></th>
+        <th class="text-nowrap sortable-header" data-sort-type="number">List # <i class="bi bi-arrow-down-up sort-icon"></i></th>
+        <th class="sortable-header" data-sort-type="text">Name <i class="bi bi-arrow-down-up sort-icon"></i></th>
+        <th class="sortable-header" data-sort-type="text">Customer <i class="bi bi-arrow-down-up sort-icon"></i></th>
         <th>Project</th>
         <th>Contact</th>
         <th>Status</th>
-        <th class="text-center" style="width: 18%;">Lines / Costed / Quoted</th>
-        <th class="text-end">Quoted Value</th>
+        <th class="text-center sortable-header" data-sort-type="number" style="width: 18%;">Lines / Costed / Quoted <i class="bi bi-arrow-down-up sort-icon"></i></th>
+        <th class="text-end sortable-header" data-sort-type="number">Quoted Value <i class="bi bi-arrow-down-up sort-icon"></i></th>
         <th style="width: 25%;">Preview</th>
-        <th>Created</th>
-        <th>Modified</th>
+        <th class="sortable-header" data-sort-type="date">Created <i class="bi bi-arrow-down-up sort-icon"></i></th>
+        <th class="sortable-header" data-sort-type="date">Modified <i class="bi bi-arrow-down-up sort-icon"></i></th>
         <th class="text-end">Actions</th>
     </tr>
 </thead>
                     <tbody>
                         {% for list in lists %}
-                       <tr style="cursor: pointer;" onclick="window.location='{{ url_for('parts_list.view_parts_list', list_id=list.id) }}';">
-    <td class="text-nowrap fw-semibold text-muted">#{{ list.id }}</td>
-    <td>
+                       <tr class="parts-list-row" data-detail-row="list-details-{{ list.id }}" style="cursor: pointer;" onclick="window.location='{{ url_for('parts_list.view_parts_list', list_id=list.id) }}';">
+    <td onclick="event.stopPropagation();">
+        <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#list-details-{{ list.id }}" aria-expanded="false" aria-controls="list-details-{{ list.id }}" title="Show line statuses">
+            <i class="bi bi-chevron-down"></i>
+        </button>
+    </td>
+    <td class="text-nowrap fw-semibold text-muted" data-sort-value="{{ list.id }}">#{{ list.id }}</td>
+    <td data-sort-value="{{ list.name|lower }}">
         <span class="text-decoration-none fw-semibold">
             {{ list.name }}
         </span>
     </td>
-    <td>{{ list.customer_name or '-' }}</td>
+    <td data-sort-value="{{ (list.customer_name or '')|lower }}">{{ list.customer_name or '-' }}</td>
     <td onclick="event.stopPropagation();">
         <select class="form-select form-select-sm"
                 style="min-width: 180px;"
@@ -338,7 +388,7 @@
             {% endfor %}
         </select>
     </td>
-                            <td class="text-center">
+                            <td class="text-center" data-sort-value="{{ list.line_count or 0 }}">
                                 {% set line_count = list.line_count %}
                                 {% set costed_count = list.costed_line_count %}
                                 {% set quoted_count = list.quoted_line_count %}
@@ -370,7 +420,7 @@
                                     </div>
                                 </div>
                             </td>
-                            <td class="text-end text-nowrap">
+                            <td class="text-end text-nowrap" data-sort-value="{{ list.quoted_value_gbp or 0 }}">
                                 {{ format_currency(list.quoted_value_gbp or 0, '£') }}
                             </td>
                             <td>
@@ -382,14 +432,14 @@
                                     {% endif %}
                                 </small>
                             </td>
-                            <td>
+                            <td data-sort-value="{{ list.date_created.isoformat() if list.date_created else '' }}">
                                 {% if list.date_created %}
                                     <span class="date-indicator" data-date="{{ list.date_created.strftime('%Y-%m-%d') }}"></span>
                                 {% else %}
                                     <span class="text-muted">-</span>
                                 {% endif %}
                             </td>
-                            <td>
+                            <td data-sort-value="{{ list.date_modified.isoformat() if list.date_modified else '' }}">
                                 {% if list.date_modified %}
                                     <span class="date-indicator" data-date="{{ list.date_modified.strftime('%Y-%m-%d') }}"></span>
                                 {% else %}
@@ -397,16 +447,57 @@
                                 {% endif %}
                             </td>
                             <td class="text-end">
-                                <button class="btn btn-sm {% if list.is_pinned %}btn-warning{% else %}btn-outline-secondary{% endif %} me-2"
+                                <button class="pin-icon-btn me-2 {% if list.is_pinned %}text-warning{% else %}text-muted{% endif %}"
+                                        type="button"
+                                        data-pinned="{{ 'true' if list.is_pinned else 'false' }}"
                                         onclick="event.stopPropagation(); togglePinned({{ list.id }}, this)"
-                                        title="{% if list.is_pinned %}Unpin{% else %}Pin{% endif %}">
-                                    <i class="bi {% if list.is_pinned %}bi-pin-angle-fill{% else %}bi-pin-angle{% endif %} me-1"></i>
-                                    {% if list.is_pinned %}Pinned{% else %}Pin{% endif %}
+                                        title="{% if list.is_pinned %}Unpin{% else %}Pin{% endif %}"
+                                        aria-label="{% if list.is_pinned %}Unpin parts list{% else %}Pin parts list{% endif %}">
+                                    <i class="bi {% if list.is_pinned %}bi-pin-angle-fill{% else %}bi-pin-angle{% endif %}"></i>
                                 </button>
                                 <i class="bi bi-x-lg text-danger"
                                    style="cursor: pointer;"
                                    onclick="event.stopPropagation(); deleteList({{ list.id }}, '{{ list.name|replace("'", "\\'") }}')"
                                    title="Delete"></i>
+                            </td>
+                        </tr>
+                        <tr class="line-status-detail" data-parent-row="list-details-{{ list.id }}">
+                            <td colspan="13" class="p-0 border-0">
+                                <div class="collapse" id="list-details-{{ list.id }}">
+                                    <div class="p-3">
+                                        <div class="fw-semibold mb-2">Line status details</div>
+                                        <div class="table-responsive">
+                                            <table class="table table-sm mb-0 align-middle">
+                                                <thead><tr><th>#</th><th>Part</th><th class="text-center">Qty</th><th>Status</th><th class="text-center">Suppliers Contacted</th><th class="text-center">Offers Waiting</th><th class="text-center">No Bids</th></tr></thead>
+                                                <tbody>
+                                                {% for line in list.line_details %}
+                                                    <tr>
+                                                        <td>{{ line.line_number or loop.index }}</td>
+                                                        <td><span class="font-monospace">{{ line.customer_part_number or line.base_part_number or '-' }}</span></td>
+                                                        <td class="text-center">{{ line.quantity or '-' }}</td>
+                                                        <td>
+                                                            {% if line.is_customer_quoted %}
+                                                                <span class="badge text-bg-success line-status-pill"><i class="bi bi-check-circle me-1"></i>Quoted</span>
+                                                            {% elif line.offer_count %}
+                                                                <span class="badge text-bg-warning line-status-pill"><i class="bi bi-hourglass-split me-1"></i>Offer waiting</span>
+                                                            {% elif line.contacted_supplier_count %}
+                                                                <span class="badge text-bg-info line-status-pill"><i class="bi bi-send me-1"></i>Suppliers contacted</span>
+                                                            {% else %}
+                                                                <span class="badge text-bg-secondary line-status-pill">Not started</span>
+                                                            {% endif %}
+                                                        </td>
+                                                        <td class="text-center">{{ line.contacted_supplier_count or 0 }}</td>
+                                                        <td class="text-center">{{ line.offer_count or 0 }}</td>
+                                                        <td class="text-center">{{ line.no_bid_count or 0 }}</td>
+                                                    </tr>
+                                                {% else %}
+                                                    <tr><td colspan="7" class="text-muted text-center">No lines found.</td></tr>
+                                                {% endfor %}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
                             </td>
                         </tr>
                         {% endfor %}
@@ -472,65 +563,23 @@
 <script>
 // Customer filter function
 function filterByCustomer(customerId) {
-    const currentStatus = "{{ selected_status_id if selected_status_id is not none and selected_status_id != 0 else '' }}";
-    const currentProjectFilter = "{{ selected_project_filter or 'none' }}";
-    const currentSalesperson = "{{ selected_salesperson_id or '' }}";
-    const currentQuotedDate = "{{ selected_quoted_date or '' }}";
-    let url = "{{ url_for('parts_list.view_parts_lists') }}";
     const params = new URLSearchParams();
-
-    if (currentStatus) {
-        params.append('status_id', currentStatus);
-    }
+    appendCurrentListFilters(params);
     if (customerId) {
-        params.append('customer_id', customerId);
+        params.set('customer_id', customerId);
+    } else {
+        params.delete('customer_id');
     }
-    if (currentProjectFilter) {
-        params.append('project_filter', currentProjectFilter);
-    }
-    if (currentSalesperson) {
-        params.append('salesperson_id', currentSalesperson);
-    }
-    if (currentQuotedDate) {
-        params.append('quoted_date', currentQuotedDate);
-    }
-
-    if (params.toString()) {
-        url += '?' + params.toString();
-    }
-
-    window.location.href = url;
+    window.location.href = "{{ url_for('parts_list.view_parts_lists') }}" + (params.toString() ? '?' + params.toString() : '');
 }
 
 function filterByProjectAssociation(projectFilter) {
-    const currentStatus = "{{ selected_status_id if selected_status_id is not none and selected_status_id != 0 else '' }}";
-    const currentCustomer = "{{ selected_customer_id or '' }}";
-    const currentSalesperson = "{{ selected_salesperson_id or '' }}";
-    const currentQuotedDate = "{{ selected_quoted_date or '' }}";
-    let url = "{{ url_for('parts_list.view_parts_lists') }}";
     const params = new URLSearchParams();
-
-    if (currentStatus) {
-        params.append('status_id', currentStatus);
-    }
-    if (currentCustomer) {
-        params.append('customer_id', currentCustomer);
-    }
+    appendCurrentListFilters(params);
     if (projectFilter) {
-        params.append('project_filter', projectFilter);
+        params.set('project_filter', projectFilter);
     }
-    if (currentSalesperson) {
-        params.append('salesperson_id', currentSalesperson);
-    }
-    if (currentQuotedDate) {
-        params.append('quoted_date', currentQuotedDate);
-    }
-
-    if (params.toString()) {
-        url += '?' + params.toString();
-    }
-
-    window.location.href = url;
+    window.location.href = "{{ url_for('parts_list.view_parts_lists') }}" + (params.toString() ? '?' + params.toString() : '');
 }
 
 let partsListDataTable = null;
@@ -617,6 +666,78 @@ function formatDateCell(dateStr) {
     return `<span class="date-indicator" data-date="${dataDate}"></span>`;
 }
 
+function appendCurrentListFilters(params) {
+    const currentStatus = "{{ selected_status_id if selected_status_id is not none and selected_status_id != 0 else '' }}";
+    const currentCustomer = "{{ selected_customer_id or '' }}";
+    const currentProjectFilter = "{{ selected_project_filter or 'none' }}";
+    const currentSalesperson = "{{ selected_salesperson_id or '' }}";
+    const currentQuotedDate = "{{ selected_quoted_date or '' }}";
+    const startDateInput = document.getElementById('startDateFilter');
+    const endDateInput = document.getElementById('endDateFilter');
+    const startDate = startDateInput ? startDateInput.value : "{{ selected_start_date or '' }}";
+    const endDate = endDateInput ? endDateInput.value : "{{ selected_end_date or '' }}";
+
+    if (currentStatus) params.set('status_id', currentStatus);
+    if (currentCustomer) params.set('customer_id', currentCustomer);
+    if (currentProjectFilter) params.set('project_filter', currentProjectFilter);
+    if (currentSalesperson) params.set('salesperson_id', currentSalesperson);
+    if (currentQuotedDate) params.set('quoted_date', currentQuotedDate);
+    if (startDate) params.set('start_date', startDate);
+    if (endDate) params.set('end_date', endDate);
+}
+
+function applyDateRangeFilter() {
+    const params = new URLSearchParams();
+    appendCurrentListFilters(params);
+    window.location.href = "{{ url_for('parts_list.view_parts_lists') }}" + (params.toString() ? '?' + params.toString() : '');
+}
+
+function getCellSortValue(row, columnIndex, sortType) {
+    const cell = row.cells[columnIndex];
+    if (!cell) return '';
+    const raw = cell.dataset.sortValue || cell.textContent.trim();
+    if (sortType === 'number') {
+        const parsed = Number(String(raw).replace(/[^0-9.-]/g, ''));
+        return Number.isFinite(parsed) ? parsed : 0;
+    }
+    if (sortType === 'date') {
+        const parsed = Date.parse(raw);
+        return Number.isFinite(parsed) ? parsed : 0;
+    }
+    return raw.toLowerCase();
+}
+
+function setupSortablePartsListHeaders() {
+    const table = document.getElementById('partsListsTable');
+    if (!table || !table.tBodies.length) return;
+    const tbody = table.tBodies[0];
+    table.querySelectorAll('th.sortable-header').forEach((header, columnIndexInNodeList) => {
+        const actualColumnIndex = Array.from(header.parentElement.children).indexOf(header);
+        header.addEventListener('click', () => {
+            const sortType = header.dataset.sortType || 'text';
+            const nextDirection = header.classList.contains('sort-asc') ? 'desc' : 'asc';
+            table.querySelectorAll('th.sortable-header').forEach(th => th.classList.remove('sort-asc', 'sort-desc'));
+            header.classList.add(nextDirection === 'asc' ? 'sort-asc' : 'sort-desc');
+
+            const rowPairs = Array.from(tbody.querySelectorAll('tr.parts-list-row')).map(row => {
+                const detail = row.nextElementSibling && row.nextElementSibling.classList.contains('line-status-detail') ? row.nextElementSibling : null;
+                return { row, detail, value: getCellSortValue(row, actualColumnIndex, sortType) };
+            });
+
+            rowPairs.sort((a, b) => {
+                if (a.value < b.value) return nextDirection === 'asc' ? -1 : 1;
+                if (a.value > b.value) return nextDirection === 'asc' ? 1 : -1;
+                return 0;
+            });
+
+            rowPairs.forEach(pair => {
+                tbody.appendChild(pair.row);
+                if (pair.detail) tbody.appendChild(pair.detail);
+            });
+        });
+    });
+}
+
 function applyListTextFilter(term) {
     const normalized = (term || '').toLowerCase();
     partsListTextFilter = normalized;
@@ -629,13 +750,18 @@ function applyListTextFilter(term) {
     // Fallback if DataTables isn't loaded
     const table = document.getElementById('partsListsTable');
     if (!table) return;
-    const rows = table.querySelectorAll('tbody tr');
+    const rows = table.querySelectorAll('tbody tr.parts-list-row');
     rows.forEach(row => {
-        const nameCell = row.cells[1];
-        const customerCell = row.cells[2];
+        const nameCell = row.cells[2];
+        const customerCell = row.cells[3];
         const nameText = nameCell ? nameCell.textContent.toLowerCase() : '';
         const customerText = customerCell ? customerCell.textContent.toLowerCase() : '';
-        row.style.display = nameText.includes(normalized) || customerText.includes(normalized) ? '' : 'none';
+        const isMatch = nameText.includes(normalized) || customerText.includes(normalized);
+        row.style.display = isMatch ? '' : 'none';
+        const detail = row.nextElementSibling && row.nextElementSibling.classList.contains('line-status-detail') ? row.nextElementSibling : null;
+        if (detail) {
+            detail.style.display = isMatch ? '' : 'none';
+        }
     });
 }
 
@@ -736,7 +862,7 @@ function updateProject(listId, selectElement) {
 }
 
 function togglePinned(listId, iconElement) {
-    const currentlyPinned = iconElement.classList.contains('btn-warning');
+    const currentlyPinned = iconElement.dataset.pinned === 'true';
     iconElement.disabled = true;
 
     fetch("{{ url_for('parts_list.toggle_parts_list_pinned', list_id=0) }}".replace('/0/', `/${listId}/`), {
@@ -966,28 +1092,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    if (typeof $.fn.DataTable !== 'undefined') {
-        $.fn.dataTable.ext.search.push(function(settings, data) {
-            if (!settings.nTable || settings.nTable.id !== 'partsListsTable') {
-                return true;
-            }
-            if (!partsListTextFilter) {
-                return true;
-            }
-            const nameText = (data[1] || '').toLowerCase();
-            const customerText = (data[2] || '').toLowerCase();
-            return nameText.includes(partsListTextFilter) || customerText.includes(partsListTextFilter);
-        });
-
-        partsListDataTable = $('#partsListsTable').DataTable({
-            order: [[10, 'desc']],
-            pageLength: 25,
-            language: {
-                search: "Search lists:"
-            }
-        });
-    }
-
+    setupSortablePartsListHeaders();
     applyDateIndicators();
 
     const listSearchInput = document.getElementById('listSearchInput');
