@@ -17,7 +17,9 @@ from services.customer_news_ingestion import (
     list_recent_articles,
     list_sources,
     run_ingestion,
+    save_news_source,
     set_source_active,
+    update_news_source,
 )
 admin_bp = Blueprint('admin', __name__, url_prefix='/admin')
 
@@ -131,6 +133,47 @@ def run_news_ingestion_route():
         flash('News ingestion started in the background. Refresh this page to see progress.', 'success')
     else:
         flash('News ingestion is already running.', 'warning')
+    return redirect(url_for('admin.news_control'))
+
+
+@admin_bp.route('/news/sources', methods=['POST'])
+@admin_required
+def add_news_source():
+    try:
+        save_news_source(
+            name=request.form.get('name'),
+            source_type=request.form.get('source_type'),
+            url=request.form.get('url'),
+            query=request.form.get('query'),
+            sector_tag=request.form.get('sector_tag'),
+            priority=request.form.get('priority'),
+            check_frequency_minutes=request.form.get('check_frequency_minutes'),
+            active=request.form.get('active') == '1',
+        )
+        flash('News source saved.', 'success')
+    except Exception as exc:
+        flash(f'Unable to save news source: {exc}', 'error')
+    return redirect(url_for('admin.news_control'))
+
+
+@admin_bp.route('/news/sources/<int:source_id>', methods=['POST'])
+@admin_required
+def update_news_source_route(source_id):
+    try:
+        update_news_source(
+            source_id=source_id,
+            name=request.form.get('name'),
+            source_type=request.form.get('source_type'),
+            url=request.form.get('url'),
+            query=request.form.get('query'),
+            sector_tag=request.form.get('sector_tag'),
+            priority=request.form.get('priority'),
+            check_frequency_minutes=request.form.get('check_frequency_minutes'),
+            active=request.form.get('active') == '1',
+        )
+        flash('News source updated.', 'success')
+    except Exception as exc:
+        flash(f'Unable to update news source: {exc}', 'error')
     return redirect(url_for('admin.news_control'))
 
 

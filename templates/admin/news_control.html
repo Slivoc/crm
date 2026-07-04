@@ -92,8 +92,75 @@
   </div>
   {% endif %}
 
+  <div class="border rounded bg-white mb-3">
+    <div class="p-3 border-bottom">
+      <h2 class="h6 mb-0">Add Source</h2>
+    </div>
+    <form method="post" action="{{ url_for('admin.add_news_source') }}" class="p-3">
+      <div class="row g-2 align-items-end">
+        <div class="col-lg-3">
+          <label class="form-label small text-muted" for="news-source-name">Name</label>
+          <input class="form-control" id="news-source-name" name="name" placeholder="HeliHub - Contracts" required>
+        </div>
+        <div class="col-lg-2">
+          <label class="form-label small text-muted" for="news-source-type">Type</label>
+          <select class="form-select" id="news-source-type" name="source_type" required>
+            <option value="rss">RSS / Atom</option>
+            <option value="gdelt_query">GDELT Query</option>
+            <option value="webpage">RSS Discovery Page</option>
+            <option value="company_newsroom">Company Newsroom Feed</option>
+          </select>
+        </div>
+        <div class="col-lg-4">
+          <label class="form-label small text-muted" for="news-source-url">URL</label>
+          <input class="form-control" id="news-source-url" name="url" placeholder="https://example.com/feed.xml">
+        </div>
+        <div class="col-lg-3">
+          <label class="form-label small text-muted" for="news-source-query">GDELT Query</label>
+          <input class="form-control" id="news-source-query" name="query" placeholder='"offshore helicopter" "contract"'>
+        </div>
+        <div class="col-lg-2">
+          <label class="form-label small text-muted" for="news-source-sector">Sector</label>
+          <input class="form-control" id="news-source-sector" name="sector_tag" placeholder="offshore">
+        </div>
+        <div class="col-lg-2">
+          <label class="form-label small text-muted" for="news-source-frequency">Frequency</label>
+          <select class="form-select" id="news-source-frequency" name="check_frequency_minutes">
+            <option value="360">Every 6 hours</option>
+            <option value="720">Every 12 hours</option>
+            <option value="1440" selected>Daily</option>
+            <option value="10080">Weekly</option>
+          </select>
+        </div>
+        <div class="col-lg-2">
+          <label class="form-label small text-muted" for="news-source-priority">Priority</label>
+          <select class="form-select" id="news-source-priority" name="priority">
+            <option value="5">5 - High</option>
+            <option value="4">4</option>
+            <option value="3" selected>3</option>
+            <option value="2">2</option>
+            <option value="1">1 - Low</option>
+          </select>
+        </div>
+        <div class="col-lg-2">
+          <label class="form-label small text-muted" for="news-source-active">Status</label>
+          <select class="form-select" id="news-source-active" name="active">
+            <option value="1" selected>Active</option>
+            <option value="0">Disabled</option>
+          </select>
+        </div>
+        <div class="col-lg-2">
+          <button class="btn btn-primary w-100" type="submit">
+            <i class="bi bi-plus-lg me-1"></i> Add Source
+          </button>
+        </div>
+      </div>
+      <div class="small text-muted mt-2">For GDELT sources, enter the search terms in GDELT Query. The URL can be left blank.</div>
+    </form>
+  </div>
+
   <div class="row g-3">
-    <div class="col-xl-5">
+    <div class="col-12">
       <div class="border rounded bg-white">
         <div class="d-flex justify-content-between align-items-center p-3 border-bottom">
           <h2 class="h6 mb-0">Sources</h2>
@@ -103,8 +170,8 @@
           <table class="table table-sm align-middle mb-0">
             <thead class="table-light">
               <tr>
-                <th>Name</th>
-                <th>Type</th>
+                <th>Source</th>
+                <th>Schedule</th>
                 <th>Last Check</th>
                 <th class="text-end">Articles</th>
                 <th></th>
@@ -114,19 +181,49 @@
               {% for source in sources %}
               <tr class="{{ '' if source.active else 'table-secondary' }}">
                 <td>
-                  <div class="fw-semibold">{{ source.name }}</div>
-                  {% if source.last_error %}
-                    <div class="small text-danger">{{ source.last_error[:140] }}</div>
-                  {% elif source.query %}
-                    <div class="small text-muted">{{ source.query }}</div>
-                  {% elif source.url %}
-                    <div class="small text-muted text-truncate" style="max-width: 320px;">{{ source.url }}</div>
-                  {% endif %}
+                    <div class="d-flex gap-2 mb-2">
+                      <input class="form-control form-control-sm fw-semibold" name="name" value="{{ source.name }}" form="source-form-{{ source.id }}" required>
+                      <select class="form-select form-select-sm" name="source_type" form="source-form-{{ source.id }}" style="max-width: 150px;">
+                        {% for value, label in [
+                          ('rss', 'RSS'),
+                          ('gdelt_query', 'GDELT'),
+                          ('webpage', 'Discovery'),
+                          ('company_newsroom', 'Newsroom')
+                        ] %}
+                          <option value="{{ value }}" {% if source.source_type == value %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                      </select>
+                    </div>
+                    <input class="form-control form-control-sm mb-2" name="url" value="{{ source.url or '' }}" placeholder="URL" form="source-form-{{ source.id }}">
+                    <input class="form-control form-control-sm" name="query" value="{{ source.query or '' }}" placeholder="GDELT query" form="source-form-{{ source.id }}">
+                    {% if source.last_error %}
+                      <div class="small text-danger mt-1">{{ source.last_error[:140] }}</div>
+                    {% endif %}
                 </td>
-                <td><span class="badge bg-light text-dark">{{ source.source_type }}</span></td>
+                <td>
+                    <div class="d-flex gap-2 mb-2">
+                      <input class="form-control form-control-sm" name="sector_tag" value="{{ source.sector_tag or '' }}" placeholder="Sector" form="source-form-{{ source.id }}">
+                      <select class="form-select form-select-sm" name="priority" form="source-form-{{ source.id }}">
+                        {% for priority in [5, 4, 3, 2, 1] %}
+                          <option value="{{ priority }}" {% if source.priority == priority %}selected{% endif %}>P{{ priority }}</option>
+                        {% endfor %}
+                      </select>
+                    </div>
+                    <div class="d-flex gap-2">
+                      <input class="form-control form-control-sm" type="number" min="15" step="15" name="check_frequency_minutes" value="{{ source.check_frequency_minutes or 1440 }}" title="Check frequency in minutes" form="source-form-{{ source.id }}">
+                      <select class="form-select form-select-sm" name="active" form="source-form-{{ source.id }}">
+                        <option value="1" {% if source.active %}selected{% endif %}>Active</option>
+                        <option value="0" {% if not source.active %}selected{% endif %}>Disabled</option>
+                      </select>
+                    </div>
+                </td>
                 <td class="small text-muted">{{ source.last_checked_at or 'Never' }}</td>
                 <td class="text-end">{{ source.article_count or 0 }}</td>
                 <td class="text-end">
+                  <form method="post" action="{{ url_for('admin.update_news_source_route', source_id=source.id) }}" id="source-form-{{ source.id }}"></form>
+                  <button class="btn btn-sm btn-outline-primary mb-2" type="submit" form="source-form-{{ source.id }}">
+                    Save
+                  </button>
                   <form method="post" action="{{ url_for('admin.toggle_news_source', source_id=source.id) }}">
                     <input type="hidden" name="active" value="{{ '0' if source.active else '1' }}">
                     <button class="btn btn-sm btn-outline-secondary" type="submit">
@@ -144,7 +241,7 @@
       </div>
     </div>
 
-    <div class="col-xl-7">
+    <div class="col-12">
       <div class="border rounded bg-white">
         <div class="d-flex justify-content-between align-items-center p-3 border-bottom">
           <h2 class="h6 mb-0">Recent Articles</h2>

@@ -206,6 +206,96 @@ def _upsert_source(name, source_type, url=None, query=None, sector_tag=None, pri
     )
 
 
+def save_news_source(name, source_type, url=None, query=None, sector_tag=None, priority=3, check_frequency_minutes=1440, active=True):
+    name = (name or "").strip()
+    source_type = (source_type or "").strip()
+    url = (url or "").strip() or None
+    query = (query or "").strip() or None
+    sector_tag = (sector_tag or "").strip() or None
+    try:
+        priority = max(1, min(5, int(priority or 3)))
+    except (TypeError, ValueError):
+        priority = 3
+    try:
+        check_frequency_minutes = max(15, int(check_frequency_minutes or 1440))
+    except (TypeError, ValueError):
+        check_frequency_minutes = 1440
+
+    if not name:
+        raise ValueError("Source name is required.")
+    if source_type not in {"rss", "gdelt_query", "webpage", "company_newsroom"}:
+        raise ValueError("Invalid source type.")
+    if source_type == "gdelt_query":
+        url = url or GDELT_ENDPOINT
+        if not query:
+            raise ValueError("GDELT sources require a query.")
+    elif not url:
+        raise ValueError("RSS, webpage, and newsroom sources require a URL.")
+
+    db_execute(
+        """
+        INSERT INTO news_sources
+            (name, source_type, url, query, active, check_frequency_minutes, sector_tag, priority)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (source_type, name) DO UPDATE SET
+            url = EXCLUDED.url,
+            query = EXCLUDED.query,
+            active = EXCLUDED.active,
+            check_frequency_minutes = EXCLUDED.check_frequency_minutes,
+            sector_tag = EXCLUDED.sector_tag,
+            priority = EXCLUDED.priority,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (name, source_type, url, query, bool(active), check_frequency_minutes, sector_tag, priority),
+        commit=True,
+    )
+
+
+def update_news_source(source_id, name, source_type, url=None, query=None, sector_tag=None, priority=3, check_frequency_minutes=1440, active=True):
+    name = (name or "").strip()
+    source_type = (source_type or "").strip()
+    url = (url or "").strip() or None
+    query = (query or "").strip() or None
+    sector_tag = (sector_tag or "").strip() or None
+    try:
+        priority = max(1, min(5, int(priority or 3)))
+    except (TypeError, ValueError):
+        priority = 3
+    try:
+        check_frequency_minutes = max(15, int(check_frequency_minutes or 1440))
+    except (TypeError, ValueError):
+        check_frequency_minutes = 1440
+
+    if not name:
+        raise ValueError("Source name is required.")
+    if source_type not in {"rss", "gdelt_query", "webpage", "company_newsroom"}:
+        raise ValueError("Invalid source type.")
+    if source_type == "gdelt_query":
+        url = url or GDELT_ENDPOINT
+        if not query:
+            raise ValueError("GDELT sources require a query.")
+    elif not url:
+        raise ValueError("RSS, webpage, and newsroom sources require a URL.")
+
+    db_execute(
+        """
+        UPDATE news_sources
+        SET name = ?,
+            source_type = ?,
+            url = ?,
+            query = ?,
+            active = ?,
+            check_frequency_minutes = ?,
+            sector_tag = ?,
+            priority = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (name, source_type, url, query, bool(active), check_frequency_minutes, sector_tag, priority, source_id),
+        commit=True,
+    )
+
+
 def due_sources(limit=50, source_type=None):
     params = []
     source_filter = ""
