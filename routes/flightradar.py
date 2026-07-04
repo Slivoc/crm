@@ -481,7 +481,9 @@ def _get_active_flightradar_links(customer_id=None):
                default_bounds,
                is_active,
                last_activity_sync_at,
-               activity_sync_cursor_at
+               activity_sync_cursor_at,
+               last_activity_sync_window_from,
+               last_activity_sync_window_to
         FROM (
             SELECT l.id,
                    l.customer_id,
@@ -493,7 +495,9 @@ def _get_active_flightradar_links(customer_id=None):
                    l.default_bounds,
                    l.is_active,
                    l.last_activity_sync_at,
-                   l.activity_sync_cursor_at
+                   l.activity_sync_cursor_at,
+                   l.last_activity_sync_window_from,
+                   l.last_activity_sync_window_to
             FROM customer_flightradar_links l
             JOIN customers c ON c.id = l.customer_id
             WHERE l.is_active = TRUE
@@ -897,6 +901,7 @@ def sync_flightradar_activity_incremental(
     chunk_hours: int = 6,
     max_requests: int = 20,
     limit: int = 20000,
+    customer_id=None,
 ):
     end = datetime.now(timezone.utc)
     lookback_hours = max(1, min(int(lookback_hours or 336), 336))
@@ -906,12 +911,13 @@ def sync_flightradar_activity_incremental(
     floor_start = end - timedelta(hours=lookback_hours)
     request_delay_seconds = max(0.0, float(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_DELAY_SECONDS', '0.25') or 0))
     client = _build_client()
-    links = _get_active_flightradar_links()
+    links = _get_active_flightradar_links(customer_id=customer_id)
     seen_keys = set()
     affected_tails = set()
     result = {
         'ok': True,
         'mode': 'incremental',
+        'customer_id': customer_id,
         'lookback_hours': lookback_hours,
         'chunk_hours': chunk_hours,
         'max_requests': max_requests,
@@ -924,12 +930,23 @@ def sync_flightradar_activity_incremental(
         'links': [],
         'errors': [],
         'stopped_reason': None,
+        'more_available': False,
     }
 
     def cursor_for_link(link):
         cursor = link.get('activity_sync_cursor_at')
         if isinstance(cursor, str):
             cursor = _flight_datetime_value(cursor)
+        last_window_from = link.get('last_activity_sync_window_from')
+        if isinstance(last_window_from, str):
+            last_window_from = _flight_datetime_value(last_window_from)
+        if last_window_from:
+            if last_window_from.tzinfo is None:
+                last_window_from = last_window_from.replace(tzinfo=timezone.utc)
+            else:
+                last_window_from = last_window_from.astimezone(timezone.utc)
+        if last_window_from and last_window_from <= floor_start:
+            return end
         if not cursor or cursor <= floor_start or cursor > end:
             return end
         if cursor.tzinfo is None:
@@ -997,6 +1014,8 @@ def sync_flightradar_activity_incremental(
             result['processed_link_count'] += 1
             result['flight_count'] += sync_result['unique_flight_count']
             result['logged_flight_count'] += sync_result['logged_flight_count']
+            if next_cursor != end:
+                result['more_available'] = True
             link_result.update(sync_result)
             link_result['request_count'] = 1
             link_result['next_cursor'] = next_cursor.isoformat()
@@ -1049,6 +1068,14 @@ def sync_flightradar_activity_incremental(
             result['links'].append(link_result)
             if request_delay_seconds and result['request_count'] < max_requests and not result['stopped_reason']:
                 time.sleep(request_delay_seconds)
+
+    if (
+        not result['stopped_reason']
+        and result['request_count'] >= max_requests
+        and (result['more_available'] or result['processed_link_count'] < len(ordered_links))
+    ):
+        result['stopped_reason'] = 'request_budget_exhausted'
+        result['more_available'] = True
 
     for customer_id, registration in affected_tails:
         if _refresh_aircraft_utilization(customer_id, registration):
@@ -1615,12 +1642,22 @@ def activity_sync():
     try:
         payload = request.get_json(silent=True) or {}
         customer_id = payload.get('customer_id') or None
-        result = sync_flightradar_activity_window(
-            window_hours=int(payload.get('window_hours') or 48),
-            limit=int(payload.get('limit') or 500),
-            customer_id=int(customer_id) if customer_id else None,
-            chunk_hours=int(payload.get('chunk_hours')) if payload.get('chunk_hours') else None,
-        )
+        use_batches = payload.get('batch') is not False
+        if use_batches:
+            result = sync_flightradar_activity_incremental(
+                lookback_hours=int(payload.get('window_hours') or 48),
+                limit=int(payload.get('limit') or os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_LIMIT', '20000')),
+                customer_id=int(customer_id) if customer_id else None,
+                chunk_hours=int(payload.get('chunk_hours') or os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_CHUNK_HOURS', '6')),
+                max_requests=int(payload.get('max_requests') or os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_MAX_REQUESTS', '20')),
+            )
+        else:
+            result = sync_flightradar_activity_window(
+                window_hours=int(payload.get('window_hours') or 48),
+                limit=int(payload.get('limit') or 500),
+                customer_id=int(customer_id) if customer_id else None,
+                chunk_hours=int(payload.get('chunk_hours')) if payload.get('chunk_hours') else None,
+            )
         status = 200 if result.get('ok') else 207
         return jsonify(result), status
     except (TypeError, ValueError):

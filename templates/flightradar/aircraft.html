@@ -709,8 +709,27 @@ document.addEventListener('DOMContentLoaded', function () {
             return String(a.customer_name || '').localeCompare(String(b.customer_name || ''));
         });
         syncDiagnostics.className = 'alert alert-light border';
+        const diagnosticWindow = payload.window
+            ? `${escapeHtml(payload.window.from || '-')} to ${escapeHtml(payload.window.to || '-')}`
+            : `last ${formatNumber(payload.lookback_hours || 0)} hours`;
+        const stoppedReason = payload.stopped_reason === 'rate_limited'
+            ? 'Stopped after Flightradar rate-limited the request.'
+            : payload.stopped_reason === 'request_budget_exhausted'
+                ? 'Stopped at the request budget; run another batch to continue.'
+                : payload.stopped_reason
+                    ? `Stopped: ${payload.stopped_reason}.`
+                    : '';
         syncDiagnostics.innerHTML = `
-            <div class="fw-semibold mb-2">Sync diagnostics for ${escapeHtml(payload.window?.from || '-')} to ${escapeHtml(payload.window?.to || '-')}</div>
+            <div class="fw-semibold mb-2">Sync diagnostics for ${diagnosticWindow}</div>
+            ${payload.mode === 'incremental' ? `
+                <div class="small text-muted mb-2">
+                    Batch mode: ${formatNumber(payload.request_count || 0)} of ${formatNumber(payload.max_requests || 0)} request budget used,
+                    ${formatNumber(payload.processed_link_count || 0)} of ${formatNumber(payload.link_count || 0)} active links touched,
+                    ${formatNumber(payload.chunk_hours || 0)} hour chunks.
+                    ${payload.more_available ? 'More data remains in the lookback window.' : 'No further queued chunks reported for this window.'}
+                </div>
+            ` : ''}
+            ${stoppedReason ? `<div class="alert alert-warning py-2 mb-2">${escapeHtml(stoppedReason)}</div>` : ''}
             <div class="table-responsive">
                 <table class="table table-sm align-middle mb-0">
                     <thead>
@@ -793,7 +812,9 @@ document.addEventListener('DOMContentLoaded', function () {
                     window_hours: 48,
                     limit: 20000,
                     customer_id: selectedCustomerId || null,
-                    chunk_hours: selectedCustomerId ? 6 : 48
+                    chunk_hours: 2,
+                    max_requests: selectedCustomerId ? 50 : 30,
+                    batch: true
                 })
             });
             const payload = await response.json();
@@ -803,8 +824,16 @@ document.addEventListener('DOMContentLoaded', function () {
             const errors = payload.errors || [];
             const stoppedReason = payload.stopped_reason === 'rate_limited'
                 ? ' Sync stopped after Flightradar rate-limited the request.'
+                : payload.stopped_reason === 'request_budget_exhausted'
+                    ? ' Request budget reached; run another batch to continue filling the 2-day window.'
                 : '';
-            const message = `Synced ${formatNumber(payload.logged_flight_count || 0)} logged flights from ${formatNumber(payload.link_count || 0)} links${errors.length ? ` with ${formatNumber(errors.length)} link errors` : ''}.${stoppedReason}`;
+            const processedText = payload.processed_link_count !== undefined
+                ? `, touched ${formatNumber(payload.processed_link_count || 0)} links using ${formatNumber(payload.request_count || 0)} requests`
+                : '';
+            const moreText = payload.more_available && !stoppedReason
+                ? ' More batches remain.'
+                : '';
+            const message = `Synced ${formatNumber(payload.logged_flight_count || 0)} logged flights from ${formatNumber(payload.link_count || 0)} links${processedText}${errors.length ? ` with ${formatNumber(errors.length)} link errors` : ''}.${stoppedReason}${moreText}`;
             setStatus(errors.length || stoppedReason ? 'warning' : 'success', message);
             renderSyncDiagnostics(payload);
             await loadData({keepStatus: true});

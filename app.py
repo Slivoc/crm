@@ -595,7 +595,7 @@ def scheduled_flightradar_activity_sync():
                 lookback_hours=int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_WINDOW_HOURS', '48')),
                 chunk_hours=int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_CHUNK_HOURS', '6')),
                 max_requests=int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_MAX_REQUESTS', '20')),
-                limit=int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_LIMIT', '500')),
+                limit=int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_LIMIT', '20000')),
             )
             current_app.logger.info(
                 "Scheduled Flightradar incremental sync: ok=%s requests=%s processed_links=%s links=%s flights=%s logged=%s aircraft=%s errors=%s stopped=%s",
