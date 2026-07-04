@@ -13,7 +13,7 @@ from db import execute as db_execute, db_cursor
 
 
 GDELT_ENDPOINT = "https://api.gdeltproject.org/api/v2/doc/doc"
-REQUEST_TIMEOUT = 15
+REQUEST_TIMEOUT = 10
 
 TRACKING_PARAMS = {
     "utm_source",
@@ -290,6 +290,7 @@ def set_source_active(source_id, active):
 def run_ingestion(source_type=None, limit=50):
     ensure_seed_news_sources()
     sources = due_sources(limit=limit, source_type=source_type)
+    customer_aliases = get_customer_aliases()
     result = {
         "sources_checked": 0,
         "articles_seen": 0,
@@ -314,7 +315,7 @@ def run_ingestion(source_type=None, limit=50):
                     source_duplicates += 1
                 else:
                     source_inserted += 1
-                result["customer_matches"] += match_article_to_customers(article_id)
+                result["customer_matches"] += match_article_to_customers(article_id, aliases=customer_aliases)
                 result["platform_matches"] += match_article_platforms(article_id)
             result["articles_inserted"] += source_inserted
             result["duplicates"] += source_duplicates
@@ -609,7 +610,7 @@ def get_customer_aliases():
     return aliases
 
 
-def match_article_to_customers(article_id):
+def match_article_to_customers(article_id, aliases=None):
     article = db_execute("SELECT * FROM news_articles WHERE id = ?", (article_id,), fetch="one")
     if not article or article.get("duplicate_of_article_id"):
         return 0
@@ -617,7 +618,7 @@ def match_article_to_customers(article_id):
     text_lower = text.lower()
     title_lower = (article.get("title") or "").lower()
     matched = 0
-    for alias in get_customer_aliases():
+    for alias in aliases if aliases is not None else get_customer_aliases():
         alias_text = (alias.get("alias") or "").strip()
         if len(alias_text) < 3:
             continue
@@ -745,6 +746,7 @@ def get_news_for_salesperson(salesperson_id, limit=20, days=45):
             na.published_at::date AS published_date,
             acm.customer_id,
             c.name AS customer_name,
+            COALESCE(c.watch, FALSE) AS is_watched,
             acm.relevance_score,
             CASE
                 WHEN acm.relevance_score >= 80 THEN 'High'
@@ -756,11 +758,10 @@ def get_news_for_salesperson(salesperson_id, limit=20, days=45):
         JOIN news_articles na ON na.id = acm.article_id
         JOIN customers c ON c.id = acm.customer_id
         WHERE c.salesperson_id = ?
-          AND c.watch = TRUE
           AND na.duplicate_of_article_id IS NULL
           AND COALESCE(na.published_at, na.fetched_at) >= CURRENT_TIMESTAMP - (? * INTERVAL '1 day')
           AND acm.relevance_score >= 40
-        ORDER BY acm.relevance_score DESC, COALESCE(na.published_at, na.fetched_at) DESC
+        ORDER BY COALESCE(c.watch, FALSE) DESC, acm.relevance_score DESC, COALESCE(na.published_at, na.fetched_at) DESC
         LIMIT ?
         """,
         (salesperson_id, days, limit),

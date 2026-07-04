@@ -64,6 +64,34 @@
     </div>
   </div>
 
+  {% if ingestion_job %}
+  <div class="alert {{ 'alert-info' if ingestion_job.running else 'alert-secondary' }} py-2">
+    <div class="d-flex justify-content-between align-items-center">
+      <div>
+        <strong>Ingestion job:</strong>
+        {% if ingestion_job.running %}
+          Running {{ ingestion_job.source_type }} since {{ ingestion_job.started_at }}.
+        {% elif ingestion_job.finished_at %}
+          Last finished {{ ingestion_job.finished_at }}.
+          {% if ingestion_job.result %}
+            Checked {{ ingestion_job.result.sources_checked }} sources,
+            inserted {{ ingestion_job.result.articles_inserted }} articles,
+            matched {{ ingestion_job.result.customer_matches }} customer mentions.
+          {% endif %}
+          {% if ingestion_job.error %}
+            <span class="text-danger">{{ ingestion_job.error }}</span>
+          {% endif %}
+        {% else %}
+          Idle.
+        {% endif %}
+      </div>
+      {% if ingestion_job.running %}
+        <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
   <div class="row g-3">
     <div class="col-xl-5">
       <div class="border rounded bg-white">

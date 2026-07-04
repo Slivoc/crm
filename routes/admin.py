@@ -1,4 +1,7 @@
-from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify
+from datetime import datetime
+import threading
+
+from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, current_app
 from db import execute as db_execute
 from models import (
     Permission,
@@ -17,6 +20,16 @@ from services.customer_news_ingestion import (
     set_source_active,
 )
 admin_bp = Blueprint('admin', __name__, url_prefix='/admin')
+
+NEWS_INGESTION_JOB = {
+    'running': False,
+    'started_at': None,
+    'finished_at': None,
+    'source_type': None,
+    'result': None,
+    'error': None,
+}
+NEWS_INGESTION_LOCK = threading.Lock()
 
 
 @admin_bp.route('/users')
@@ -100,6 +113,7 @@ def news_control():
         stats=ingestion_stats(),
         sources=list_sources(),
         articles=list_recent_articles(limit=100),
+        ingestion_job=NEWS_INGESTION_JOB,
     )
 
 
@@ -110,15 +124,13 @@ def run_news_ingestion_route():
     source_type = (payload or {}).get('source_type') or request.form.get('source_type') or None
     if source_type == 'all':
         source_type = None
-    result = run_ingestion(source_type=source_type, limit=50)
+    started = _start_news_ingestion_background(source_type=source_type)
     if request.headers.get('Accept') == 'application/json' or request.is_json:
-        return jsonify({'success': True, 'result': result})
-    flash(
-        f"News ingestion checked {result.get('sources_checked', 0)} sources and inserted {result.get('articles_inserted', 0)} articles.",
-        'success',
-    )
-    if result.get('errors'):
-        flash(f"{len(result['errors'])} source(s) returned errors. Check the source table.", 'warning')
+        return jsonify({'success': True, 'started': started, 'job': NEWS_INGESTION_JOB})
+    if started:
+        flash('News ingestion started in the background. Refresh this page to see progress.', 'success')
+    else:
+        flash('News ingestion is already running.', 'warning')
     return redirect(url_for('admin.news_control'))
 
 
@@ -129,5 +141,44 @@ def toggle_news_source(source_id):
     set_source_active(source_id, active)
     flash('News source updated.', 'success')
     return redirect(url_for('admin.news_control'))
+
+
+def _start_news_ingestion_background(source_type=None):
+    with NEWS_INGESTION_LOCK:
+        if NEWS_INGESTION_JOB.get('running'):
+            return False
+        NEWS_INGESTION_JOB.update({
+            'running': True,
+            'started_at': datetime.now().isoformat(timespec='seconds'),
+            'finished_at': None,
+            'source_type': source_type or 'all',
+            'result': None,
+            'error': None,
+        })
+
+    app = current_app._get_current_object()
+
+    def worker():
+        try:
+            with app.app_context():
+                result = run_ingestion(source_type=source_type, limit=50)
+            with NEWS_INGESTION_LOCK:
+                NEWS_INGESTION_JOB.update({
+                    'running': False,
+                    'finished_at': datetime.now().isoformat(timespec='seconds'),
+                    'result': result,
+                    'error': None,
+                })
+        except Exception as exc:
+            with NEWS_INGESTION_LOCK:
+                NEWS_INGESTION_JOB.update({
+                    'running': False,
+                    'finished_at': datetime.now().isoformat(timespec='seconds'),
+                    'result': None,
+                    'error': str(exc),
+                })
+
+    threading.Thread(target=worker, name='news-ingestion-admin', daemon=True).start()
+    return True
 
 

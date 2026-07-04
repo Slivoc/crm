@@ -11,7 +11,6 @@ from routes.news_email import get_news_email_addresses, send_news_email
 from services.customer_news_ingestion import (
     format_news_rows,
     get_news_for_salesperson,
-    run_ingestion as run_customer_news_ingestion,
 )
 from models import (get_salespeople, get_all_salespeople_with_contact_counts, get_call_list_contact_ids, add_to_call_list, remove_from_call_list,
     snooze_call_list_entry, get_call_list_with_communication_status, update_call_list_priority, update_call_list_notes, bulk_add_to_call_list, get_salesperson_recent_communications, get_communication_types_for_salesperson, delete_customer_tag, insert_customer_tags, get_all_tags, insert_customer_tag, get_engagement_settings, get_all_salespeople_with_customer_counts, get_priorities, save_engagement_settings, insert_salesperson, get_active_salespeople, get_engagement_metrics, toggle_salesperson_active, get_customer_contacts_with_communications, update_customer_field_value, get_all_contact_statuses, get_status_counts_for_salesperson, get_tags_by_customer_id, get_salesperson_customers_with_spend, get_salesperson_by_id, get_salesperson_contacts, get_contact_communications, get_salesperson_sales_by_date_range, get_salesperson_monthly_sales, get_accounts_monthly_sales,
@@ -5635,28 +5634,6 @@ def collect_customer_news(salesperson_id):
             'filtered_duplicates': 0
         }
 
-    top_customers = get_watched_customers_for_news(salesperson_id, limit=25)
-    total_customers = len(top_customers)
-    if not top_customers:
-        result = {
-            'news_items': [],
-            'last_updated': datetime.now().isoformat(),
-            'total_customers_checked': 0,
-            'successful_customers': 0,
-            'total_news_items': 0,
-            'filtered_duplicates': 0
-        }
-        cache_key = get_cache_key(salesperson_id)
-        cache_news(cache_key, result)
-        return result
-
-    # Opportunistically fetch due sources once. This is cheap compared with the old
-    # per-customer Perplexity loop and keeps manual refresh useful.
-    try:
-        run_customer_news_ingestion(limit=50)
-    except Exception as exc:
-        current_app.logger.warning("Customer news ingestion refresh failed: %s", exc)
-
     all_news_items = format_news_rows(get_news_for_salesperson(salesperson_id, limit=50))
     successful_customers = len({item.get('customer_id') for item in all_news_items if item.get('customer_id')})
     
@@ -5671,7 +5648,7 @@ def collect_customer_news(salesperson_id):
     result = {
         'news_items': final_news_items,
         'last_updated': datetime.now().isoformat(),
-        'total_customers_checked': total_customers,
+        'total_customers_checked': _count_salesperson_customers(salesperson_id),
         'successful_customers': successful_customers,
         'total_news_items': len(final_news_items),
         'filtered_duplicates': filtered_duplicates
@@ -5680,6 +5657,30 @@ def collect_customer_news(salesperson_id):
     cache_key = get_cache_key(salesperson_id)
     cache_news(cache_key, result)
     return result
+
+
+def _count_salesperson_customers(salesperson_id):
+    row = db_execute(
+        "SELECT COUNT(*) AS count FROM customers WHERE salesperson_id = ?",
+        (salesperson_id,),
+        fetch='one'
+    )
+    return int((row or {}).get('count') or 0)
+
+
+def _get_salesperson_news_customers(salesperson_id, limit=100):
+    rows = db_execute(
+        """
+        SELECT id, name, COALESCE(watch, FALSE) AS watch
+        FROM customers
+        WHERE salesperson_id = ?
+        ORDER BY COALESCE(watch, FALSE) DESC, name
+        LIMIT ?
+        """,
+        (salesperson_id, limit),
+        fetch='all'
+    ) or []
+    return [dict(row) for row in rows]
 
 def generate_news_stream(salesperson_id):
     """Generator for server-sent events during news collection"""
@@ -5690,8 +5691,9 @@ def generate_news_stream(salesperson_id):
             yield f"data: {json.dumps({'error': 'Salesperson not found'})}\n\n"
             return
 
-        # Get top customers
-        top_customers = get_watched_customers_for_news(salesperson_id, limit=25)
+        # Show progress against local matched news. Source ingestion is run by the
+        # scheduler/admin background job so this request does not wait on GDELT/RSS.
+        top_customers = _get_salesperson_news_customers(salesperson_id, limit=100)
 
         if not top_customers:
             result = {
@@ -5709,13 +5711,7 @@ def generate_news_stream(salesperson_id):
         # Send initial progress
         yield f"data: {json.dumps({'status': 'starting', 'total_customers': len(top_customers), 'customers': [c['name'] for c in top_customers]})}\n\n"
 
-        yield f"data: {json.dumps({'status': 'processing', 'current_customer': 'RSS and GDELT sources', 'customer_index': 0, 'completed_customers': 0})}\n\n"
-        try:
-            ingestion_result = run_customer_news_ingestion(limit=50)
-            yield f"data: {json.dumps({'status': 'analyzing', 'current_customer': 'Local news matches', 'customer_index': 0, 'ingestion': ingestion_result})}\n\n"
-        except Exception as exc:
-            current_app.logger.warning("Customer news stream ingestion refresh failed: %s", exc)
-            yield f"data: {json.dumps({'status': 'error', 'current_customer': 'RSS and GDELT sources', 'customer_index': 0, 'error': str(exc)})}\n\n"
+        yield f"data: {json.dumps({'status': 'analyzing', 'current_customer': 'Local news matches', 'customer_index': 0})}\n\n"
 
         all_news_items = format_news_rows(get_news_for_salesperson(salesperson_id, limit=50))
         by_customer = defaultdict(list)
