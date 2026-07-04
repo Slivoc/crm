@@ -218,6 +218,7 @@
                         <th>Source</th>
                         <th>Status</th>
                         <th>Scope</th>
+                        <th>Customers Touched</th>
                         <th class="text-end">Requests</th>
                         <th class="text-end">Links</th>
                         <th class="text-end">Returned</th>
@@ -226,7 +227,7 @@
                     </tr>
                 </thead>
                 <tbody id="sync-history-body">
-                    <tr><td colspan="9" class="text-muted text-center py-4">Loading sync history...</td></tr>
+                    <tr><td colspan="10" class="text-muted text-center py-4">Loading sync history...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -827,6 +828,9 @@ document.addEventListener('DOMContentLoaded', function () {
             const scope = run.customer_name || (run.customer_id ? `Customer ${run.customer_id}` : 'All active links');
             const duration = formatDuration(run.duration_seconds);
             const stopError = run.error_message || stoppedReason || (Number(run.error_count || 0) ? `${formatNumber(run.error_count)} link errors` : '');
+            const touchedCustomers = Array.isArray(run.customers_touched) ? run.customers_touched : [];
+            const visibleCustomers = touchedCustomers.slice(0, 3);
+            const hiddenCustomerCount = Math.max(0, touchedCustomers.length - visibleCustomers.length);
             return `
                 <tr>
                     <td>
@@ -839,6 +843,15 @@ document.addEventListener('DOMContentLoaded', function () {
                         <div>${escapeHtml(scope)}</div>
                         <div class="small text-muted">${escapeHtml(formatNumber(run.lookback_hours || 0))}h lookback, ${escapeHtml(formatNumber(run.chunk_hours || 0))}h chunks</div>
                     </td>
+                    <td>
+                        ${visibleCustomers.length ? visibleCustomers.map(customer => `
+                            <div>
+                                ${escapeHtml(customer.customer_name || '-')}
+                                <span class="small text-muted">(${formatNumber(customer.logged_flight_count || 0)} logged)</span>
+                            </div>
+                        `).join('') : '<span class="text-muted">-</span>'}
+                        ${hiddenCustomerCount ? `<div class="small text-muted">+${formatNumber(hiddenCustomerCount)} more</div>` : ''}
+                    </td>
                     <td class="text-end">${formatNumber(run.request_count || 0)}${run.max_requests ? ` / ${formatNumber(run.max_requests)}` : ''}</td>
                     <td class="text-end">${formatNumber(run.processed_link_count || 0)} / ${formatNumber(run.link_count || 0)}</td>
                     <td class="text-end">${formatNumber(run.flight_count || 0)}</td>
@@ -846,7 +859,7 @@ document.addEventListener('DOMContentLoaded', function () {
                     <td class="small ${stopError ? 'text-danger' : 'text-muted'}">${escapeHtml(stopError || '-')}</td>
                 </tr>
             `;
-        }).join('') : '<tr><td colspan="9" class="text-muted text-center py-4">No Flightradar sync runs have been recorded yet.</td></tr>';
+        }).join('') : '<tr><td colspan="10" class="text-muted text-center py-4">No Flightradar sync runs have been recorded yet.</td></tr>';
     }
 
     async function loadSyncHistory() {
@@ -865,7 +878,7 @@ document.addEventListener('DOMContentLoaded', function () {
             }
             renderSyncHistory(payload.runs || []);
         } catch (error) {
-            syncHistoryBody.innerHTML = `<tr><td colspan="9" class="text-danger text-center py-4">${escapeHtml(error.message || 'Unable to load sync history.')}</td></tr>`;
+            syncHistoryBody.innerHTML = `<tr><td colspan="10" class="text-danger text-center py-4">${escapeHtml(error.message || 'Unable to load sync history.')}</td></tr>`;
         } finally {
             syncHistorySpinner.classList.add('d-none');
             syncHistoryButton.disabled = false;

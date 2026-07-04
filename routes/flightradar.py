@@ -1957,7 +1957,26 @@ def activity_sync_history():
                    r.error_count,
                    r.stopped_reason,
                    r.error_message,
-                   COALESCE(r.result_payload->'errors', '[]'::jsonb) AS errors
+                   COALESCE(r.result_payload->'errors', '[]'::jsonb) AS errors,
+                   COALESCE((
+                       SELECT jsonb_agg(to_jsonb(t) ORDER BY t.customer_name)
+                       FROM (
+                           SELECT l.customer_id,
+                                  COALESCE(NULLIF(l.customer_name, ''), 'Customer ' || l.customer_id::text) AS customer_name,
+                                  SUM(COALESCE(l.request_count, 0)) AS request_count,
+                                  SUM(COALESCE(l.returned_flight_count, 0)) AS returned_flight_count,
+                                  SUM(COALESCE(l.logged_flight_count, 0)) AS logged_flight_count
+                           FROM jsonb_to_recordset(COALESCE(r.result_payload->'links', '[]'::jsonb)) AS l(
+                               customer_id INTEGER,
+                               customer_name TEXT,
+                               request_count INTEGER,
+                               returned_flight_count INTEGER,
+                               logged_flight_count INTEGER
+                           )
+                           WHERE COALESCE(l.request_count, 0) > 0
+                           GROUP BY l.customer_id, l.customer_name
+                       ) t
+                   ), '[]'::jsonb) AS customers_touched
             FROM flightradar_sync_runs r
             LEFT JOIN customers c ON c.id = r.customer_id
             WHERE {' AND '.join(clauses)}
