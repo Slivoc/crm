@@ -7,6 +7,7 @@ from ai_helper import start_bulk_enrichment, start_perplexity_enrichment, enrich
 from http import HTTPStatus
 import requests
 from routes.auth import login_required, current_user
+from services.customer_news_ingestion import format_news_rows, get_news_for_customer, record_feedback
 import time
 from datetime import datetime, date, timedelta
 import calendar
@@ -1131,6 +1132,7 @@ def edit_customer(customer_id):
     commercial_insights = _get_customer_commercial_insights(customer_id)
     flightradar_links = _get_customer_flightradar_links(customer_id)
     flightradar_aircraft = _get_customer_flightradar_aircraft(customer_id)
+    customer_news_items = format_news_rows(get_news_for_customer(customer_id, limit=12))
 
     return render_template('customer_edit.html',
                            customer=customer_dict,
@@ -1155,6 +1157,7 @@ def edit_customer(customer_id):
                            commercial_insights=commercial_insights,
                            flightradar_links=flightradar_links,
                            flightradar_aircraft=flightradar_aircraft,
+                           customer_news_items=customer_news_items,
                            page=page,
                            per_page=per_page,
                            breadcrumbs=breadcrumbs,
@@ -1208,6 +1211,33 @@ def update_customer_status(customer_id):
             'name': status_name,
         }
     })
+
+
+@customers_bp.route('/<int:customer_id>/news/<int:article_id>/feedback', methods=['POST'])
+@login_required
+def customer_news_feedback(customer_id, article_id):
+    customer = get_customer_by_id(customer_id)
+    if not customer:
+        abort(404)
+
+    customer_dict = dict(customer) if hasattr(customer, 'keys') else customer
+    can_view, _ = _get_customer_permission_flags(customer_dict)
+    if not can_view:
+        abort(403)
+
+    payload = request.get_json(silent=True) if request.is_json else {}
+    feedback_type = (payload or {}).get('feedback_type') or request.form.get('feedback_type')
+    allowed = {'relevant', 'not_relevant', 'duplicate', 'wrong_company', 'good_lead'}
+    if feedback_type not in allowed:
+        return jsonify({'success': False, 'error': 'Invalid feedback type'}), 400
+
+    notes = (payload or {}).get('notes') or request.form.get('notes') or ''
+    record_feedback(article_id, customer_id, getattr(current_user, 'id', None), feedback_type, notes)
+
+    if request.headers.get('Accept') == 'application/json' or request.is_json:
+        return jsonify({'success': True})
+    flash('News feedback saved.', 'success')
+    return redirect(url_for('customers.edit_customer', customer_id=customer_id) + '#customer-news')
 
 
 @customers_bp.route('/<int:customer_id>/flightradar-links', methods=['POST'])

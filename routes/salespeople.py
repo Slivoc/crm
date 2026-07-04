@@ -8,6 +8,11 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from routes.auth import login_required, current_user
 from ai_helper import get_cached_news, get_top_customers_for_news, get_watched_customers_for_news, get_cache_key, cleanup_old_cache_files, fetch_customer_news_perplexity, process_customer_news_chatgpt, cache_news, filter_duplicate_news, store_sent_news_items
 from routes.news_email import get_news_email_addresses, send_news_email
+from services.customer_news_ingestion import (
+    format_news_rows,
+    get_news_for_salesperson,
+    run_ingestion as run_customer_news_ingestion,
+)
 from models import (get_salespeople, get_all_salespeople_with_contact_counts, get_call_list_contact_ids, add_to_call_list, remove_from_call_list,
     snooze_call_list_entry, get_call_list_with_communication_status, update_call_list_priority, update_call_list_notes, bulk_add_to_call_list, get_salesperson_recent_communications, get_communication_types_for_salesperson, delete_customer_tag, insert_customer_tags, get_all_tags, insert_customer_tag, get_engagement_settings, get_all_salespeople_with_customer_counts, get_priorities, save_engagement_settings, insert_salesperson, get_active_salespeople, get_engagement_metrics, toggle_salesperson_active, get_customer_contacts_with_communications, update_customer_field_value, get_all_contact_statuses, get_status_counts_for_salesperson, get_tags_by_customer_id, get_salesperson_customers_with_spend, get_salesperson_by_id, get_salesperson_contacts, get_contact_communications, get_salesperson_sales_by_date_range, get_salesperson_monthly_sales, get_accounts_monthly_sales,
                     update_salesperson, delete_salesperson, get_template_by_id,
@@ -5553,7 +5558,9 @@ def customer_news(salesperson_id):
     if force_refresh:
         result = collect_customer_news(salesperson_id)
         salesperson = get_salesperson_by_id(salesperson_id)
-        send_news_email(salesperson_id, salesperson.get('name') if salesperson else None, result)
+        email_sent = send_news_email(salesperson_id, salesperson.get('name') if salesperson else None, result)
+        if email_sent and result.get('news_items'):
+            store_sent_news_items(salesperson_id, result.get('news_items') or [])
         return jsonify({
             'success': True,
             **result
@@ -5615,7 +5622,7 @@ def customer_news_send_email(salesperson_id):
     })
 
 def collect_customer_news(salesperson_id):
-    """Collect customer news synchronously (non-streaming fallback)."""
+    """Collect customer news from the local RSS/GDELT article store."""
     # Verify salesperson exists
     salesperson = get_salesperson_by_id(salesperson_id)
     if not salesperson:
@@ -5629,6 +5636,7 @@ def collect_customer_news(salesperson_id):
         }
 
     top_customers = get_watched_customers_for_news(salesperson_id, limit=25)
+    total_customers = len(top_customers)
     if not top_customers:
         result = {
             'news_items': [],
@@ -5642,30 +5650,15 @@ def collect_customer_news(salesperson_id):
         cache_news(cache_key, result)
         return result
 
-    all_news_items = []
-    successful_customers = 0
+    # Opportunistically fetch due sources once. This is cheap compared with the old
+    # per-customer Perplexity loop and keeps manual refresh useful.
+    try:
+        run_customer_news_ingestion(limit=50)
+    except Exception as exc:
+        current_app.logger.warning("Customer news ingestion refresh failed: %s", exc)
 
-    for customer in top_customers:
-        try:
-            raw_news = fetch_customer_news_perplexity(customer)
-
-            if raw_news:
-                processed_news = process_customer_news_chatgpt(customer, raw_news)
-
-                if processed_news and processed_news.get('news_items'):
-                    all_news_items.extend(processed_news['news_items'])
-                    successful_customers += 1
-
-            import time
-            time.sleep(0.5)
-        except Exception:
-            continue
-
-    # Sort by relevance and date
-    all_news_items.sort(
-        key=lambda x: (x.get('relevance_score', 0), x.get('published_date', '')),
-        reverse=True
-    )
+    all_news_items = format_news_rows(get_news_for_salesperson(salesperson_id, limit=50))
+    successful_customers = len({item.get('customer_id') for item in all_news_items if item.get('customer_id')})
     
     # Filter out duplicates (news that has already been sent)
     original_count = len(all_news_items)
@@ -5678,7 +5671,7 @@ def collect_customer_news(salesperson_id):
     result = {
         'news_items': final_news_items,
         'last_updated': datetime.now().isoformat(),
-        'total_customers_checked': len(top_customers),
+        'total_customers_checked': total_customers,
         'successful_customers': successful_customers,
         'total_news_items': len(final_news_items),
         'filtered_duplicates': filtered_duplicates
@@ -5716,56 +5709,26 @@ def generate_news_stream(salesperson_id):
         # Send initial progress
         yield f"data: {json.dumps({'status': 'starting', 'total_customers': len(top_customers), 'customers': [c['name'] for c in top_customers]})}\n\n"
 
-        all_news_items = []
-        processed_customers = 0
+        yield f"data: {json.dumps({'status': 'processing', 'current_customer': 'RSS and GDELT sources', 'customer_index': 0, 'completed_customers': 0})}\n\n"
+        try:
+            ingestion_result = run_customer_news_ingestion(limit=50)
+            yield f"data: {json.dumps({'status': 'analyzing', 'current_customer': 'Local news matches', 'customer_index': 0, 'ingestion': ingestion_result})}\n\n"
+        except Exception as exc:
+            current_app.logger.warning("Customer news stream ingestion refresh failed: %s", exc)
+            yield f"data: {json.dumps({'status': 'error', 'current_customer': 'RSS and GDELT sources', 'customer_index': 0, 'error': str(exc)})}\n\n"
+
+        all_news_items = format_news_rows(get_news_for_salesperson(salesperson_id, limit=50))
+        by_customer = defaultdict(list)
+        for item in all_news_items:
+            by_customer[item.get('customer_id')].append(item)
         successful_customers = 0
-
         for i, customer in enumerate(top_customers):
-            try:
-                # Send progress update
-                yield f"data: {json.dumps({'status': 'processing', 'current_customer': customer['name'], 'customer_index': i, 'completed_customers': processed_customers})}\n\n"
-
-                # Get raw news from Perplexity
-                raw_news = fetch_customer_news_perplexity(customer)
-
-                if raw_news:
-                    # Send processing update
-                    yield f"data: {json.dumps({'status': 'analyzing', 'current_customer': customer['name'], 'customer_index': i})}\n\n"
-
-                    # Process with ChatGPT
-                    processed_news = process_customer_news_chatgpt(customer, raw_news)
-
-                    if processed_news and processed_news.get('news_items'):
-                        news_count = len(processed_news['news_items'])
-                        all_news_items.extend(processed_news['news_items'])
-                        successful_customers += 1
-
-                        # Send success update
-                        yield f"data: {json.dumps({'status': 'found_news', 'current_customer': customer['name'], 'customer_index': i, 'news_count': news_count})}\n\n"
-                    else:
-                        # Send no news update
-                        yield f"data: {json.dumps({'status': 'no_news', 'current_customer': customer['name'], 'customer_index': i})}\n\n"
-                else:
-                    # Send no data update
-                    yield f"data: {json.dumps({'status': 'no_data', 'current_customer': customer['name'], 'customer_index': i})}\n\n"
-
-                processed_customers += 1
-
-                # Add delay to avoid API rate limits
-                import time
-                time.sleep(0.5)
-
-            except Exception as e:
-                # Send error update
-                yield f"data: {json.dumps({'status': 'error', 'current_customer': customer['name'], 'customer_index': i, 'error': str(e)})}\n\n"
-                processed_customers += 1
-                continue
-
-        # Sort and limit results
-        all_news_items.sort(
-            key=lambda x: (x.get('relevance_score', 0), x.get('published_date', '')),
-            reverse=True
-        )
+            customer_items = by_customer.get(customer.get('id'), [])
+            if customer_items:
+                successful_customers += 1
+                yield f"data: {json.dumps({'status': 'found_news', 'current_customer': customer['name'], 'customer_index': i, 'news_count': len(customer_items)})}\n\n"
+            else:
+                yield f"data: {json.dumps({'status': 'no_news', 'current_customer': customer['name'], 'customer_index': i})}\n\n"
         
         # Filter out duplicates (news that has already been sent)
         original_count = len(all_news_items)

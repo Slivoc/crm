@@ -73,6 +73,7 @@ from routes.notifications import notifications_bp
 from routes.team_tracker import team_tracker_bp
 from routes.partsbase import partsbase_bp
 from routes.flightradar import flightradar_bp, sync_flightradar_activity_incremental, sync_flightradar_live_incremental
+from services.customer_news_ingestion import run_ingestion as run_customer_news_ingestion
 
 scheduler = APScheduler()
 
@@ -494,6 +495,19 @@ def test_get_all_tags():
 @scheduler.task('cron', id='news_scan', day_of_week='mon-fri', hour=1, minute=0)
 def scheduled_news_scan():
     with app.app_context():
+        try:
+            ingestion_result = run_customer_news_ingestion(limit=50)
+            current_app.logger.info(
+                "Scheduled News Ingestion: sources=%s inserted=%s duplicates=%s matches=%s errors=%s",
+                ingestion_result.get('sources_checked', 0),
+                ingestion_result.get('articles_inserted', 0),
+                ingestion_result.get('duplicates', 0),
+                ingestion_result.get('customer_matches', 0),
+                len(ingestion_result.get('errors') or [])
+            )
+        except Exception as exc:
+            current_app.logger.exception("Scheduled News Ingestion failed: %s", exc)
+
         salespeople = get_salespeople() or []
         for salesperson in salespeople:
             salesperson_id = salesperson.get('id')
@@ -506,7 +520,10 @@ def scheduled_news_scan():
                     salesperson_id,
                     result.get('total_news_items', 0)
                 )
-                send_news_email(salesperson_id, salesperson.get('name'), result)
+                sent = send_news_email(salesperson_id, salesperson.get('name'), result)
+                if sent:
+                    from ai_helper import store_sent_news_items
+                    store_sent_news_items(salesperson_id, result.get('news_items') or [])
             except Exception as exc:
                 current_app.logger.exception(
                     "Scheduled News Scan failed: salesperson_id=%s error=%s",

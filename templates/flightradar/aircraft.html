@@ -397,7 +397,7 @@ document.addEventListener('DOMContentLoaded', function () {
     function setDefaultDates() {
         const today = new Date();
         const from = new Date();
-        from.setDate(today.getDate() - 90);
+        from.setDate(today.getDate() - 30);
         document.getElementById('date-from-filter').value = from.toISOString().slice(0, 10);
         document.getElementById('date-to-filter').value = today.toISOString().slice(0, 10);
     }
@@ -505,7 +505,7 @@ document.addEventListener('DOMContentLoaded', function () {
         }
         if (!start) {
             const fallback = new Date(end.getTime());
-            fallback.setUTCDate(fallback.getUTCDate() - 90);
+            fallback.setUTCDate(fallback.getUTCDate() - 30);
             start = fallback;
         }
 

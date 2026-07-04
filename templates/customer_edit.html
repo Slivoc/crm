@@ -108,6 +108,11 @@
                </a>
              </li>
              <li class="nav-item">
+               <a class="nav-link" href="#customer-news" data-bs-toggle="tab">
+                 <i class="bi bi-newspaper me-1"></i> News
+               </a>
+             </li>
+             <li class="nav-item">
                <a class="nav-link" href="{{ url_for('customers.customer_deep_dive_workspace', customer_id=customer.id) }}">
                  <i class="bi bi-bullseye me-1"></i> Customer Deep Dive
                </a>
@@ -852,6 +857,64 @@
                          </div>
                      </div>
                  </div>
+             </div>
+
+             <div class="tab-pane fade" id="customer-news" role="tabpanel">
+               <div class="d-flex justify-content-between align-items-center mb-3">
+                 <div>
+                   <h5 class="mb-1">Customer News</h5>
+                   <div class="text-muted small">Matched from RSS and GDELT sources using customer aliases and relevance scoring.</div>
+                 </div>
+                 {% if current_user.can(Permission.ADMIN) %}
+                   <a href="{{ url_for('admin.news_control') }}" class="btn btn-sm btn-outline-secondary">
+                     <i class="bi bi-sliders me-1"></i> Control
+                   </a>
+                 {% endif %}
+               </div>
+               {% if customer_news_items %}
+                 <div class="list-group">
+                   {% for item in customer_news_items %}
+                     <div class="list-group-item">
+                       <div class="d-flex justify-content-between gap-3">
+                         <div>
+                           <a class="fw-semibold text-decoration-none" href="{{ item.url }}" target="_blank" rel="noopener">
+                             {{ item.headline }}
+                           </a>
+                           {% if item.summary %}
+                             <div class="small text-muted mt-1">{{ item.summary[:260] }}</div>
+                           {% endif %}
+                           <div class="small text-muted mt-2">
+                             {{ item.source or 'Unknown source' }}
+                             {% if item.published_date %} &bull; {{ item.published_date }}{% endif %}
+                             {% if item.reason %} &bull; {{ item.reason }}{% endif %}
+                           </div>
+                           <div class="d-flex flex-wrap gap-2 mt-2">
+                             {% for feedback_type, label, icon in [
+                               ('relevant', 'Relevant', 'bi-check2'),
+                               ('good_lead', 'Good lead', 'bi-star'),
+                               ('not_relevant', 'Not relevant', 'bi-x'),
+                               ('duplicate', 'Duplicate', 'bi-copy'),
+                               ('wrong_company', 'Wrong company', 'bi-building-x')
+                             ] %}
+                               <form method="post" action="{{ url_for('customers.customer_news_feedback', customer_id=customer.id, article_id=item.article_id) }}">
+                                 <input type="hidden" name="feedback_type" value="{{ feedback_type }}">
+                                 <button class="btn btn-sm btn-outline-secondary" type="submit">
+                                   <i class="bi {{ icon }} me-1"></i>{{ label }}
+                                 </button>
+                               </form>
+                             {% endfor %}
+                           </div>
+                         </div>
+                         <span class="badge align-self-start {{ 'bg-success' if item.relevance_score >= 80 else 'bg-info' if item.relevance_score >= 60 else 'bg-secondary' }}">
+                           {{ item.relevance_score }}
+                         </span>
+                       </div>
+                     </div>
+                   {% endfor %}
+                 </div>
+               {% else %}
+                 <div class="text-muted border rounded p-3 bg-light">No matched news yet.</div>
+               {% endif %}
              </div>
 
              <div class="tab-pane fade" id="flightradar" role="tabpanel">

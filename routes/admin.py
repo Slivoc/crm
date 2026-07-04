@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, redirect, url_for, flash, request
+from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify
 from db import execute as db_execute
 from models import (
     Permission,
@@ -7,6 +7,14 @@ from models import (
     get_salespeople,
     insert_salesperson,
     set_user_permissions,
+)
+from services.customer_news_ingestion import (
+    ensure_seed_news_sources,
+    ingestion_stats,
+    list_recent_articles,
+    list_sources,
+    run_ingestion,
+    set_source_active,
 )
 admin_bp = Blueprint('admin', __name__, url_prefix='/admin')
 
@@ -81,5 +89,45 @@ def create_user_route():
         flash(f'Unable to create user: {exc}', 'error')
 
     return redirect(url_for('admin.users'))
+
+
+@admin_bp.route('/news')
+@admin_required
+def news_control():
+    ensure_seed_news_sources()
+    return render_template(
+        'admin/news_control.html',
+        stats=ingestion_stats(),
+        sources=list_sources(),
+        articles=list_recent_articles(limit=100),
+    )
+
+
+@admin_bp.route('/news/run', methods=['POST'])
+@admin_required
+def run_news_ingestion_route():
+    payload = request.get_json(silent=True) if request.is_json else {}
+    source_type = (payload or {}).get('source_type') or request.form.get('source_type') or None
+    if source_type == 'all':
+        source_type = None
+    result = run_ingestion(source_type=source_type, limit=50)
+    if request.headers.get('Accept') == 'application/json' or request.is_json:
+        return jsonify({'success': True, 'result': result})
+    flash(
+        f"News ingestion checked {result.get('sources_checked', 0)} sources and inserted {result.get('articles_inserted', 0)} articles.",
+        'success',
+    )
+    if result.get('errors'):
+        flash(f"{len(result['errors'])} source(s) returned errors. Check the source table.", 'warning')
+    return redirect(url_for('admin.news_control'))
+
+
+@admin_bp.route('/news/sources/<int:source_id>/toggle', methods=['POST'])
+@admin_required
+def toggle_news_source(source_id):
+    active = request.form.get('active') == '1'
+    set_source_active(source_id, active)
+    flash('News source updated.', 'success')
+    return redirect(url_for('admin.news_control'))
 
 
