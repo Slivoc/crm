@@ -480,6 +480,7 @@ def _get_active_flightradar_links(customer_id=None):
                match_mode,
                default_bounds,
                is_active,
+               last_live_sync_at,
                last_activity_sync_at,
                activity_sync_cursor_at,
                last_activity_sync_window_from,
@@ -494,6 +495,7 @@ def _get_active_flightradar_links(customer_id=None):
                    l.match_mode,
                    l.default_bounds,
                    l.is_active,
+                   l.last_live_sync_at,
                    l.last_activity_sync_at,
                    l.activity_sync_cursor_at,
                    l.last_activity_sync_window_from,
@@ -545,6 +547,19 @@ def _mark_flightradar_link_activity_window(
         WHERE id = ?
         """,
         (error, window_from, window_to, next_cursor, link_id),
+        commit=True,
+    )
+
+
+def _mark_flightradar_link_live_sync(link_id: int):
+    db_execute(
+        """
+        UPDATE customer_flightradar_links
+        SET last_live_sync_at = NOW(),
+            updated_at = NOW()
+        WHERE id = ?
+        """,
+        (link_id,),
         commit=True,
     )
 
@@ -1240,6 +1255,157 @@ def _upsert_customer_aircraft(customer_id: int, link_id: int, flight: dict) -> b
         commit=True,
     )
     return True
+
+
+def sync_flightradar_live_incremental(*, max_customers: int = 1, limit: int = 500, customer_id=None):
+    max_customers = max(1, min(int(max_customers or 1), 25))
+    limit = max(1, min(int(limit or 500), 20000))
+    links = _get_active_flightradar_links(customer_id=customer_id)
+    client = _build_client()
+    result = {
+        'ok': True,
+        'mode': 'live_incremental',
+        'customer_count': 0,
+        'link_count': len(links),
+        'processed_link_count': 0,
+        'flight_count': 0,
+        'stored_tail_count': 0,
+        'customers': [],
+        'links': [],
+        'errors': [],
+        'stopped_reason': None,
+    }
+
+    def live_sort_time(link):
+        value = link.get('last_live_sync_at')
+        if isinstance(value, str):
+            value = _flight_datetime_value(value)
+        if not value:
+            return datetime.min.replace(tzinfo=timezone.utc)
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    customer_groups = {}
+    for link in links:
+        customer_groups.setdefault(link.get('customer_id'), []).append(link)
+
+    ordered_customer_ids = sorted(
+        customer_groups.keys(),
+        key=lambda cid: (
+            min(live_sort_time(link) for link in customer_groups[cid]),
+            customer_groups[cid][0].get('customer_name') or '',
+            cid or 0,
+        ),
+    )
+
+    for current_customer_id in ordered_customer_ids[:max_customers]:
+        if result['stopped_reason']:
+            break
+
+        customer_links = sorted(
+            customer_groups[current_customer_id],
+            key=lambda link: (
+                live_sort_time(link),
+                link.get('airline_name') or '',
+                link.get('airline_icao') or '',
+                link.get('id') or 0,
+            ),
+        )
+        customer_name = customer_links[0].get('customer_name') if customer_links else current_customer_id
+        customer_result = {
+            'customer_id': current_customer_id,
+            'customer_name': customer_name,
+            'link_count': len(customer_links),
+            'flight_count': 0,
+            'stored_tail_count': 0,
+            'errors': [],
+        }
+        seen_keys = set()
+
+        for link in customer_links:
+            link_id = link.get('id')
+            mode = _normalize_match_mode(link.get('match_mode'))
+            icao = link.get('airline_icao')
+            link_result = {
+                'link_id': link_id,
+                'customer_id': current_customer_id,
+                'customer_name': customer_name,
+                'airline_icao': icao,
+                'airline_name': link.get('airline_name'),
+                'match_mode': mode,
+                'returned_flight_count': 0,
+                'stored_tail_count': 0,
+                'error': None,
+            }
+            try:
+                payload = client.get_live_positions_full(
+                    operating_as=icao if mode in ('operating_as', 'both') else None,
+                    painted_as=icao if mode in ('painted_as', 'both') else None,
+                    bounds=link.get('default_bounds') or '',
+                    limit=limit,
+                )
+                link_flights = payload.get('data') if isinstance(payload, dict) else []
+                link_result['returned_flight_count'] = len(link_flights or [])
+                result['processed_link_count'] += 1
+
+                for flight in link_flights or []:
+                    dedupe_key = flight.get('fr24_id') or flight.get('reg') or (
+                        flight.get('callsign'),
+                        flight.get('lat'),
+                        flight.get('lon'),
+                    )
+                    if dedupe_key in seen_keys:
+                        continue
+                    seen_keys.add(dedupe_key)
+                    result['flight_count'] += 1
+                    customer_result['flight_count'] += 1
+                    flight['_customer_flightradar_link_id'] = link_id
+                    flight['_customer_flightradar_match_mode'] = mode
+                    if _upsert_customer_aircraft(current_customer_id, link_id, flight):
+                        result['stored_tail_count'] += 1
+                        customer_result['stored_tail_count'] += 1
+                        link_result['stored_tail_count'] += 1
+
+                _mark_flightradar_link_live_sync(link_id)
+            except FlightradarError as exc:
+                error = str(exc)
+                link_result['error'] = error
+                result['errors'].append({
+                    'link_id': link_id,
+                    'customer_id': current_customer_id,
+                    'reason': exc.reason,
+                    'error': error,
+                })
+                customer_result['errors'].append(error)
+                if exc.reason == 'rate_limited':
+                    result['stopped_reason'] = 'rate_limited'
+            except Exception as exc:
+                error = str(exc)
+                link_result['error'] = error
+                result['errors'].append({
+                    'link_id': link_id,
+                    'customer_id': current_customer_id,
+                    'reason': 'unexpected_error',
+                    'error': error,
+                })
+                customer_result['errors'].append(error)
+                current_app.logger.exception(
+                    "Unexpected Flightradar live sync error link_id=%s customer_id=%s",
+                    link_id,
+                    current_customer_id,
+                )
+            finally:
+                result['links'].append(link_result)
+
+            if result['stopped_reason']:
+                break
+
+        result['customer_count'] += 1
+        result['customers'].append(customer_result)
+
+    result['ok'] = len(result['errors']) == 0
+    return result
 
 
 def _summarize_flights(flights):

@@ -72,7 +72,7 @@ from routes.supplier_portal import supplier_portal_bp
 from routes.notifications import notifications_bp
 from routes.team_tracker import team_tracker_bp
 from routes.partsbase import partsbase_bp
-from routes.flightradar import flightradar_bp, sync_flightradar_activity_incremental, sync_flightradar_activity_window
+from routes.flightradar import flightradar_bp, sync_flightradar_activity_incremental, sync_flightradar_live_incremental
 
 scheduler = APScheduler()
 
@@ -611,6 +611,35 @@ def scheduled_flightradar_activity_sync():
             )
         except Exception as exc:
             current_app.logger.exception("Scheduled Flightradar activity sync failed: %s", exc)
+
+
+@scheduler.task(
+    'interval',
+    id='flightradar_live_sync',
+    minutes=int(os.getenv('FLIGHTRADAR_LIVE_SYNC_MINUTES', '30')),
+)
+def scheduled_flightradar_live_sync():
+    with app.app_context():
+        try:
+            if os.getenv('FLIGHTRADAR_LIVE_SYNC_ENABLED', 'true').lower() not in ('1', 'true', 'yes', 'on'):
+                return
+            result = sync_flightradar_live_incremental(
+                max_customers=int(os.getenv('FLIGHTRADAR_LIVE_SYNC_MAX_CUSTOMERS', '1')),
+                limit=int(os.getenv('FLIGHTRADAR_LIVE_SYNC_LIMIT', '500')),
+            )
+            current_app.logger.info(
+                "Scheduled Flightradar live sync: ok=%s customers=%s links=%s processed_links=%s flights=%s stored_tails=%s errors=%s stopped=%s",
+                result.get('ok'),
+                result.get('customer_count', 0),
+                result.get('link_count', 0),
+                result.get('processed_link_count', 0),
+                result.get('flight_count', 0),
+                result.get('stored_tail_count', 0),
+                len(result.get('errors') or []),
+                result.get('stopped_reason'),
+            )
+        except Exception as exc:
+            current_app.logger.exception("Scheduled Flightradar live sync failed: %s", exc)
 
 
 scheduler.init_app(app)
