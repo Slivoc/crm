@@ -1020,16 +1020,34 @@
                          {% endif %}
                        </div>
                        <div class="row g-2 mb-3">
-                         <div class="col-6">
+                         <div class="col-6 col-xl-4">
                            <div class="border rounded p-3 h-100">
                              <div class="text-muted small">Flights</div>
                              <div id="flightradar-summary-flights" class="h4 mb-0">-</div>
                            </div>
                          </div>
-                         <div class="col-6">
+                         <div class="col-6 col-xl-4">
                            <div class="border rounded p-3 h-100">
-                             <div class="text-muted small">Unique Tails</div>
+                             <div class="text-muted small">Known Tails</div>
                              <div id="flightradar-summary-tails" class="h4 mb-0">-</div>
+                           </div>
+                         </div>
+                         <div class="col-6 col-xl-4">
+                           <div class="border rounded p-3 h-100">
+                             <div class="text-muted small">Flight Hours</div>
+                             <div id="flightradar-summary-hours" class="h4 mb-0">-</div>
+                           </div>
+                         </div>
+                         <div class="col-6 col-xl-4">
+                           <div class="border rounded p-3 h-100">
+                             <div class="text-muted small">Cycles</div>
+                             <div id="flightradar-summary-cycles" class="h4 mb-0">-</div>
+                           </div>
+                         </div>
+                         <div class="col-6 col-xl-4">
+                           <div class="border rounded p-3 h-100">
+                             <div class="text-muted small">Latest Logged</div>
+                             <div id="flightradar-summary-latest" class="small fw-semibold">-</div>
                            </div>
                          </div>
                          <div class="col-12">
@@ -1039,12 +1057,24 @@
                            </div>
                          </div>
                        </div>
-                       <h6>Top Routes</h6>
-                       <div id="flightradar-summary-routes" class="list-group small mb-3"></div>
-                       <h6>Aircraft Types</h6>
-                       <div id="flightradar-summary-types" class="list-group small mb-3"></div>
-                       <h6>Top Airports</h6>
-                       <div id="flightradar-summary-airports" class="list-group small"></div>
+                       <div class="row g-3">
+                         <div class="col-xl-6">
+                           <h6>Top Aircraft</h6>
+                           <div id="flightradar-summary-aircraft" class="list-group small"></div>
+                         </div>
+                         <div class="col-xl-6">
+                           <h6>Aircraft Types</h6>
+                           <div id="flightradar-summary-types" class="list-group small"></div>
+                         </div>
+                         <div class="col-xl-6">
+                           <h6>Top Routes</h6>
+                           <div id="flightradar-summary-routes" class="list-group small"></div>
+                         </div>
+                         <div class="col-xl-6">
+                           <h6>Top Airports</h6>
+                           <div id="flightradar-summary-airports" class="list-group small"></div>
+                         </div>
+                       </div>
                      </div>
                    </div>
                  </div>
@@ -1137,7 +1167,7 @@
                          </table>
                        </div>
 
-                       <h6>Stored Tail Numbers</h6>
+                       <h6>Known Tail Numbers</h6>
                        <div class="table-responsive">
                          <table class="table table-sm align-middle mb-0">
                            <thead>
@@ -2140,6 +2170,31 @@ document.addEventListener('DOMContentLoaded', function() {
         activityStatus.textContent = message;
     }
 
+    function formatNumber(value, digits = 0) {
+        const number = Number(value || 0);
+        return number.toLocaleString(undefined, {
+            maximumFractionDigits: digits,
+            minimumFractionDigits: digits
+        });
+    }
+
+    function formatDate(value) {
+        if (!value) {
+            return '-';
+        }
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+            return value;
+        }
+        return date.toLocaleString(undefined, {
+            year: 'numeric',
+            month: 'short',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
+
     function renderSummaryList(elementId, rows) {
         const element = document.getElementById(elementId);
         if (!element) return;
@@ -2149,17 +2204,24 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         element.innerHTML = rows.map(row => `
             <div class="list-group-item d-flex justify-content-between gap-3">
-                <span>${escapeHtml(row.name || '-')}</span>
-                <span class="badge text-bg-light">${escapeHtml(row.count ?? 0)}</span>
+                <span>
+                    <span class="fw-semibold">${escapeHtml(row.name || '-')}</span>
+                    ${row.hours !== undefined ? `<span class="text-muted ms-1">${formatNumber(row.hours, 1)}h</span>` : ''}
+                </span>
+                <span class="badge text-bg-light">${formatNumber(row.count ?? 0)}</span>
             </div>
         `).join('');
     }
 
     function renderActivitySummary(payload) {
         const summary = payload.summary || {};
-        document.getElementById('flightradar-summary-flights').textContent = summary.flight_count ?? 0;
-        document.getElementById('flightradar-summary-tails').textContent = summary.unique_tail_count ?? 0;
+        document.getElementById('flightradar-summary-flights').textContent = formatNumber(summary.flight_count);
+        document.getElementById('flightradar-summary-tails').textContent = formatNumber(summary.unique_tail_count);
+        document.getElementById('flightradar-summary-hours').textContent = formatNumber(summary.estimated_flight_hours, 1);
+        document.getElementById('flightradar-summary-cycles').textContent = formatNumber(summary.completed_cycle_count);
+        document.getElementById('flightradar-summary-latest').textContent = formatDate(summary.latest_logged_at);
         document.getElementById('flightradar-summary-window').textContent = `${payload.window?.from || '-'} to ${payload.window?.to || '-'}`;
+        renderSummaryList('flightradar-summary-aircraft', summary.top_aircraft || []);
         renderSummaryList('flightradar-summary-routes', summary.top_routes || []);
         renderSummaryList('flightradar-summary-types', summary.top_aircraft_types || []);
         renderSummaryList('flightradar-summary-airports', summary.top_airports || []);
@@ -2199,6 +2261,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             renderActivitySummary(payload);
+            renderAircraft(payload.aircraft || []);
             const syncResult = payload.sync_result || {};
             if (refresh) {
                 const stoppedReason = syncResult.stopped_reason === 'rate_limited'

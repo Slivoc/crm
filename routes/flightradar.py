@@ -758,6 +758,130 @@ def _refresh_aircraft_utilization(customer_id: int, registration: str):
     return True
 
 
+def _refresh_known_tail_from_history(customer_id: int, registration: str):
+    normalized_registration = str(registration or '').strip().upper()
+    if not normalized_registration:
+        return False
+
+    latest = db_execute(
+        f"""
+        SELECT link_id,
+               registration,
+               aircraft_type,
+               fr24_id,
+               flight,
+               callsign,
+               COALESCE(origin_iata, origin_icao) AS origin,
+               COALESCE(destination_iata, destination_icao) AS destination,
+               raw_payload,
+               COALESCE(last_seen, datetime_landed, first_seen, datetime_takeoff, created_at) AS latest_seen_at
+        FROM customer_flightradar_flights
+        WHERE customer_id = ?
+          AND registration = ?
+        ORDER BY COALESCE(last_seen, datetime_landed, first_seen, datetime_takeoff, created_at) DESC
+        LIMIT 1
+        """,
+        (customer_id, normalized_registration),
+        fetch='one',
+    )
+    if not latest:
+        return False
+
+    aggregate = db_execute(
+        f"""
+        SELECT MIN(COALESCE(first_seen, datetime_takeoff, created_at)) AS first_seen_at,
+               MAX(COALESCE(last_seen, datetime_landed, first_seen, datetime_takeoff, created_at)) AS last_seen_at,
+               COUNT(*) AS observed_count
+        FROM customer_flightradar_flights
+        WHERE customer_id = ?
+          AND registration = ?
+        """,
+        (customer_id, normalized_registration),
+        fetch='one',
+    ) or {}
+
+    raw_payload = latest.get('raw_payload') or {}
+    payload_json = json.dumps(raw_payload, default=str)
+    db_execute(
+        """
+        INSERT INTO customer_flightradar_aircraft (
+            customer_id,
+            link_id,
+            registration,
+            aircraft_type,
+            first_seen_at,
+            last_seen_at,
+            last_fr24_id,
+            last_flight,
+            last_callsign,
+            last_origin,
+            last_destination,
+            observed_count,
+            last_payload
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)
+        ON CONFLICT (customer_id, registration)
+        DO UPDATE SET
+            link_id = COALESCE(EXCLUDED.link_id, customer_flightradar_aircraft.link_id),
+            aircraft_type = COALESCE(EXCLUDED.aircraft_type, customer_flightradar_aircraft.aircraft_type),
+            first_seen_at = LEAST(customer_flightradar_aircraft.first_seen_at, EXCLUDED.first_seen_at),
+            last_seen_at = GREATEST(customer_flightradar_aircraft.last_seen_at, EXCLUDED.last_seen_at),
+            last_fr24_id = COALESCE(EXCLUDED.last_fr24_id, customer_flightradar_aircraft.last_fr24_id),
+            last_flight = COALESCE(EXCLUDED.last_flight, customer_flightradar_aircraft.last_flight),
+            last_callsign = COALESCE(EXCLUDED.last_callsign, customer_flightradar_aircraft.last_callsign),
+            last_origin = COALESCE(EXCLUDED.last_origin, customer_flightradar_aircraft.last_origin),
+            last_destination = COALESCE(EXCLUDED.last_destination, customer_flightradar_aircraft.last_destination),
+            observed_count = GREATEST(customer_flightradar_aircraft.observed_count, EXCLUDED.observed_count),
+            last_payload = EXCLUDED.last_payload,
+            updated_at = NOW()
+        """,
+        (
+            customer_id,
+            latest.get('link_id'),
+            normalized_registration,
+            latest.get('aircraft_type'),
+            aggregate.get('first_seen_at') or latest.get('latest_seen_at'),
+            aggregate.get('last_seen_at') or latest.get('latest_seen_at'),
+            latest.get('fr24_id'),
+            latest.get('flight'),
+            latest.get('callsign'),
+            latest.get('origin'),
+            latest.get('destination'),
+            int(aggregate.get('observed_count') or 1),
+            payload_json,
+        ),
+        commit=True,
+    )
+    return True
+
+
+def _refresh_known_tails_from_history(customer_ids=None, registrations=None):
+    where_clauses = ["registration IS NOT NULL", "registration <> ''"]
+    params = []
+    if customer_ids:
+        where_clauses.append("customer_id = ANY(?)")
+        params.append(list(customer_ids))
+    if registrations:
+        where_clauses.append("registration = ANY(?)")
+        params.append([str(reg).strip().upper() for reg in registrations if str(reg or '').strip()])
+
+    rows = db_execute(
+        f"""
+        SELECT DISTINCT customer_id, registration
+        FROM customer_flightradar_flights
+        WHERE {' AND '.join(where_clauses)}
+        """,
+        tuple(params),
+        fetch='all',
+    ) or []
+
+    refreshed = 0
+    for row in rows:
+        if _refresh_known_tail_from_history(row['customer_id'], row['registration']):
+            refreshed += 1
+    return refreshed
+
+
 def refresh_flightradar_utilization(customer_ids=None, registrations=None):
     where_clauses = ["registration IS NOT NULL", "registration <> ''"]
     params = []
@@ -995,6 +1119,7 @@ def sync_flightradar_activity_window(*, window_hours: int = 48, limit: int = 500
                 time.sleep(request_delay_seconds)
 
     for customer_id, registration in affected_tails:
+        _refresh_known_tail_from_history(customer_id, registration)
         if _refresh_aircraft_utilization(customer_id, registration):
             result['refreshed_aircraft_count'] += 1
 
@@ -1286,6 +1411,7 @@ def sync_flightradar_activity_incremental(
         result['stopped_reason'] = 'request_budget_exhausted'
 
     for customer_id, registration in affected_tails:
+        _refresh_known_tail_from_history(customer_id, registration)
         if _refresh_aircraft_utilization(customer_id, registration):
             result['refreshed_aircraft_count'] += 1
 
@@ -1680,10 +1806,32 @@ def _customer_stored_activity_summary(customer_id: int, *, start: datetime, end:
         fetch='all',
     ) or []
 
+    aircraft_rows = db_execute(
+        f"""
+        SELECT registration AS name,
+               COUNT(*) AS count,
+               COALESCE(SUM(estimated_flight_hours), 0) AS hours,
+               COALESCE(SUM(cycle_count), 0) AS cycles,
+               MAX(COALESCE(last_seen, datetime_landed, first_seen, datetime_takeoff, created_at)) AS latest_seen_at
+        FROM customer_flightradar_flights
+        WHERE customer_id = ?
+          AND registration IS NOT NULL
+          AND registration <> ''
+          AND {time_expr} >= ?
+          AND {time_expr} < ?
+        GROUP BY registration
+        ORDER BY count DESC, latest_seen_at DESC, registration
+        LIMIT 10
+        """,
+        params,
+        fetch='all',
+    ) or []
+
     summary = _row_to_json(summary)
     summary['top_routes'] = [_row_to_json(row) for row in route_rows]
     summary['top_aircraft_types'] = [_row_to_json(row) for row in type_rows]
     summary['top_airports'] = [_row_to_json(row) for row in airport_rows]
+    summary['top_aircraft'] = [_row_to_json(row) for row in aircraft_rows]
     return summary
 
 
@@ -2393,6 +2541,7 @@ def customer_activity_summary(customer_id):
             'links': links,
             'sync_result': sync_result,
             'summary': summary,
+            'aircraft': _get_customer_flightradar_aircraft(customer_id, limit=100),
         })
     except ValueError as exc:
         return jsonify({'ok': False, 'error': str(exc)}), 400
