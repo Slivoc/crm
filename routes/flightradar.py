@@ -270,6 +270,34 @@ def _normalize_summary_window(date_from: str, date_to: str):
     return start, end
 
 
+def _normalize_customer_activity_window(payload: dict):
+    now = datetime.now(timezone.utc)
+    raw_from = payload.get('flight_datetime_from') or ''
+    raw_to = payload.get('flight_datetime_to') or ''
+    if raw_from or raw_to:
+        end = _parse_iso_datetime(raw_to) or now
+        start = _parse_iso_datetime(raw_from) or (end - timedelta(days=2))
+        max_days = 14
+    else:
+        try:
+            days = int(payload.get('window_days') or 2)
+        except (TypeError, ValueError):
+            raise ValueError('Window days must be a number.')
+        days = max(1, min(days, 14))
+        end = now
+        start = end - timedelta(days=days)
+        max_days = 14
+
+    if end > now:
+        end = now
+    if start > end:
+        raise ValueError('Start date must be before end date.')
+    max_start = end - timedelta(days=max_days)
+    if start < max_start:
+        start = max_start
+    return start, end
+
+
 def _normalize_match_mode(value: str) -> str:
     mode = (value or 'operating_as').strip().lower()
     if mode not in ('operating_as', 'painted_as', 'both'):
@@ -1574,6 +1602,91 @@ def _summarize_flights(flights):
     }
 
 
+def _customer_stored_activity_summary(customer_id: int, *, start: datetime, end: datetime):
+    params = (customer_id, start, end)
+    time_expr = "COALESCE(first_seen, datetime_takeoff, created_at)"
+    summary = db_execute(
+        f"""
+        SELECT COUNT(*) AS flight_count,
+               COUNT(DISTINCT registration) FILTER (WHERE registration IS NOT NULL AND registration <> '') AS unique_tail_count,
+               COALESCE(SUM(estimated_flight_hours), 0) AS estimated_flight_hours,
+               COALESCE(SUM(cycle_count), 0) AS completed_cycle_count,
+               MAX(COALESCE(last_seen, datetime_landed, first_seen, datetime_takeoff, created_at)) AS latest_logged_at
+        FROM customer_flightradar_flights
+        WHERE customer_id = ?
+          AND {time_expr} >= ?
+          AND {time_expr} < ?
+        """,
+        params,
+        fetch='one',
+    ) or {}
+
+    route_rows = db_execute(
+        f"""
+        SELECT CONCAT(COALESCE(origin_iata, origin_icao, 'Unknown'), ' -> ', COALESCE(destination_iata, destination_icao, 'Unknown')) AS name,
+               COUNT(*) AS count
+        FROM customer_flightradar_flights
+        WHERE customer_id = ?
+          AND {time_expr} >= ?
+          AND {time_expr} < ?
+        GROUP BY name
+        ORDER BY count DESC, name
+        LIMIT 10
+        """,
+        params,
+        fetch='all',
+    ) or []
+
+    type_rows = db_execute(
+        f"""
+        SELECT COALESCE(NULLIF(aircraft_type, ''), 'Unknown') AS name,
+               COUNT(*) AS count
+        FROM customer_flightradar_flights
+        WHERE customer_id = ?
+          AND {time_expr} >= ?
+          AND {time_expr} < ?
+        GROUP BY name
+        ORDER BY count DESC, name
+        LIMIT 10
+        """,
+        params,
+        fetch='all',
+    ) or []
+
+    airport_rows = db_execute(
+        f"""
+        SELECT airport AS name,
+               COUNT(*) AS count
+        FROM (
+            SELECT COALESCE(origin_iata, origin_icao) AS airport
+            FROM customer_flightradar_flights
+            WHERE customer_id = ?
+              AND {time_expr} >= ?
+              AND {time_expr} < ?
+            UNION ALL
+            SELECT COALESCE(destination_iata, destination_icao) AS airport
+            FROM customer_flightradar_flights
+            WHERE customer_id = ?
+              AND {time_expr} >= ?
+              AND {time_expr} < ?
+        ) airports
+        WHERE airport IS NOT NULL
+          AND airport <> ''
+        GROUP BY airport
+        ORDER BY count DESC, airport
+        LIMIT 10
+        """,
+        params + params,
+        fetch='all',
+    ) or []
+
+    summary = _row_to_json(summary)
+    summary['top_routes'] = [_row_to_json(row) for row in route_rows]
+    summary['top_aircraft_types'] = [_row_to_json(row) for row in type_rows]
+    summary['top_airports'] = [_row_to_json(row) for row in airport_rows]
+    return summary
+
+
 def lookup_airline_by_icao(icao: str) -> dict:
     normalized = _normalize_icao_list(icao)
     if not normalized or ',' in normalized:
@@ -2240,77 +2353,46 @@ def customer_activity_summary(customer_id):
 
     try:
         request_payload = request.get_json(silent=True) or {}
-        start, end = _normalize_summary_window(
-            request_payload.get('flight_datetime_from') or '',
-            request_payload.get('flight_datetime_to') or '',
-        )
-        limit = _normalize_limit(str(request_payload.get('limit') or '500'))
+        start, end = _normalize_customer_activity_window(request_payload)
+        refresh = bool(request_payload.get('refresh'))
+        limit = _normalize_limit(str(request_payload.get('limit') or '20000'))
         links = _get_customer_flightradar_links(customer_id)
-        if not links:
-            return jsonify({
-                'ok': True,
-                'window': {
-                    'from': _format_fr24_datetime(start),
-                    'to': _format_fr24_datetime(end),
-                    'max_days': 2,
-                },
-                'links': [],
-                'flights': [],
-                'summary': _summarize_flights([]),
-            })
-
-        client = _build_client()
-        flights = []
-        seen_keys = set()
-        logged_flight_count = 0
-        affected_tails = set()
-        for link in links:
-            mode = _normalize_match_mode(link.get('match_mode'))
-            icao = link.get('airline_icao')
-            payload = client.get_flight_summary_full(
-                flight_datetime_from=_format_fr24_datetime(start),
-                flight_datetime_to=_format_fr24_datetime(end),
-                operating_as=icao if mode in ('operating_as', 'both') else None,
-                painted_as=icao if mode in ('painted_as', 'both') else None,
-                limit=limit,
+        sync_result = None
+        if refresh and links:
+            lookback_hours = max(1, int((end - start).total_seconds() // 3600))
+            if (end - start).total_seconds() % 3600:
+                lookback_hours += 1
+            chunk_hours = max(1, min(int(request_payload.get('chunk_hours') or 24), lookback_hours))
+            default_max_requests = min(
+                len(links) * ((lookback_hours + chunk_hours - 1) // chunk_hours),
+                100,
             )
-            link_flights = payload.get('data') if isinstance(payload, dict) else []
-            for flight in link_flights or []:
-                dedupe_key = flight.get('fr24_id') or (
-                    flight.get('reg'),
-                    flight.get('flight'),
-                    flight.get('first_seen'),
-                    flight.get('last_seen'),
-                )
-                if dedupe_key in seen_keys:
-                    continue
-                seen_keys.add(dedupe_key)
-                flight['_customer_flightradar_link_id'] = link.get('id')
-                flight['_customer_flightradar_match_mode'] = mode
-                flights.append(flight)
-                if _upsert_customer_flight(customer_id, link.get('id'), flight):
-                    logged_flight_count += 1
-                    registration = str(flight.get('reg') or '').strip().upper()
-                    if registration:
-                        affected_tails.add(registration)
+            started_at = datetime.now(timezone.utc)
+            sync_result = sync_flightradar_activity_incremental(
+                lookback_hours=lookback_hours,
+                limit=limit,
+                customer_id=customer_id,
+                chunk_hours=chunk_hours,
+                max_requests=int(request_payload.get('max_requests') or default_max_requests),
+            )
+            try:
+                record_flightradar_sync_run(sync_result, source='manual_customer', started_at=started_at)
+            except Exception as record_exc:
+                current_app.logger.warning('Unable to record customer Flightradar activity refresh: %s', record_exc)
 
-        refreshed_aircraft_count = 0
-        for registration in affected_tails:
-            if _refresh_aircraft_utilization(customer_id, registration):
-                refreshed_aircraft_count += 1
+        summary = _customer_stored_activity_summary(customer_id, start=start, end=end)
 
         return jsonify({
             'ok': True,
+            'source': 'stored_after_refresh' if refresh else 'stored',
             'window': {
                 'from': _format_fr24_datetime(start),
                 'to': _format_fr24_datetime(end),
-                'max_days': 2,
+                'max_days': 14,
             },
             'links': links,
-            'logged_flight_count': logged_flight_count,
-            'refreshed_aircraft_count': refreshed_aircraft_count,
-            'flights': flights,
-            'summary': _summarize_flights(flights),
+            'sync_result': sync_result,
+            'summary': summary,
         })
     except ValueError as exc:
         return jsonify({'ok': False, 'error': str(exc)}), 400

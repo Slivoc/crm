@@ -987,23 +987,36 @@
                    <div class="card border">
                      <div class="card-header d-flex align-items-center justify-content-between gap-3">
                        <div>
-                         <h6 class="mb-0">2-Day Activity Summary</h6>
-                         <div class="text-muted small">Uses flight summary data when available on your plan.</div>
+                         <h6 class="mb-0">Stored Flight Activity</h6>
+                         <div class="text-muted small">Reads the same stored history used by the aircraft analytics page.</div>
                        </div>
-                       <button type="button"
-                               id="flightradar-activity-refresh"
-                               class="btn btn-sm btn-outline-primary"
-                               {{ 'disabled' if flightradar_links|length == 0 }}>
-                         <span id="flightradar-activity-spinner" class="spinner-border spinner-border-sm me-1 d-none" aria-hidden="true"></span>
-                         Load
-                       </button>
+                       <div class="d-flex align-items-end gap-2">
+                         <div>
+                           <label for="flightradar-activity-days" class="form-label small text-muted mb-1">Pull Days</label>
+                           <input type="number"
+                                  id="flightradar-activity-days"
+                                  class="form-control form-control-sm"
+                                  min="1"
+                                  max="14"
+                                  value="2"
+                                  style="width: 5rem;"
+                                  {{ 'disabled' if flightradar_links|length == 0 }}>
+                         </div>
+                         <button type="button"
+                                 id="flightradar-activity-refresh"
+                                 class="btn btn-sm btn-outline-primary"
+                                 {{ 'disabled' if flightradar_links|length == 0 }}>
+                           <span id="flightradar-activity-spinner" class="spinner-border spinner-border-sm me-1 d-none" aria-hidden="true"></span>
+                           Pull & Refresh
+                         </button>
+                       </div>
                      </div>
                      <div class="card-body">
                        <div id="flightradar-activity-status" class="alert alert-secondary mb-3">
                          {% if flightradar_links %}
-                           Load the latest 2-day activity summary.
+                           Loading stored activity from the latest 2-day window...
                          {% else %}
-                           Link at least one operator before loading activity.
+                           Link at least one operator before pulling fresh activity. Stored history can still appear here if it already exists.
                          {% endif %}
                        </div>
                        <div class="row g-2 mb-3">
@@ -2095,6 +2108,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const activitySpinner = document.getElementById('flightradar-activity-spinner');
     const activityStatus = document.getElementById('flightradar-activity-status');
     const activityEndpoint = "{{ url_for('flightradar.customer_activity_summary', customer_id=customer.id) }}";
+    const activityDaysInput = document.getElementById('flightradar-activity-days');
     const mapElement = document.getElementById('customer-flightradar-map');
     let map = null;
     let markers = [];
@@ -2149,6 +2163,67 @@ document.addEventListener('DOMContentLoaded', function() {
         renderSummaryList('flightradar-summary-routes', summary.top_routes || []);
         renderSummaryList('flightradar-summary-types', summary.top_aircraft_types || []);
         renderSummaryList('flightradar-summary-airports', summary.top_airports || []);
+    }
+
+    function activityWindowDays() {
+        const parsed = Number.parseInt(activityDaysInput?.value || '2', 10);
+        if (!Number.isFinite(parsed)) {
+            return 2;
+        }
+        return Math.max(1, Math.min(parsed, 14));
+    }
+
+    async function loadActivitySummary(options = {}) {
+        const refresh = Boolean(options.refresh);
+        if (refresh) {
+            activityButton.disabled = true;
+            activitySpinner.classList.remove('d-none');
+            setActivityStatus('info', `Pulling ${activityWindowDays()} day${activityWindowDays() === 1 ? '' : 's'} of Flightradar activity...`);
+        } else {
+            setActivityStatus('info', `Loading stored ${activityWindowDays()} day${activityWindowDays() === 1 ? '' : 's'} flight activity...`);
+        }
+
+        try {
+            const response = await fetch(activityEndpoint, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    refresh,
+                    window_days: activityWindowDays(),
+                    limit: 20000
+                })
+            });
+            const payload = await response.json();
+            if (!response.ok || !payload.ok) {
+                throw new Error(payload.hint || payload.error || 'Unable to load Flightradar activity summary.');
+            }
+
+            renderActivitySummary(payload);
+            const syncResult = payload.sync_result || {};
+            if (refresh) {
+                const stoppedReason = syncResult.stopped_reason === 'rate_limited'
+                    ? ' Flightradar rate-limited the pull.'
+                    : syncResult.stopped_reason === 'request_budget_exhausted'
+                        ? ' Request budget reached; run another pull to continue.'
+                        : '';
+                setActivityStatus(
+                    stoppedReason ? 'warning' : 'success',
+                    `Pulled ${syncResult.logged_flight_count || 0} new/updated logged flights. Stored window now has ${payload.summary?.flight_count || 0} flights.${stoppedReason}`
+                );
+            } else {
+                const latestLogged = payload.summary?.latest_logged_at
+                    ? ` Latest logged flight: ${payload.summary.latest_logged_at}.`
+                    : '';
+                setActivityStatus('success', `Loaded ${payload.summary?.flight_count || 0} stored flights from this window.${latestLogged}`);
+            }
+        } catch (error) {
+            setActivityStatus('danger', error.message || 'Unable to load Flightradar activity summary.');
+        } finally {
+            if (refresh) {
+                activitySpinner.classList.add('d-none');
+                activityButton.disabled = false;
+            }
+        }
     }
 
     function operatorLabel(operator) {
@@ -2411,6 +2486,7 @@ document.addEventListener('DOMContentLoaded', function() {
     document.querySelector('a[href="#flightradar"]')?.addEventListener('shown.bs.tab', function() {
         ensureMap();
         window.setTimeout(invalidateMap, 250);
+        loadActivitySummary();
     });
 
     document.getElementById('flightradar')?.addEventListener('click', function(event) {
@@ -2450,29 +2526,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     activityButton?.addEventListener('click', async function() {
-        activityButton.disabled = true;
-        activitySpinner.classList.remove('d-none');
-        setActivityStatus('info', 'Loading 2-day Flightradar24 activity summary...');
-
-        try {
-            const response = await fetch(activityEndpoint, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({limit: 500})
-            });
-            const payload = await response.json();
-            if (!response.ok || !payload.ok) {
-                throw new Error(payload.hint || payload.error || 'Unable to load Flightradar24 activity summary.');
-            }
-
-            renderActivitySummary(payload);
-            setActivityStatus('success', `Loaded ${payload.summary?.flight_count || 0} flights from the latest 2-day window.`);
-        } catch (error) {
-            setActivityStatus('danger', error.message || 'Unable to load Flightradar24 activity summary.');
-        } finally {
-            activitySpinner.classList.add('d-none');
-            activityButton.disabled = false;
-        }
+        loadActivitySummary({refresh: true});
     });
 });
 </script>
