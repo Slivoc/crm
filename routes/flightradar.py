@@ -1052,6 +1052,48 @@ def sync_flightradar_activity_incremental(
             link.get('id') or 0,
         ),
     )
+    customer_groups = {}
+    for link in ordered_links:
+        group_key = link.get('customer_id') or f"link-{link.get('id')}"
+        if group_key not in customer_groups:
+            customer_groups[group_key] = []
+        customer_groups[group_key].append(link)
+
+    def customer_group_sort_key(group):
+        sync_times = [sync_sort_time(link) for link in group]
+        has_recent_sync = any(link.get('last_activity_sync_at') is not None for link in group)
+        has_unsynced_link = any(link.get('last_activity_sync_at') is None for link in group)
+        return (
+            not (has_recent_sync and has_unsynced_link),
+            min(sync_times) if sync_times else datetime.min.replace(tzinfo=timezone.utc),
+            group[0].get('customer_name') or '',
+            group[0].get('customer_id') or 0,
+        )
+
+    ordered_customer_groups = [
+        sorted(
+            group,
+            key=lambda link: (
+                sync_sort_time(link),
+                link.get('airline_icao') or '',
+                link.get('id') or 0,
+            ),
+        )
+        for group in sorted(customer_groups.values(), key=customer_group_sort_key)
+    ]
+    if ordered_customer_groups:
+        max_customer_group_requests = max(1, min(
+            int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_MAX_CUSTOMER_GROUP_REQUESTS', '5') or 5),
+            50,
+        ))
+        customer_group_request_floor = min(
+            len(ordered_customer_groups[0]),
+            max_customer_group_requests,
+        )
+        if customer_group_request_floor > max_requests:
+            result['configured_max_requests'] = max_requests
+            max_requests = customer_group_request_floor
+            result['max_requests'] = max_requests
     completed_link_ids = set()
     touched_link_ids = set()
     link_results = {}
@@ -1094,109 +1136,113 @@ def sync_flightradar_activity_incremental(
 
     while result['request_count'] < max_requests and not result['stopped_reason']:
         made_request = False
-        for link in ordered_links:
+        for customer_links in ordered_customer_groups:
+            for link in customer_links:
+                if result['request_count'] >= max_requests or result['stopped_reason']:
+                    break
+
+                link_id = link.get('id')
+                if link_id in completed_link_ids:
+                    continue
+
+                chunk_end = cursor_for_link(link)
+                chunk_start = max(floor_start, chunk_end - timedelta(hours=chunk_hours))
+                next_cursor = end if chunk_start <= floor_start else chunk_start
+                link_result = link_result_for(link)
+                link_result['window_from'] = chunk_start.isoformat()
+                link_result['window_to'] = chunk_end.isoformat() if not link_result.get('window_to') else link_result['window_to']
+                link_result['next_cursor'] = next_cursor.isoformat()
+
+                try:
+                    sync_result = _sync_flightradar_link_window(
+                        client=client,
+                        link=link,
+                        start=chunk_start,
+                        end=chunk_end,
+                        limit=limit,
+                        seen_keys=seen_keys,
+                        affected_tails=affected_tails,
+                    )
+                    made_request = True
+                    touched_link_ids.add(link_id)
+                    result['request_count'] += 1
+                    result['processed_link_count'] = len(touched_link_ids)
+                    result['flight_count'] += sync_result['unique_flight_count']
+                    result['logged_flight_count'] += sync_result['logged_flight_count']
+                    link_result['match_mode'] = sync_result.get('mode') or link_result['match_mode']
+                    link_result['request_count'] += 1
+                    link_result['returned_flight_count'] += sync_result['returned_flight_count']
+                    link_result['logged_flight_count'] += sync_result['logged_flight_count']
+                    merge_returned_range(link_result, sync_result)
+                    _mark_flightradar_link_activity_window(
+                        link_id,
+                        window_from=chunk_start,
+                        window_to=chunk_end,
+                        next_cursor=next_cursor,
+                    )
+                    link['activity_sync_cursor_at'] = next_cursor
+                    link['last_activity_sync_window_from'] = chunk_start
+                    link['last_activity_sync_window_to'] = chunk_end
+                    if next_cursor == end:
+                        completed_link_ids.add(link_id)
+                except FlightradarError as exc:
+                    made_request = True
+                    touched_link_ids.add(link_id)
+                    result['request_count'] += 1
+                    result['processed_link_count'] = len(touched_link_ids)
+                    error = str(exc)
+                    link_result['request_count'] += 1
+                    link_result['error'] = error
+                    result['errors'].append({
+                        'link_id': link_id,
+                        'customer_id': link.get('customer_id'),
+                        'reason': exc.reason,
+                        'error': error,
+                    })
+                    _mark_flightradar_link_activity_window(
+                        link_id,
+                        window_from=chunk_start,
+                        window_to=chunk_end,
+                        next_cursor=chunk_end,
+                        error=error[:1000],
+                    )
+                    if exc.reason == 'rate_limited':
+                        result['stopped_reason'] = 'rate_limited'
+                    else:
+                        completed_link_ids.add(link_id)
+                except Exception as exc:
+                    made_request = True
+                    touched_link_ids.add(link_id)
+                    result['request_count'] += 1
+                    result['processed_link_count'] = len(touched_link_ids)
+                    error = str(exc)
+                    link_result['request_count'] += 1
+                    link_result['error'] = error
+                    result['errors'].append({
+                        'link_id': link_id,
+                        'customer_id': link.get('customer_id'),
+                        'reason': 'unexpected_error',
+                        'error': error,
+                    })
+                    _mark_flightradar_link_activity_window(
+                        link_id,
+                        window_from=chunk_start,
+                        window_to=chunk_end,
+                        next_cursor=chunk_end,
+                        error=error[:1000],
+                    )
+                    current_app.logger.exception(
+                        "Unexpected incremental Flightradar sync error link_id=%s customer_id=%s",
+                        link_id,
+                        link.get('customer_id'),
+                    )
+                    completed_link_ids.add(link_id)
+                finally:
+                    if request_delay_seconds and result['request_count'] < max_requests and not result['stopped_reason']:
+                        time.sleep(request_delay_seconds)
+
             if result['request_count'] >= max_requests or result['stopped_reason']:
                 break
-
-            link_id = link.get('id')
-            if link_id in completed_link_ids:
-                continue
-
-            chunk_end = cursor_for_link(link)
-            chunk_start = max(floor_start, chunk_end - timedelta(hours=chunk_hours))
-            next_cursor = end if chunk_start <= floor_start else chunk_start
-            link_result = link_result_for(link)
-            link_result['window_from'] = chunk_start.isoformat()
-            link_result['window_to'] = chunk_end.isoformat() if not link_result.get('window_to') else link_result['window_to']
-            link_result['next_cursor'] = next_cursor.isoformat()
-
-            try:
-                sync_result = _sync_flightradar_link_window(
-                    client=client,
-                    link=link,
-                    start=chunk_start,
-                    end=chunk_end,
-                    limit=limit,
-                    seen_keys=seen_keys,
-                    affected_tails=affected_tails,
-                )
-                made_request = True
-                touched_link_ids.add(link_id)
-                result['request_count'] += 1
-                result['processed_link_count'] = len(touched_link_ids)
-                result['flight_count'] += sync_result['unique_flight_count']
-                result['logged_flight_count'] += sync_result['logged_flight_count']
-                link_result['match_mode'] = sync_result.get('mode') or link_result['match_mode']
-                link_result['request_count'] += 1
-                link_result['returned_flight_count'] += sync_result['returned_flight_count']
-                link_result['logged_flight_count'] += sync_result['logged_flight_count']
-                merge_returned_range(link_result, sync_result)
-                _mark_flightradar_link_activity_window(
-                    link_id,
-                    window_from=chunk_start,
-                    window_to=chunk_end,
-                    next_cursor=next_cursor,
-                )
-                link['activity_sync_cursor_at'] = next_cursor
-                link['last_activity_sync_window_from'] = chunk_start
-                link['last_activity_sync_window_to'] = chunk_end
-                if next_cursor == end:
-                    completed_link_ids.add(link_id)
-            except FlightradarError as exc:
-                made_request = True
-                touched_link_ids.add(link_id)
-                result['request_count'] += 1
-                result['processed_link_count'] = len(touched_link_ids)
-                error = str(exc)
-                link_result['request_count'] += 1
-                link_result['error'] = error
-                result['errors'].append({
-                    'link_id': link_id,
-                    'customer_id': link.get('customer_id'),
-                    'reason': exc.reason,
-                    'error': error,
-                })
-                _mark_flightradar_link_activity_window(
-                    link_id,
-                    window_from=chunk_start,
-                    window_to=chunk_end,
-                    next_cursor=chunk_end,
-                    error=error[:1000],
-                )
-                if exc.reason == 'rate_limited':
-                    result['stopped_reason'] = 'rate_limited'
-                else:
-                    completed_link_ids.add(link_id)
-            except Exception as exc:
-                made_request = True
-                touched_link_ids.add(link_id)
-                result['request_count'] += 1
-                result['processed_link_count'] = len(touched_link_ids)
-                error = str(exc)
-                link_result['request_count'] += 1
-                link_result['error'] = error
-                result['errors'].append({
-                    'link_id': link_id,
-                    'customer_id': link.get('customer_id'),
-                    'reason': 'unexpected_error',
-                    'error': error,
-                })
-                _mark_flightradar_link_activity_window(
-                    link_id,
-                    window_from=chunk_start,
-                    window_to=chunk_end,
-                    next_cursor=chunk_end,
-                    error=error[:1000],
-                )
-                current_app.logger.exception(
-                    "Unexpected incremental Flightradar sync error link_id=%s customer_id=%s",
-                    link_id,
-                    link.get('customer_id'),
-                )
-                completed_link_ids.add(link_id)
-            finally:
-                if request_delay_seconds and result['request_count'] < max_requests and not result['stopped_reason']:
-                    time.sleep(request_delay_seconds)
 
         if not made_request:
             break
