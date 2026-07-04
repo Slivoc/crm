@@ -198,6 +198,40 @@
     <div id="aircraft-status" class="alert alert-secondary">Loading aircraft traffic history...</div>
     <div id="sync-diagnostics" class="alert alert-light border d-none"></div>
 
+    <div class="card mb-3">
+        <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+            <div>
+                <h2 class="h5 mb-0">Previous Syncs</h2>
+                <div class="text-muted small">Recent manual and scheduled activity sync results</div>
+            </div>
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="refresh-sync-history-btn">
+                <span id="sync-history-spinner" class="spinner-border spinner-border-sm me-2 d-none" aria-hidden="true"></span>
+                <i class="bi bi-arrow-clockwise me-1"></i>
+                Refresh
+            </button>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>Completed</th>
+                        <th>Source</th>
+                        <th>Status</th>
+                        <th>Scope</th>
+                        <th class="text-end">Requests</th>
+                        <th class="text-end">Links</th>
+                        <th class="text-end">Returned</th>
+                        <th class="text-end">Logged</th>
+                        <th>Stop/Error</th>
+                    </tr>
+                </thead>
+                <tbody id="sync-history-body">
+                    <tr><td colspan="9" class="text-muted text-center py-4">Loading sync history...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
     <div class="metric-grid mb-3">
         <div class="metric-tile">
             <div class="text-muted small">Flights</div>
@@ -379,6 +413,9 @@ document.addEventListener('DOMContentLoaded', function () {
     const syncSpinner = document.getElementById('sync-activity-spinner');
     const status = document.getElementById('aircraft-status');
     const syncDiagnostics = document.getElementById('sync-diagnostics');
+    const syncHistoryBody = document.getElementById('sync-history-body');
+    const syncHistoryButton = document.getElementById('refresh-sync-history-btn');
+    const syncHistorySpinner = document.getElementById('sync-history-spinner');
     const resetButton = document.getElementById('reset-filters-btn');
     const aircraftBody = document.getElementById('aircraft-table-body');
     const flightBody = document.getElementById('flight-log-table-body');
@@ -437,6 +474,17 @@ document.addEventListener('DOMContentLoaded', function () {
             hour: '2-digit',
             minute: '2-digit'
         });
+    }
+
+    function formatDuration(value) {
+        const seconds = Number(value || 0);
+        if (!seconds) {
+            return '';
+        }
+        if (seconds < 60) {
+            return `${formatNumber(seconds, 1)}s`;
+        }
+        return `${formatNumber(seconds / 60, 1)}m`;
     }
 
     function routeText(row) {
@@ -763,6 +811,67 @@ document.addEventListener('DOMContentLoaded', function () {
         `;
     }
 
+    function renderSyncHistory(runs) {
+        syncHistoryBody.innerHTML = runs.length ? runs.map(run => {
+            const stoppedReason = run.stopped_reason === 'rate_limited'
+                ? 'Rate limited'
+                : run.stopped_reason === 'request_budget_exhausted'
+                    ? 'Request budget'
+                    : run.stopped_reason || '';
+            const statusClass = run.ok && !run.stopped_reason
+                ? 'text-bg-success'
+                : run.stopped_reason === 'request_budget_exhausted'
+                    ? 'text-bg-warning'
+                    : 'text-bg-danger';
+            const statusText = run.ok && !run.stopped_reason ? 'OK' : (stoppedReason || 'Error');
+            const scope = run.customer_name || (run.customer_id ? `Customer ${run.customer_id}` : 'All active links');
+            const duration = formatDuration(run.duration_seconds);
+            const stopError = run.error_message || stoppedReason || (Number(run.error_count || 0) ? `${formatNumber(run.error_count)} link errors` : '');
+            return `
+                <tr>
+                    <td>
+                        <div>${escapeHtml(formatDate(run.completed_at))}</div>
+                        <div class="small text-muted">${escapeHtml(duration)}</div>
+                    </td>
+                    <td>${escapeHtml(run.source || '-')}</td>
+                    <td><span class="badge ${statusClass}">${escapeHtml(statusText)}</span></td>
+                    <td>
+                        <div>${escapeHtml(scope)}</div>
+                        <div class="small text-muted">${escapeHtml(formatNumber(run.lookback_hours || 0))}h lookback, ${escapeHtml(formatNumber(run.chunk_hours || 0))}h chunks</div>
+                    </td>
+                    <td class="text-end">${formatNumber(run.request_count || 0)}${run.max_requests ? ` / ${formatNumber(run.max_requests)}` : ''}</td>
+                    <td class="text-end">${formatNumber(run.processed_link_count || 0)} / ${formatNumber(run.link_count || 0)}</td>
+                    <td class="text-end">${formatNumber(run.flight_count || 0)}</td>
+                    <td class="text-end">${formatNumber(run.logged_flight_count || 0)}</td>
+                    <td class="small ${stopError ? 'text-danger' : 'text-muted'}">${escapeHtml(stopError || '-')}</td>
+                </tr>
+            `;
+        }).join('') : '<tr><td colspan="9" class="text-muted text-center py-4">No Flightradar sync runs have been recorded yet.</td></tr>';
+    }
+
+    async function loadSyncHistory() {
+        syncHistoryButton.disabled = true;
+        syncHistorySpinner.classList.remove('d-none');
+        const params = new URLSearchParams({limit: '20'});
+        const selectedCustomerId = document.getElementById('customer-filter').value;
+        if (selectedCustomerId) {
+            params.set('customer_id', selectedCustomerId);
+        }
+        try {
+            const response = await fetch(`{{ url_for("flightradar.activity_sync_history") }}?${params.toString()}`);
+            const payload = await response.json();
+            if (!response.ok || !payload.ok) {
+                throw new Error(payload.error || 'Unable to load sync history.');
+            }
+            renderSyncHistory(payload.runs || []);
+        } catch (error) {
+            syncHistoryBody.innerHTML = `<tr><td colspan="9" class="text-danger text-center py-4">${escapeHtml(error.message || 'Unable to load sync history.')}</td></tr>`;
+        } finally {
+            syncHistorySpinner.classList.add('d-none');
+            syncHistoryButton.disabled = false;
+        }
+    }
+
     async function loadData(options = {}) {
         loadButton.disabled = true;
         spinner.classList.remove('d-none');
@@ -836,6 +945,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const message = `Synced ${formatNumber(payload.logged_flight_count || 0)} logged flights from ${formatNumber(payload.link_count || 0)} links${processedText}${errors.length ? ` with ${formatNumber(errors.length)} link errors` : ''}.${stoppedReason}${moreText}`;
             setStatus(errors.length || stoppedReason ? 'warning' : 'success', message);
             renderSyncDiagnostics(payload);
+            await loadSyncHistory();
             await loadData({keepStatus: true});
         } catch (error) {
             setStatus('danger', error.message || 'Unable to sync Flightradar activity.');
@@ -847,16 +957,19 @@ document.addEventListener('DOMContentLoaded', function () {
 
     form.addEventListener('submit', function (event) {
         event.preventDefault();
+        loadSyncHistory();
         loadData();
     });
 
     resetButton.addEventListener('click', function () {
         form.reset();
         setDefaultDates();
+        loadSyncHistory();
         loadData();
     });
 
     syncButton.addEventListener('click', syncRecentActivity);
+    syncHistoryButton.addEventListener('click', loadSyncHistory);
 
     chartMetricInput.addEventListener('change', function () {
         if (latestPayload) {
@@ -888,6 +1001,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const filter = document.querySelector(`[name="${button.dataset.filterName}"]`);
         if (filter) {
             filter.value = button.dataset.filterValue || '';
+            loadSyncHistory();
             loadData();
         }
     });
@@ -903,6 +1017,7 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     setDefaultDates();
+    loadSyncHistory();
     loadData();
 });
 </script>

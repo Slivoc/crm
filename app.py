@@ -8,6 +8,7 @@ import imaplib
 import os
 import sys
 import time
+from datetime import datetime, timezone
 from routes.customers import customers_bp
 from routes.suppliers import suppliers_bp
 from routes.test_email import test_email_bp
@@ -72,7 +73,7 @@ from routes.supplier_portal import supplier_portal_bp
 from routes.notifications import notifications_bp
 from routes.team_tracker import team_tracker_bp
 from routes.partsbase import partsbase_bp
-from routes.flightradar import flightradar_bp, sync_flightradar_activity_incremental, sync_flightradar_live_incremental
+from routes.flightradar import flightradar_bp, record_flightradar_sync_run, sync_flightradar_activity_incremental, sync_flightradar_live_incremental
 from services.customer_news_ingestion import run_ingestion as run_customer_news_ingestion
 
 scheduler = APScheduler()
@@ -605,15 +606,21 @@ def scheduled_graph_email_cache_sync():
 )
 def scheduled_flightradar_activity_sync():
     with app.app_context():
+        started_at = None
         try:
             if os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_ENABLED', 'true').lower() not in ('1', 'true', 'yes', 'on'):
                 return
+            started_at = datetime.now(timezone.utc)
             result = sync_flightradar_activity_incremental(
                 lookback_hours=int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_WINDOW_HOURS', '48')),
                 chunk_hours=int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_CHUNK_HOURS', '6')),
                 max_requests=int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_MAX_REQUESTS', '20')),
                 limit=int(os.getenv('FLIGHTRADAR_ACTIVITY_SYNC_LIMIT', '20000')),
             )
+            try:
+                record_flightradar_sync_run(result, source='scheduled', started_at=started_at)
+            except Exception as record_exc:
+                current_app.logger.warning("Unable to record scheduled Flightradar activity sync run: %s", record_exc)
             current_app.logger.info(
                 "Scheduled Flightradar incremental sync: ok=%s requests=%s processed_links=%s links=%s flights=%s logged=%s aircraft=%s errors=%s stopped=%s",
                 result.get('ok'),
@@ -627,6 +634,16 @@ def scheduled_flightradar_activity_sync():
                 result.get('stopped_reason'),
             )
         except Exception as exc:
+            if started_at:
+                try:
+                    record_flightradar_sync_run(
+                        {'ok': False, 'mode': 'incremental', 'errors': [{'reason': 'unexpected_error', 'error': str(exc)}]},
+                        source='scheduled',
+                        started_at=started_at,
+                        error_message=str(exc),
+                    )
+                except Exception as record_exc:
+                    current_app.logger.warning("Unable to record failed scheduled Flightradar activity sync run: %s", record_exc)
             current_app.logger.exception("Scheduled Flightradar activity sync failed: %s", exc)
 
 

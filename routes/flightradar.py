@@ -424,6 +424,70 @@ def _row_to_json(row):
     return {key: _json_value(value) for key, value in dict(row).items()}
 
 
+def record_flightradar_sync_run(result: dict, *, source: str, sync_type: str = 'activity', started_at=None, error_message: str = None):
+    result = result or {}
+    completed_at = datetime.now(timezone.utc)
+    if started_at is None:
+        started_at = completed_at
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
+    duration_seconds = max(0.0, (completed_at - started_at).total_seconds())
+    errors = result.get('errors') or []
+    payload_json = json.dumps(result, default=str)
+    db_execute(
+        """
+        INSERT INTO flightradar_sync_runs (
+            sync_type,
+            source,
+            mode,
+            ok,
+            started_at,
+            completed_at,
+            duration_seconds,
+            customer_id,
+            lookback_hours,
+            chunk_hours,
+            max_requests,
+            request_count,
+            link_count,
+            processed_link_count,
+            flight_count,
+            logged_flight_count,
+            refreshed_aircraft_count,
+            error_count,
+            stopped_reason,
+            error_message,
+            result_payload
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)
+        """,
+        (
+            sync_type,
+            source,
+            result.get('mode'),
+            bool(result.get('ok')),
+            started_at,
+            completed_at,
+            duration_seconds,
+            result.get('customer_id'),
+            result.get('lookback_hours'),
+            result.get('chunk_hours'),
+            result.get('max_requests'),
+            int(result.get('request_count') or 0),
+            int(result.get('link_count') or 0),
+            int(result.get('processed_link_count') or 0),
+            int(result.get('flight_count') or 0),
+            int(result.get('logged_flight_count') or 0),
+            int(result.get('refreshed_aircraft_count') or 0),
+            len(errors),
+            result.get('stopped_reason'),
+            (error_message or result.get('error') or '')[:1000] or None,
+            payload_json,
+        ),
+        commit=True,
+    )
+
+
 def _aircraft_model_expr(table_alias='f'):
     return (
         f"COALESCE(NULLIF({table_alias}.raw_payload->>'model', ''), "
@@ -1851,6 +1915,66 @@ def auth_test():
         return jsonify({'ok': False, 'error': f'Unexpected Flightradar error: {exc}'}), 500
 
 
+@flightradar_bp.route('/api/activity-sync/history', methods=['GET'])
+@login_required
+def activity_sync_history():
+    if not (
+        current_user.is_administrator()
+        or current_user.can(Permission.EDIT_CUSTOMERS)
+    ):
+        return jsonify({'ok': False, 'error': 'Administrator or customer edit permission required.'}), 403
+
+    try:
+        limit = max(1, min(int(request.args.get('limit') or 20), 100))
+        customer_id = (request.args.get('customer_id') or '').strip()
+        clauses = ["r.sync_type = 'activity'"]
+        params = []
+        if customer_id:
+            clauses.append('r.customer_id = ?')
+            params.append(int(customer_id))
+
+        rows = db_execute(
+            f"""
+            SELECT r.id,
+                   r.sync_type,
+                   r.source,
+                   r.mode,
+                   r.ok,
+                   r.started_at,
+                   r.completed_at,
+                   r.duration_seconds,
+                   r.customer_id,
+                   c.name AS customer_name,
+                   r.lookback_hours,
+                   r.chunk_hours,
+                   r.max_requests,
+                   r.request_count,
+                   r.link_count,
+                   r.processed_link_count,
+                   r.flight_count,
+                   r.logged_flight_count,
+                   r.refreshed_aircraft_count,
+                   r.error_count,
+                   r.stopped_reason,
+                   r.error_message,
+                   COALESCE(r.result_payload->'errors', '[]'::jsonb) AS errors
+            FROM flightradar_sync_runs r
+            LEFT JOIN customers c ON c.id = r.customer_id
+            WHERE {' AND '.join(clauses)}
+            ORDER BY r.completed_at DESC
+            LIMIT ?
+            """,
+            tuple(params + [limit]),
+            fetch='all',
+        ) or []
+        return jsonify({'ok': True, 'runs': [_row_to_json(row) for row in rows]})
+    except (TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'Invalid sync history filter.'}), 400
+    except Exception as exc:
+        current_app.logger.exception('Unable to load Flightradar sync history')
+        return jsonify({'ok': False, 'error': f'Unable to load Flightradar sync history: {exc}'}), 500
+
+
 @flightradar_bp.route('/api/activity-sync', methods=['POST'])
 @login_required
 def activity_sync():
@@ -1864,6 +1988,7 @@ def activity_sync():
         payload = request.get_json(silent=True) or {}
         customer_id = payload.get('customer_id') or None
         use_batches = payload.get('batch') is not False
+        started_at = datetime.now(timezone.utc)
         if use_batches:
             result = sync_flightradar_activity_incremental(
                 lookback_hours=int(payload.get('window_hours') or 48),
@@ -1879,6 +2004,10 @@ def activity_sync():
                 customer_id=int(customer_id) if customer_id else None,
                 chunk_hours=int(payload.get('chunk_hours')) if payload.get('chunk_hours') else None,
             )
+        try:
+            record_flightradar_sync_run(result, source='manual', started_at=started_at)
+        except Exception as record_exc:
+            current_app.logger.warning('Unable to record manual Flightradar sync run: %s', record_exc)
         status = 200 if result.get('ok') else 207
         return jsonify(result), status
     except (TypeError, ValueError):
