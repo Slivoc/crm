@@ -401,6 +401,15 @@ function showSuccessMessage(data) {
     // Show results for stock import
     if (data.results) {
         const results = data.results;
+        if (results.cleanup_url) {
+            html += `
+                <div class="d-flex justify-content-end mb-3">
+                    <a class="btn btn-primary" href="${results.cleanup_url}">
+                        <i class="bi bi-person-check me-1"></i>
+                        ${results.cleanup_label || 'Review imported sales orders'}
+                    </a>
+                </div>`;
+        }
         html += '<div class="mt-3">';
         html += '<table class="table table-sm">';
         if (results.processed) html += `<tr><td>Records Processed:</td><td class="fw-bold">${results.processed}</td></tr>`;

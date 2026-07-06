@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, jsonify
+from flask import Blueprint, render_template, request, jsonify, url_for
 from db import execute as db_execute, db_cursor, _using_postgres
 import pandas as pd
 import os
@@ -193,6 +193,11 @@ def upload_so_file():
         results = process_so_csv(df, logger)
         results['log_file'] = log_path
 
+        cleanup_url = _build_sales_order_cleanup_url(df)
+        if cleanup_url:
+            results['cleanup_url'] = cleanup_url
+            results['cleanup_label'] = 'Review salesperson mismatches from this import'
+
         logger.info("=" * 80)
         logger.info(f"SALES ORDER IMPORT COMPLETED: {datetime.now().isoformat()}")
         logger.info("=" * 80)
@@ -210,6 +215,30 @@ def upload_so_file():
             logger.error(f"FATAL ERROR: {e}")
             logger.error(traceback.format_exc())
         return jsonify(success=False, message=str(e)), 500
+
+
+def _build_sales_order_cleanup_url(df):
+    """Build a post-import sales-order cleanup link using the imported order date range."""
+    if df is None or df.empty or len(df.columns) <= 34:
+        return None
+
+    dates = []
+    for raw_value in df.iloc[:, 34].dropna():
+        parsed = validate_date(raw_value)
+        if parsed:
+            dates.append(parsed)
+
+    if not dates:
+        return url_for('sales_orders.list_sales_orders', show_mismatches='true', per_page=100)
+
+    return url_for(
+        'sales_orders.list_sales_orders',
+        date_from=min(dates),
+        show_mismatches='true',
+        sort_by='date_entered',
+        sort_order='desc',
+        per_page=100,
+    )
 
 
 def process_so_csv(df, logger):

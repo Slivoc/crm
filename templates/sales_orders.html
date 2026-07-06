@@ -142,6 +142,15 @@
                 Bulk Assign Salesperson by Customer
                 <small class="text-muted">(for visible orders)</small>
             </h6>
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div class="text-muted small">
+                    Applies the selected salesperson for each customer group below.
+                </div>
+                <button type="button" class="btn btn-success btn-sm" id="bulkAssignAllCustomersBtn">
+                    <i class="bi bi-check2-all me-1"></i>
+                    Apply All Visible Customer Defaults
+                </button>
+            </div>
             <div class="table-responsive">
                 <table class="table table-sm table-striped mb-0">
                     <thead>
@@ -188,7 +197,8 @@
                             </td>
                             <td>
                                 <button class="btn btn-sm btn-success bulk-assign-btn"
-                                        data-customer-id="{{ customer_id }}">
+                                        data-customer-id="{{ customer_id }}"
+                                        data-original-label="Apply to {{ info.order_count }} order{{ 's' if info.order_count != 1 else '' }}">
                                     <i class="bi bi-check-circle me-1"></i>
                                     Apply to {{ info.order_count }} order{{ 's' if info.order_count != 1 else '' }}
                                 </button>
@@ -425,15 +435,69 @@ document.addEventListener('DOMContentLoaded', () => {
   const modal = document.getElementById("orderHealthModal");
   const closeBtn = document.querySelector(".btn-close");
 
+  function getBulkAssignment(customerId) {
+    const select = document.querySelector(`.bulk-salesperson-select[data-customer-id="${customerId}"]`);
+    if (!select) return null;
+    const orderIds = (select.getAttribute('data-order-ids') || '')
+      .split(',')
+      .map(id => parseInt(id, 10))
+      .filter(Boolean);
+    return { select, orderIds, salespersonId: select.value || null };
+  }
+
+  function markBulkButtonUpdated(button) {
+    button.innerHTML = '<i class="bi bi-check-circle me-1"></i>Updated';
+    button.classList.remove('btn-success');
+    button.classList.add('btn-primary');
+    setTimeout(() => {
+      button.disabled = false;
+      button.classList.remove('btn-primary');
+      button.classList.add('btn-success');
+      button.innerHTML = `<i class="bi bi-check-circle me-1"></i> ${button.dataset.originalLabel || 'Apply'}`;
+    }, 1200);
+  }
+
+  function applyVisibleOrderSalesperson(orderIds, salespersonId) {
+    const idSet = new Set(orderIds.map(id => String(id)));
+    document.querySelectorAll('.salesperson-select').forEach(select => {
+      const orderId = select.getAttribute('data-order-id');
+      if (!idSet.has(orderId)) return;
+      select.value = salespersonId || '';
+      select.setAttribute('data-original-value', salespersonId || '');
+      select.classList.remove('mismatch', 'changed', 'saving', 'error');
+      select.classList.add('saved');
+      const warning = select.parentElement.querySelector('.text-danger');
+      if (warning) warning.remove();
+      setTimeout(() => select.classList.remove('saved'), 1600);
+    });
+  }
+
+  async function updateBulkSalesperson(orderIds, salespersonId) {
+    const response = await fetch('/sales_orders/bulk_update_salesperson', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        order_ids: orderIds,
+        salesperson_id: salespersonId || null
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to update orders');
+    }
+    return response.json();
+  }
+
   // Handle Bulk Salesperson Assignment
   document.querySelectorAll('.bulk-assign-btn').forEach(button => {
     button.addEventListener('click', async function() {
       const customerId = this.getAttribute('data-customer-id');
-      const select = document.querySelector(`.bulk-salesperson-select[data-customer-id="${customerId}"]`);
-      const orderIds = select.getAttribute('data-order-ids').split(',').map(id => parseInt(id));
-      const salespersonId = select.value;
+      const assignment = getBulkAssignment(customerId);
+      if (!assignment || assignment.orderIds.length === 0) return;
 
-      if (!confirm(`Are you sure you want to update ${orderIds.length} order(s) for this customer?`)) {
+      if (!confirm(`Are you sure you want to update ${assignment.orderIds.length} order(s) for this customer?`)) {
         return;
       }
 
@@ -441,40 +505,66 @@ document.addEventListener('DOMContentLoaded', () => {
       this.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Updating...';
 
       try {
-        const response = await fetch('/sales_orders/bulk_update_salesperson', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            order_ids: orderIds,
-            salesperson_id: salespersonId || null
-          })
-        });
-
-        if (!response.ok) {
-          throw new Error('Failed to update orders');
-        }
-
-        const result = await response.json();
-
-        this.innerHTML = '<i class="bi bi-check-circle me-1"></i>Updated!';
-        this.classList.remove('btn-success');
-        this.classList.add('btn-primary');
-
-        // Reload page to show updated data
-        setTimeout(() => {
-          window.location.reload();
-        }, 1000);
-
+        await updateBulkSalesperson(assignment.orderIds, assignment.salespersonId);
+        applyVisibleOrderSalesperson(assignment.orderIds, assignment.salespersonId);
+        markBulkButtonUpdated(this);
       } catch (error) {
         console.error('Error updating orders:', error);
         this.disabled = false;
-        this.innerHTML = '<i class="bi bi-check-circle me-1"></i>Apply';
+        this.innerHTML = `<i class="bi bi-check-circle me-1"></i> ${this.dataset.originalLabel || 'Apply'}`;
         alert('Failed to update orders. Please try again.');
       }
     });
   });
+
+  const bulkAssignAllBtn = document.getElementById('bulkAssignAllCustomersBtn');
+  if (bulkAssignAllBtn) {
+    bulkAssignAllBtn.addEventListener('click', async function() {
+      const assignments = Array.from(document.querySelectorAll('.bulk-assign-btn'))
+        .map(button => ({
+          button,
+          customerId: button.getAttribute('data-customer-id'),
+          assignment: getBulkAssignment(button.getAttribute('data-customer-id'))
+        }))
+        .filter(item => item.assignment && item.assignment.orderIds.length > 0);
+
+      const orderCount = assignments.reduce((sum, item) => sum + item.assignment.orderIds.length, 0);
+      if (!orderCount) return;
+
+      if (!confirm(`Apply the selected salesperson for ${assignments.length} customer group(s), updating ${orderCount} visible order(s)?`)) {
+        return;
+      }
+
+      this.disabled = true;
+      this.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Updating...';
+      assignments.forEach(item => {
+        item.button.disabled = true;
+        item.button.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Updating...';
+      });
+
+      try {
+        for (const item of assignments) {
+          await updateBulkSalesperson(item.assignment.orderIds, item.assignment.salespersonId);
+          applyVisibleOrderSalesperson(item.assignment.orderIds, item.assignment.salespersonId);
+          markBulkButtonUpdated(item.button);
+        }
+        this.innerHTML = '<i class="bi bi-check2-all me-1"></i>Updated All';
+        setTimeout(() => {
+          this.disabled = false;
+          this.innerHTML = '<i class="bi bi-check2-all me-1"></i>Apply All Visible Customer Defaults';
+        }, 1400);
+      } catch (error) {
+        console.error('Error updating customer groups:', error);
+        this.disabled = false;
+        this.innerHTML = '<i class="bi bi-check2-all me-1"></i>Apply All Visible Customer Defaults';
+        assignments.forEach(item => {
+          item.button.disabled = false;
+          item.button.innerHTML = `<i class="bi bi-check-circle me-1"></i> ${item.button.dataset.originalLabel || 'Apply'}`;
+        });
+        alert('Failed to update all customer groups. Please refresh and try again.');
+      }
+    });
+  }
 
   // Handle Order Health Modal
   document.querySelectorAll('.modal-button').forEach(button => {
