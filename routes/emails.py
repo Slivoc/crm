@@ -7536,195 +7536,182 @@ def get_suppliers_by_domain(domain):
     return jsonify([dict(row) for row in suppliers])
 
 
-@emails_bp.route('/create_excess_list_from_email/<email_id>', methods=['POST'])
-def create_excess_list_from_email(email_id):
-    print(f"Starting excess list creation for email {email_id}")
+@emails_bp.route('/create_excess_list_from_email', methods=['POST'])
+@emails_bp.route('/create_excess_list_from_email/<path:email_id>', methods=['POST'])
+def create_excess_list_from_email(email_id=None):
+    data = request.get_json(silent=True) or {}
+    message_id = (data.get('message_id') or email_id or '').strip()
+    if not message_id:
+        return jsonify(success=False, error='message_id is required'), 400
 
-    # Connect to email server and get the email
-    email_host = os.getenv('EMAIL_HOST')
-    email_port = int(os.getenv('EMAIL_PORT', 993))
-    email_user = os.getenv('EMAIL_USER')
-    email_password = os.getenv('EMAIL_PASSWORD')
+    settings = _get_graph_settings(include_secret=True)
+    cache, user_id = _load_graph_cache_for_request()
+    app = _build_msal_app(settings, cache=cache)
+    accounts = app.get_accounts()
+    if not accounts:
+        return jsonify(success=False, error='No Graph account connected. Click Connect with Microsoft first.'), 400
+
+    token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+    _save_graph_cache_for_request(user_id, cache)
+    if not token or "access_token" not in token:
+        return jsonify(success=False, error='Failed to refresh Microsoft Graph access token'), 400
+
+    headers = {"Authorization": f"Bearer {token['access_token']}"}
+    safe_message_id = quote(message_id, safe="")
+    message_resp = requests.get(
+        f"https://graph.microsoft.com/v1.0/me/messages/{safe_message_id}",
+        headers=headers,
+        params={"$select": "id,subject,from,body,bodyPreview,conversationId,hasAttachments"},
+        timeout=20,
+    )
+    try:
+        message_body = message_resp.json() if message_resp.content else None
+    except ValueError:
+        message_body = message_resp.text
+
+    if message_resp.status_code == 404:
+        return jsonify(success=False, error='Email was not found in Microsoft Graph'), 404
+    if message_resp.status_code >= 400 or not isinstance(message_body, dict):
+        return jsonify(
+            success=False,
+            error='Microsoft Graph failed while loading the email',
+            debug=message_body,
+        ), 400
+
+    from_data = message_body.get("from", {}).get("emailAddress", {}) if isinstance(message_body, dict) else {}
+    sender_email = (from_data.get("address") or "").strip()
+    if not sender_email:
+        return jsonify(success=False, error='Email sender could not be resolved'), 400
+
+    customer_contact = get_contact_by_email(sender_email)
+    if not customer_contact:
+        return jsonify(success=False, error='No customer contact found for this email address'), 400
+
+    attachment_rows = []
+    if message_body.get("hasAttachments"):
+        attachments_resp = requests.get(
+            f"https://graph.microsoft.com/v1.0/me/messages/{safe_message_id}/attachments",
+            headers=headers,
+            params={"$select": "id,name,contentType,size,isInline"},
+            timeout=20,
+        )
+        try:
+            attachments_body = attachments_resp.json() if attachments_resp.content else None
+        except ValueError:
+            attachments_body = attachments_resp.text
+
+        if attachments_resp.status_code >= 400 or not isinstance(attachments_body, dict):
+            return jsonify(
+                success=False,
+                error='Microsoft Graph failed while loading email attachments',
+                debug=attachments_body,
+            ), 400
+
+        for item in attachments_body.get("value", []):
+            if item.get("isInline"):
+                continue
+            attachment_id = item.get("id")
+            if not attachment_id:
+                continue
+
+            detail_resp = requests.get(
+                f"https://graph.microsoft.com/v1.0/me/messages/{safe_message_id}/attachments/{quote(attachment_id, safe='')}",
+                headers=headers,
+                timeout=20,
+            )
+            try:
+                detail_body = detail_resp.json() if detail_resp.content else None
+            except ValueError:
+                detail_body = detail_resp.text
+
+            if detail_resp.status_code >= 400 or not isinstance(detail_body, dict):
+                current_app.logger.warning(
+                    "Skipping Graph attachment for excess list: message=%s attachment=%s status=%s",
+                    message_id,
+                    attachment_id,
+                    detail_resp.status_code,
+                )
+                continue
+
+            content_bytes = detail_body.get("contentBytes")
+            if not content_bytes:
+                continue
+
+            filename = secure_filename(detail_body.get("name") or item.get("name") or "attachment")
+            if not filename:
+                filename = "attachment"
+            filepath = os.path.join(current_app.config['UPLOAD_FOLDER'], filename)
+            with open(filepath, 'wb') as f:
+                f.write(base64.b64decode(content_bytes))
+            attachment_rows.append((filename, filepath))
 
     try:
-        print("Connecting to email server")
-        # Connect to email server
-        mail = imaplib.IMAP4_SSL(email_host, email_port)
-        mail.login(email_user, email_password)
-        mail.select("inbox")
+        with db_cursor(commit=True) as cursor:
+            customer = _execute_with_cursor(
+                cursor,
+                'SELECT * FROM customers WHERE id = ?',
+                (customer_contact['customer_id'],),
+                fetch='one',
+            )
+            if not customer:
+                return jsonify(success=False, error='Customer not found for this email contact'), 400
 
-        # Fetch the specific email
-        print(f"Fetching email {email_id}")
-        res, msg = mail.fetch(email_id.encode(), "(RFC822)")
-        email_message = None
-        for response_part in msg:
-            if isinstance(response_part, tuple):
-                email_message = email.message_from_bytes(response_part[1])
-                break
+            email_body = message_body.get("body") or {}
+            email_content = email_body.get("content") or message_body.get("bodyPreview") or ''
+            inserted_list = _execute_with_cursor(
+                cursor,
+                '''
+                INSERT INTO excess_stock_lists (
+                    name, customer_id, contact_id, entered_date, status, upload_date, email
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                RETURNING id
+                ''',
+                (
+                    message_body.get("subject") or 'Email Import',
+                    customer['id'],
+                    customer_contact['id'],
+                    date.today().isoformat(),
+                    'new',
+                    datetime.now(),
+                    email_content,
+                ),
+                fetch='one',
+            )
+            list_id = inserted_list['id'] if inserted_list else None
+            if not list_id:
+                return jsonify(success=False, error='Failed to create excess stock list'), 500
 
-        if not email_message:
-            print("No email found")
-            flash('Email not found', 'error')
-            return redirect(url_for('emails.list_emails'))
-
-        # Get email details
-        subject = decode_header(email_message["Subject"])[0][0]
-        if isinstance(subject, bytes):
-            subject = subject.decode()
-        sender = email_message.get("From")
-        sender_email = sender.split('<')[-1].replace('>', '').strip()
-
-        print(f"Processing email from {sender_email}")
-
-        # Get the customer information
-        result = get_company_name_by_email(sender_email)
-        customer_contact = result['customer_contact']
-
-        if not customer_contact:
-            print(f"No customer contact found for {sender_email}")
-            flash('No customer contact found for this email address', 'error')
-            return redirect(url_for('emails.list_emails'))
-
-        print(f"Found customer contact: {customer_contact}")
-
-        try:
-            with db_cursor(commit=True) as cursor:
-                customer = _execute_with_cursor(
-                    cursor,
-                    'SELECT * FROM customers WHERE id = ?',
-                    (customer_contact['customer_id'],),
-                    fetch='one',
-                )
-
-                if not customer:
-                    print(f"No customer found for contact {customer_contact['id']}")
-                    flash('Customer not found', 'error')
-                    return redirect(url_for('emails.list_emails'))
-
-                print(f"Found customer: {customer['name']}")
-
-                # Extract email content
-                email_content = None
-                if email_message.is_multipart():
-                    html_content = None
-                    plain_content = None
-
-                    for part in email_message.walk():
-                        if part.get_content_type() == "text/html":
-                            payload = part.get_payload(decode=True)
-                            if payload:
-                                try:
-                                    html_content = payload.decode('utf-8')
-                                except UnicodeDecodeError:
-                                    try:
-                                        html_content = payload.decode('iso-8859-1')
-                                    except UnicodeDecodeError:
-                                        html_content = payload.decode('windows-1252')
-                        elif part.get_content_type() == "text/plain":
-                            payload = part.get_payload(decode=True)
-                            if payload:
-                                try:
-                                    plain_content = payload.decode('utf-8')
-                                except UnicodeDecodeError:
-                                    try:
-                                        plain_content = payload.decode('iso-8859-1')
-                                    except UnicodeDecodeError:
-                                        plain_content = payload.decode('windows-1252')
-
-                    email_content = html_content if html_content else plain_content
-                else:
-                    payload = email_message.get_payload(decode=True)
-                    if payload:
-                        try:
-                            email_content = payload.decode('utf-8')
-                        except UnicodeDecodeError:
-                            try:
-                                email_content = payload.decode('iso-8859-1')
-                            except UnicodeDecodeError:
-                                email_content = payload.decode('windows-1252')
-
-                print("Creating excess stock list record")
-                entered_date = date.today().isoformat()
-
-                inserted_list = _execute_with_cursor(
+            for filename, filepath in attachment_rows:
+                file_row = _execute_with_cursor(
                     cursor,
                     '''
-                    INSERT INTO excess_stock_lists (
-                        name, customer_id, contact_id, entered_date, status, upload_date
-                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO files (filename, filepath, upload_date)
+                    VALUES (?, ?, ?)
                     RETURNING id
                     ''',
-                    (
-                        subject or 'Email Import',
-                        customer['id'],
-                        customer_contact['id'],
-                        entered_date,
-                        'new',
-                        datetime.now()
-                    ),
+                    (filename, filepath, datetime.now()),
                     fetch='one',
                 )
+                if not file_row:
+                    continue
+                _execute_with_cursor(
+                    cursor,
+                    '''
+                    INSERT INTO excess_stock_files (excess_stock_list_id, file_id)
+                    VALUES (?, ?)
+                    ''',
+                    (list_id, file_row['id']),
+                )
 
-                list_id = inserted_list['id'] if inserted_list else None
-                print(f"Created excess list with ID: {list_id}")
-
-                attachment_count = 0
-                for part in email_message.walk():
-                    if part.get_content_maintype() == 'multipart':
-                        continue
-                    if part.get('Content-Disposition') is None:
-                        continue
-
-                    filename = part.get_filename()
-                    if filename:
-                        filename = secure_filename(filename)
-                        filepath = os.path.join(current_app.config['UPLOAD_FOLDER'], filename)
-
-                        with open(filepath, 'wb') as f:
-                            f.write(part.get_payload(decode=True))
-
-                        file_row = _execute_with_cursor(
-                            cursor,
-                            '''
-                            INSERT INTO files (filename, filepath, upload_date)
-                            VALUES (?, ?, ?)
-                            RETURNING id
-                            ''',
-                            (filename, filepath, datetime.now()),
-                            fetch='one',
-                        )
-                        file_id = file_row['id']
-
-                        _execute_with_cursor(
-                            cursor,
-                            '''
-                            INSERT INTO excess_stock_files (excess_stock_list_id, file_id)
-                            VALUES (?, ?)
-                            ''',
-                            (list_id, file_id),
-                        )
-
-                        attachment_count += 1
-
-                print(f"Processed {attachment_count} attachments")
-
-            flash('Excess list created successfully from email', 'success')
-            print(f"Redirecting to excess list edit page for list {list_id}")
-            return redirect(url_for('excess.edit_excess_list', list_id=list_id))
-
-        except Exception as e:
-            print(f"Database error: {str(e)}")
-            flash(f'Error creating excess list from email: {str(e)}', 'error')
-            return redirect(url_for('emails.list_emails'))
-
-    except Exception as e:
-        print(f"Error creating excess list: {str(e)}")
-        flash(f'Error creating excess list from email: {str(e)}', 'error')
-        return redirect(url_for('emails.list_emails'))
-
-    finally:
-        if 'mail' in locals():
-            mail.logout()
+        return jsonify(
+            success=True,
+            list_id=list_id,
+            redirect=url_for('excess.edit_excess_list', list_id=list_id),
+            attachment_count=len(attachment_rows),
+        )
+    except Exception as exc:
+        current_app.logger.exception("Error creating excess list from Graph email")
+        return jsonify(success=False, error=f'Error creating excess list from email: {exc}'), 500
 
 
 @emails_bp.route('/populate-domains', methods=['POST'])
