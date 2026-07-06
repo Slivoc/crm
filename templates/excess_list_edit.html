@@ -85,8 +85,8 @@
 
                 <form id="excel-upload-form" action="{{ url_for('excess.upload_excel', list_id=excess_list.id) }}" method="post" enctype="multipart/form-data" style="display: none;">
                     <input type="hidden" id="wipe_existing_excel" name="wipe_existing" value="0">
-                    <input type="file" id="excel_file" name="excel_file" accept=".xls, .xlsx">
-                    <button type="submit" class="btn btn-primary">Upload Excel</button>
+                    <input type="file" id="excel_file" name="excel_file" accept=".csv, .xls, .xlsx">
+                    <button type="submit" class="btn btn-primary">Upload List File</button>
                 </form>
 
                 <br>
@@ -105,8 +105,9 @@
                         <ul class="dropdown-menu" aria-labelledby="dropdownMenuButton">
                             {% for attachment in attachments %}
                             <li>
-                                {% if attachment['filename'].endswith('.xls') or attachment['filename'].endswith('.xlsx') %}
-                                <!-- If the file is Excel, link to Handsontable mapping route -->
+                                {% set attachment_name = attachment['filename']|lower %}
+                                {% if attachment_name.endswith('.csv') or attachment_name.endswith('.xls') or attachment_name.endswith('.xlsx') %}
+                                <!-- If the file is a list file, link to Handsontable mapping route -->
                                 <a class="dropdown-item" href="{{ url_for('handson.excess_list_mapping', file_id=attachment['id']) }}">
                                     {{ attachment['filename'] }}
                                 </a>
@@ -378,14 +379,14 @@ document.addEventListener('DOMContentLoaded', (event) => {
         if (wipeExcelInput) wipeExcelInput.value = wipeChecked ? '1' : '0';
 
         // Route to the appropriate form based on file extension
-        if (fileName.endsWith('.xls') || fileName.endsWith('.xlsx')) {
+        if (fileName.endsWith('.csv') || fileName.endsWith('.xls') || fileName.endsWith('.xlsx')) {
             excelFileInput.files = files;
             excelForm.submit();
         } else if (fileName.endsWith('.eml') || fileName.endsWith('.msg')) {
             emailFileInput.files = files;
             emailForm.submit();
         } else {
-            alert('Invalid file type. Please upload .eml, .msg, .xls, or .xlsx files.');
+            alert('Invalid file type. Please upload .eml, .msg, .csv, .xls, or .xlsx files.');
         }
     }
 

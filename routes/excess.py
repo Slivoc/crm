@@ -399,9 +399,9 @@ def upload_excel(list_id):
         flash('No selected file', 'error')
         return redirect(url_for('excess.edit_excess_list', list_id=list_id))
 
-    # Check for Excel files
-    if not (file.filename.endswith('.xls') or file.filename.endswith('.xlsx')):
-        flash('Invalid file type. Only .xls and .xlsx files are allowed.', 'error')
+    list_filename = file.filename.lower()
+    if not (list_filename.endswith('.csv') or list_filename.endswith('.xls') or list_filename.endswith('.xlsx')):
+        flash('Invalid file type. Only .csv, .xls and .xlsx files are allowed.', 'error')
         return redirect(url_for('excess.edit_excess_list', list_id=list_id))
 
     filename = secure_filename(file.filename)

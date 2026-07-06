@@ -36,6 +36,30 @@ def _resolve_file_path(file_path):
     return os.path.join(base_path, file_path)
 
 
+def _read_table_file(file_path, *, header=None, nrows=None):
+    file_ext = os.path.splitext(file_path)[1].lower()
+    if file_ext == '.csv':
+        last_error = None
+        for encoding in ('utf-8-sig', 'utf-8', 'latin1', 'cp1252'):
+            try:
+                return pd.read_csv(
+                    file_path,
+                    header=header,
+                    nrows=nrows,
+                    dtype=str,
+                    keep_default_na=False,
+                    encoding=encoding,
+                    sep=None,
+                    engine='python',
+                )
+            except Exception as exc:
+                last_error = exc
+        raise ValueError(f"Unable to read CSV file: {last_error}")
+    if file_ext in ('.xls', '.xlsx'):
+        return pd.read_excel(file_path, header=header, nrows=nrows)
+    raise ValueError("Invalid file format")
+
+
 def _with_returning_clause(query):
     if not _using_postgres():
         return query
@@ -128,7 +152,10 @@ def process_excess_list():
         if not os.path.exists(file_path):
             return jsonify(success=False, message="File path does not exist"), 404
 
-        df = pd.read_excel(file_path, header=None)
+        try:
+            df = _read_table_file(file_path, header=None)
+        except ValueError as exc:
+            return jsonify(success=False, message=str(exc)), 400
         df = df.fillna('')
         if header_row < len(df):
             df = df.iloc[header_row:]
@@ -310,51 +337,48 @@ def excess_list_mapping(file_id):
 
     show_all = str(request.args.get('show_all', '')).lower() in ('1', 'true', 'on', 'yes')
 
-    # Read the Excel file without enforcing headers so we can show raw rows
-    if file_path.endswith('.xls') or file_path.endswith('.xlsx'):
-        if show_all:
-            df = pd.read_excel(file_path, header=None)
-        else:
-            df = pd.read_excel(file_path, header=None, nrows=20)
+    # Read the list file without enforcing headers so we can show raw rows
+    try:
+        df = _read_table_file(file_path, header=None, nrows=None if show_all else 20)
+    except ValueError as exc:
+        return str(exc), 400
 
-        # Convert the dataframe to a list of dictionaries for Handsontable
-        df = df.fillna('')
-        data = df.values.tolist()
-        columns = list(range(df.shape[1]))
+    # Convert the dataframe to a list of dictionaries for Handsontable
+    df = df.fillna('')
+    data = df.values.tolist()
+    columns = list(range(df.shape[1]))
 
-        total_rows = None
-        if not show_all:
+    total_rows = None
+    if not show_all:
+        try:
+            total_rows = len(_read_table_file(file_path, header=None))
+        except Exception:
+            total_rows = None
+
+    # Example: Get the excess_stock_list_id (You could get this from another source, query, etc.)
+    excess_stock_list_id = get_excess_stock_list_id_by_file(file_id)  # Define your logic for retrieving this
+    excess_list = get_excess_stock_list_by_id(excess_stock_list_id) if excess_stock_list_id else None
+    saved_mapping = None
+    saved_header_row = 1
+    if excess_list:
+        saved_header_row = excess_list.get('mapping_header_row') or 1
+        raw_mapping = excess_list.get('mapping')
+        if raw_mapping:
             try:
-                total_rows = len(pd.read_excel(file_path, header=None, usecols=[0]))
-            except Exception:
-                total_rows = None
+                saved_mapping = json.loads(raw_mapping)
+            except json.JSONDecodeError:
+                saved_mapping = None
 
-        # Example: Get the excess_stock_list_id (You could get this from another source, query, etc.)
-        excess_stock_list_id = get_excess_stock_list_id_by_file(file_id)  # Define your logic for retrieving this
-        excess_list = get_excess_stock_list_by_id(excess_stock_list_id) if excess_stock_list_id else None
-        saved_mapping = None
-        saved_header_row = 1
-        if excess_list:
-            saved_header_row = excess_list.get('mapping_header_row') or 1
-            raw_mapping = excess_list.get('mapping')
-            if raw_mapping:
-                try:
-                    saved_mapping = json.loads(raw_mapping)
-                except json.JSONDecodeError:
-                    saved_mapping = None
-
-        # Render the mapping page with the data, column headers, and excess_stock_list_id
-        return render_template('excess_list_mapping.html',
-                               file_data=data,
-                               columns=columns,
-                               excess_stock_list_id=excess_stock_list_id,
-                               show_all=show_all,
-                               total_rows=total_rows,
-                               saved_mapping=saved_mapping,
-                               saved_header_row=saved_header_row,
-                               file_id=file_id)  # Pass it to the template
-
-    return "Invalid file format", 400
+    # Render the mapping page with the data, column headers, and excess_stock_list_id
+    return render_template('excess_list_mapping.html',
+                           file_data=data,
+                           columns=columns,
+                           excess_stock_list_id=excess_stock_list_id,
+                           show_all=show_all,
+                           total_rows=total_rows,
+                           saved_mapping=saved_mapping,
+                           saved_header_row=saved_header_row,
+                           file_id=file_id)  # Pass it to the template
 
 # handson_routes.py
 @handson_bp.route('/import_mapping/<int:file_id>', methods=['GET'])
