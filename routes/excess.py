@@ -1,6 +1,6 @@
 import os
 from datetime import datetime
-from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app
+from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, send_from_directory
 from werkzeug.utils import secure_filename
 import extract_msg
 from routes.emails import allowed_file
@@ -200,7 +200,7 @@ def edit_excess_list(list_id):
                 excess_stock_lines = [dict(row) for row in cur.fetchall()]
 
             _execute_with_cursor(cur, '''
-                SELECT files.id, files.filename
+                SELECT files.id, files.filename, files.filepath
                 FROM files
                 JOIN excess_stock_files ON files.id = excess_stock_files.file_id
                 WHERE excess_stock_files.excess_stock_list_id = ?
@@ -272,6 +272,47 @@ def edit_excess_list(list_id):
         traceback.print_exc()
         flash(f'Error loading excess list: {str(e)}', 'error')
         return redirect(url_for('excess.view_excess_lists'))
+
+
+@excess_bp.route('/excess_lists/<int:list_id>/files/<int:file_id>/download', methods=['GET'])
+def download_excess_file(list_id, file_id):
+    file_row = db_execute(
+        '''
+        SELECT files.id, files.filename, files.filepath
+        FROM files
+        JOIN excess_stock_files ON files.id = excess_stock_files.file_id
+        WHERE excess_stock_files.excess_stock_list_id = ?
+          AND files.id = ?
+        ''',
+        (list_id, file_id),
+        fetch='one',
+    )
+    if not file_row:
+        return 'File not found for this excess stock list', 404
+
+    filepath = file_row['filepath']
+    filename = file_row['filename'] or os.path.basename(filepath)
+    if not filepath:
+        return 'File path not found', 404
+
+    if not os.path.isabs(filepath):
+        filepath = os.path.join(current_app.root_path, filepath)
+
+    if not os.path.exists(filepath):
+        current_app.logger.warning(
+            'Excess stock file missing on disk: list_id=%s file_id=%s path=%s',
+            list_id,
+            file_id,
+            filepath,
+        )
+        return 'File is recorded but missing on disk', 404
+
+    return send_from_directory(
+        directory=os.path.dirname(filepath),
+        path=os.path.basename(filepath),
+        download_name=filename,
+        as_attachment=False,
+    )
 
 
 @excess_bp.route('/excess_lists/<int:list_id>/view_email', methods=['GET'])

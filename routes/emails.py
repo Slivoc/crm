@@ -6000,7 +6000,7 @@ def view_email_frame(entity, entity_id):
 
     attachments = db_execute(
         '''
-        SELECT filename 
+        SELECT files.id, files.filename
         FROM files 
         JOIN excess_stock_files ON files.id = excess_stock_files.file_id 
         WHERE excess_stock_files.excess_stock_list_id = ?
@@ -6021,7 +6021,12 @@ def view_email_frame(entity, entity_id):
     if attachments:
         attachment_html = "<h3>Attachments:</h3><ul>"
         for attachment in attachments:
-            attachment_html += f"<li><a href='/static/uploads/{attachment['filename']}' target='_blank'>{attachment['filename']}</a></li>"
+            attachment_url = url_for(
+                'excess.download_excess_file',
+                list_id=entity_id,
+                file_id=attachment['id'],
+            )
+            attachment_html += f"<li><a href='{attachment_url}' target='_blank'>{html.escape(attachment['filename'])}</a></li>"
         attachment_html += "</ul>"
 
     # Return the email content along with attachments
@@ -6053,7 +6058,7 @@ def view_email(entity, entity_id):
 
     attachments = db_execute(
         '''
-        SELECT filename 
+        SELECT files.id, files.filename
         FROM files 
         JOIN excess_stock_files ON files.id = excess_stock_files.file_id 
         WHERE excess_stock_files.excess_stock_list_id = ?
@@ -6063,7 +6068,7 @@ def view_email(entity, entity_id):
     )
 
     # Render the email content and attachments
-    return render_template('view_email.html', html_body=email_body, attachments=attachments)
+    return render_template('view_email.html', html_body=email_body, attachments=attachments, excess_list_id=entity_id)
 
 
 @emails_bp.route('/check_email', methods=['POST'])

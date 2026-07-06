@@ -111,8 +111,8 @@
                                     {{ attachment['filename'] }}
                                 </a>
                                 {% else %}
-                                <!-- Otherwise, link to the normal static file path -->
-                                <a class="dropdown-item" href="{{ url_for('static', filename='uploads/' + attachment['filename']) }}" target="_blank">
+                                <!-- Otherwise, serve the stored file for this excess list -->
+                                <a class="dropdown-item" href="{{ url_for('excess.download_excess_file', list_id=excess_list.id, file_id=attachment['id']) }}" target="_blank">
                                     {{ attachment['filename'] }}
                                 </a>
                                 {% endif %}
