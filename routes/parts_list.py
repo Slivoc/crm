@@ -1325,6 +1325,18 @@ def manage_supplier_quote_lines():
     )
 
 
+def _supplier_quote_line_column_names():
+    rows = db_execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'parts_list_supplier_quote_lines'
+        """,
+        fetch='all',
+    ) or []
+    return {row['column_name'] for row in rows}
+
+
 @parts_list_bp.route('/supplier-quotes/search', methods=['GET'])
 def search_supplier_quotes():
     """
@@ -1388,6 +1400,13 @@ def supplier_quote_lines_data():
         part_query = (request.args.get('part_number') or '').strip().lower()
         limit = request.args.get('limit', type=int) or 500
         offset = request.args.get('offset', type=int) or 0
+        line_columns = _supplier_quote_line_column_names()
+        qty_available_expr = "sql.qty_available" if "qty_available" in line_columns else "NULL::integer"
+        purchase_increment_expr = "sql.purchase_increment" if "purchase_increment" in line_columns else "NULL::integer"
+        moq_expr = "sql.moq" if "moq" in line_columns else "NULL::integer"
+        price_entered_as_lb_expr = "sql.price_entered_as_lb" if "price_entered_as_lb" in line_columns else "FALSE"
+        lb_unit_price_expr = "sql.lb_unit_price" if "lb_unit_price" in line_columns else "NULL::numeric"
+        pieces_per_pound_used_expr = "sql.pieces_per_pound_used" if "pieces_per_pound_used" in line_columns else "NULL::numeric"
 
         where = []
         params = []
@@ -1431,38 +1450,127 @@ def supplier_quote_lines_data():
 
         rows = db_execute(
             f"""
+            WITH filtered_lines AS (
+                SELECT
+                    sql.id,
+                    sql.supplier_quote_id,
+                    sq.quote_reference,
+                    sq.quote_date,
+                    sq.parts_list_id,
+                    sq.currency_id,
+                    c.currency_code,
+                    c.symbol AS currency_symbol,
+                    pl.name AS list_name,
+                    s.id AS supplier_id,
+                    s.name AS supplier_name,
+                    pll.id AS parts_list_line_id,
+                    pll.line_number,
+                    pll.customer_part_number,
+                    pll.base_part_number,
+                    sql.quoted_part_number,
+                    sql.manufacturer,
+                    sql.quantity_quoted,
+                    {qty_available_expr} AS qty_available,
+                    {purchase_increment_expr} AS purchase_increment,
+                    {moq_expr} AS moq,
+                    sql.unit_price,
+                    {price_entered_as_lb_expr} AS price_entered_as_lb,
+                    {lb_unit_price_expr} AS lb_unit_price,
+                    {pieces_per_pound_used_expr} AS pieces_per_pound_used,
+                    sql.lead_time_days,
+                    sql.condition_code,
+                    sql.certifications,
+                    sql.is_no_bid,
+                    sql.line_notes,
+                    sql.date_created,
+                    sql.date_modified
+                FROM parts_list_supplier_quote_lines sql
+                JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                JOIN suppliers s ON s.id = sq.supplier_id
+                LEFT JOIN currencies c ON c.id = sq.currency_id
+                JOIN parts_list_lines pll ON pll.id = sql.parts_list_line_id
+                JOIN parts_lists pl ON pl.id = sq.parts_list_id
+                {where_clause}
+                ORDER BY COALESCE(sql.date_modified, sql.date_created, sq.quote_date, sq.date_created) DESC, sql.id DESC
+                LIMIT ? OFFSET ?
+            ),
+            base_parts AS (
+                SELECT DISTINCT base_part_number
+                FROM filtered_lines
+                WHERE base_part_number IS NOT NULL
+            ),
+            customer_quote_ranked AS (
+                SELECT
+                    pll2.base_part_number,
+                    cql.quote_price_gbp,
+                    cql.date_modified,
+                    cql.date_created,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY pll2.base_part_number
+                        ORDER BY COALESCE(cql.date_modified, cql.date_created) DESC NULLS LAST, cql.id DESC
+                    ) AS rn
+                FROM customer_quote_lines cql
+                JOIN parts_list_lines pll2 ON pll2.id = cql.parts_list_line_id
+                WHERE cql.quote_price_gbp IS NOT NULL
+                  AND cql.quote_price_gbp > 0
+                  AND COALESCE(cql.is_no_bid, 0) = 0
+                  AND pll2.base_part_number IN (SELECT base_part_number FROM base_parts)
+            ),
+            customer_quote_stats AS (
+                SELECT
+                    base_part_number,
+                    COUNT(*) AS customer_quote_count,
+                    AVG(quote_price_gbp) AS avg_customer_quote_price,
+                    MAX(CASE WHEN rn = 1 THEN quote_price_gbp END) AS latest_customer_quote_price,
+                    MAX(CASE WHEN rn = 1 THEN COALESCE(date_modified, date_created) END) AS latest_customer_quote_date
+                FROM customer_quote_ranked
+                GROUP BY base_part_number
+            ),
+            sales_order_ranked AS (
+                SELECT
+                    sol.base_part_number,
+                    sol.price,
+                    sol.quantity,
+                    so.sales_order_ref,
+                    so.date_entered,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY sol.base_part_number
+                        ORDER BY so.date_entered DESC NULLS LAST, sol.id DESC
+                    ) AS rn
+                FROM sales_order_lines sol
+                JOIN sales_orders so ON so.id = sol.sales_order_id
+                WHERE sol.price IS NOT NULL
+                  AND sol.price > 0
+                  AND sol.base_part_number IN (SELECT base_part_number FROM base_parts)
+            ),
+            sales_order_stats AS (
+                SELECT
+                    base_part_number,
+                    COUNT(*) AS sales_order_count,
+                    AVG(price) AS avg_sales_order_price,
+                    MAX(CASE WHEN rn = 1 THEN price END) AS latest_sales_order_price,
+                    MAX(CASE WHEN rn = 1 THEN quantity END) AS latest_sales_order_qty,
+                    MAX(CASE WHEN rn = 1 THEN sales_order_ref END) AS latest_sales_order_ref,
+                    MAX(CASE WHEN rn = 1 THEN date_entered END) AS latest_sales_order_date
+                FROM sales_order_ranked
+                GROUP BY base_part_number
+            )
             SELECT
-                sql.id,
-                sql.supplier_quote_id,
-                sq.quote_reference,
-                sq.quote_date,
-                sq.parts_list_id,
-                pl.name AS list_name,
-                s.name AS supplier_name,
-                pll.id AS parts_list_line_id,
-                pll.line_number,
-                pll.customer_part_number,
-                pll.base_part_number,
-                sql.quoted_part_number,
-                sql.manufacturer,
-                sql.quantity_quoted,
-                sql.qty_available,
-                sql.purchase_increment,
-                sql.moq,
-                sql.unit_price,
-                sql.lead_time_days,
-                sql.is_no_bid,
-                sql.line_notes,
-                sql.date_created,
-                sql.date_modified
-            FROM parts_list_supplier_quote_lines sql
-            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
-            JOIN suppliers s ON s.id = sq.supplier_id
-            JOIN parts_list_lines pll ON pll.id = sql.parts_list_line_id
-            JOIN parts_lists pl ON pl.id = sq.parts_list_id
-            {where_clause}
-            ORDER BY sq.date_created DESC, sql.id DESC
-            LIMIT ? OFFSET ?
+                fl.*,
+                cqs.customer_quote_count,
+                cqs.avg_customer_quote_price,
+                cqs.latest_customer_quote_price,
+                cqs.latest_customer_quote_date,
+                sos.sales_order_count,
+                sos.avg_sales_order_price,
+                sos.latest_sales_order_price,
+                sos.latest_sales_order_qty,
+                sos.latest_sales_order_ref,
+                sos.latest_sales_order_date
+            FROM filtered_lines fl
+            LEFT JOIN customer_quote_stats cqs ON cqs.base_part_number = fl.base_part_number
+            LEFT JOIN sales_order_stats sos ON sos.base_part_number = fl.base_part_number
+            ORDER BY COALESCE(fl.date_modified, fl.date_created, fl.quote_date) DESC, fl.id DESC
             """,
             (*params, limit, offset),
             fetch='all',
@@ -1473,6 +1581,104 @@ def supplier_quote_lines_data():
             total_count=total_row['total_count'] if total_row else 0,
             lines=[dict(r) for r in rows or []],
         )
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
+
+
+@parts_list_bp.route('/supplier-quotes/lines/<int:line_id>', methods=['PATCH'])
+def update_supplier_quote_line_global(line_id):
+    """
+    Update editable fields on one supplier quote line from the global manager.
+    """
+    try:
+        data = request.get_json(force=True) or {}
+
+        existing = db_execute(
+            """
+            SELECT
+                sql.id,
+                sql.supplier_quote_id,
+                sql.parts_list_line_id,
+                sq.parts_list_id
+            FROM parts_list_supplier_quote_lines sql
+            JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+            WHERE sql.id = ?
+            """,
+            (line_id,),
+            fetch='one',
+        )
+        if not existing:
+            return jsonify(success=False, message="Quote line not found"), 404
+
+        line_columns = _supplier_quote_line_column_names()
+        quoted_part_number = _normalize_optional_text(data.get('quoted_part_number'))
+        manufacturer = _normalize_optional_text(data.get('manufacturer'))
+        quantity_quoted = _safe_int(data.get('quantity_quoted'))
+        qty_available = _safe_int(data.get('qty_available'))
+        purchase_increment = _safe_int(data.get('purchase_increment'))
+        moq = _safe_int(data.get('moq'))
+        unit_price, price_entered_as_lb, lb_unit_price, pieces_per_pound_used = _normalise_supplier_quote_price(
+            data.get('unit_price'),
+            data.get('price_entered_as_lb', False),
+            data.get('lb_unit_price'),
+            data.get('pieces_per_pound_used'),
+        )
+        lead_time_days = _safe_int(data.get('lead_time_days'))
+        condition_code = _normalize_optional_text(data.get('condition_code'))
+        certifications = _normalize_optional_text(data.get('certifications'))
+        line_notes = _normalize_optional_text(data.get('line_notes'))
+        is_no_bid_raw = data.get('is_no_bid', False)
+        if isinstance(is_no_bid_raw, str):
+            is_no_bid = is_no_bid_raw.strip().lower() in ('true', '1', 'yes', 'y', 'on')
+        else:
+            is_no_bid = bool(is_no_bid_raw)
+
+        if not is_no_bid and price_entered_as_lb and (
+            lb_unit_price is None or pieces_per_pound_used is None or pieces_per_pound_used <= 0 or unit_price is None
+        ):
+            return jsonify(
+                success=False,
+                message="Per-lb quote lines need a valid LB Price and PPP.",
+            ), 400
+
+        set_fields = [
+            ("quoted_part_number", quoted_part_number),
+            ("manufacturer", manufacturer),
+            ("quantity_quoted", quantity_quoted),
+            ("unit_price", unit_price),
+            ("lead_time_days", lead_time_days),
+            ("condition_code", condition_code),
+            ("certifications", certifications),
+            ("is_no_bid", is_no_bid),
+            ("line_notes", line_notes),
+        ]
+        optional_fields = [
+            ("qty_available", qty_available),
+            ("purchase_increment", purchase_increment),
+            ("moq", moq),
+            ("price_entered_as_lb", price_entered_as_lb),
+            ("lb_unit_price", lb_unit_price),
+            ("pieces_per_pound_used", pieces_per_pound_used),
+        ]
+        set_fields.extend((name, value) for name, value in optional_fields if name in line_columns)
+        set_clause = ",\n                ".join([f"{name} = ?" for name, _ in set_fields])
+        params = [value for _, value in set_fields]
+        params.append(line_id)
+
+        db_execute(
+            f"""
+            UPDATE parts_list_supplier_quote_lines
+            SET {set_clause},
+                date_modified = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            params,
+            commit=True,
+        )
+
+        return jsonify(success=True, line_id=line_id)
 
     except Exception as e:
         logging.exception(e)
