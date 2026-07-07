@@ -5188,15 +5188,27 @@ def generate_supplier_email():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+def _split_supplier_recipient_emails(recipient_email):
+    """Split supplier recipient email field into Graph-ready addresses."""
+    if not recipient_email:
+        return []
+    if isinstance(recipient_email, list):
+        candidates = recipient_email
+    else:
+        candidates = str(recipient_email).split(';')
+    return [email.strip() for email in candidates if email and email.strip()]
+
+
 @parts_list_bp.route('/send-supplier-email', methods=['POST'])
 def send_supplier_email():
     try:
         data = request.get_json(force=True)
         recipient_email = (data.get('recipient_email') or '').strip()
+        recipient_emails = _split_supplier_recipient_emails(recipient_email)
         subject = (data.get('subject') or '').strip()
         body_html = data.get('body_html') or ''
 
-        if not (recipient_email and subject and body_html):
+        if not (recipient_emails and subject and body_html):
             return jsonify(success=False, error="recipient_email, subject, and body_html are required"), 400
 
         if not current_user or not getattr(current_user, "is_authenticated", False):
@@ -5206,7 +5218,7 @@ def send_supplier_email():
         result = send_graph_email(
             subject=subject,
             html_body=body_html,
-            to_emails=[recipient_email],
+            to_emails=recipient_emails,
             attachments=attachments,
             user_id=current_user.id,
         )

@@ -100,7 +100,8 @@
             </div>
             <div class="mb-3">
               <label for="contact_email" class="form-label">Contact Email</label>
-              <input type="email" class="form-control" id="contact_email" name="contact_email" value="{{ supplier.contact_email or '' }}" required>
+              <input type="text" class="form-control" id="contact_email" name="contact_email" value="{{ supplier.contact_email or '' }}" required>
+              <small class="form-text text-muted">Use semicolons to send to multiple recipients.</small>
             </div>
             <div class="mb-3">
               <label for="contact_phone" class="form-label">Contact Phone</label>
