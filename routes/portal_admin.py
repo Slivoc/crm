@@ -173,6 +173,23 @@ def _get_base_currency():
     return {'id': None, 'code': base_code}
 
 
+def _convert_from_base_currency(amount, target_currency_id=None, target_currency_code=None, target_currency_rate=None, base_currency=None):
+    amount = _to_float(amount)
+    if amount is None:
+        return None
+    base_currency = base_currency or _get_base_currency()
+    base_id = base_currency.get('id')
+    base_code = (base_currency.get('code') or '').upper()
+    if base_id is not None and target_currency_id is not None and target_currency_id == base_id:
+        return amount
+    if target_currency_code and base_code and target_currency_code.upper() == base_code:
+        return amount
+    rate = _to_float(target_currency_rate) if target_currency_rate is not None else None
+    if not rate:
+        return amount
+    return amount * rate
+
+
 def _convert_to_base_currency(amount, currency_id=None, currency_code=None, currency_rate=None, base_currency=None):
     amount = _to_float(amount)
     if amount is None:
@@ -849,18 +866,23 @@ def portal_requests():
 @portal_admin_bp.route('/requests/<int:request_id>')
 def view_portal_request(request_id):
     """View single portal request details with pricing grid - includes customer quote info"""
-    request_data = db_execute("""
+    rate_column = get_currency_rate_column()
+    request_data = db_execute(f"""
         SELECT 
             pqr.*,
             pu.email as user_email,
             pu.first_name,
             pu.last_name,
             c.name as customer_name,
+            c.currency_id as customer_currency_id,
+            curr.currency_code as customer_currency_code,
+            curr.{rate_column} as customer_currency_rate,
             pl.name as parts_list_name,
             u.username as processed_by
         FROM portal_quote_requests pqr
         JOIN portal_users pu ON pu.id = pqr.portal_user_id
         JOIN customers c ON c.id = pqr.customer_id
+        LEFT JOIN currencies curr ON curr.id = c.currency_id
         LEFT JOIN parts_lists pl ON pl.id = pqr.parts_list_id
         LEFT JOIN users u ON u.id = pqr.processed_by_user_id
         WHERE pqr.id = ?
@@ -1033,7 +1055,21 @@ def view_portal_request(request_id):
                 estimated_base and requested_base and estimated_base != requested_base
             )
 
-    currencies = db_execute("SELECT id, currency_code FROM currencies ORDER BY id", fetch='all') or []
+    currencies = db_execute(f"SELECT id, currency_code, symbol, {rate_column} as exchange_rate_to_base FROM currencies ORDER BY id", fetch='all') or []
+
+    base_currency = _get_base_currency()
+    customer_currency_id = request_data.get('customer_currency_id') or base_currency.get('id')
+    customer_currency_rate = request_data.get('customer_currency_rate')
+    for line in lines:
+        if line.get('quoted_price') is not None and customer_currency_id:
+            line['quoted_price'] = _convert_from_base_currency(
+                line.get('quoted_price'),
+                target_currency_id=customer_currency_id,
+                target_currency_code=request_data.get('customer_currency_code'),
+                target_currency_rate=customer_currency_rate,
+                base_currency=base_currency,
+            )
+            line['quoted_currency_id'] = customer_currency_id
 
     breadcrumbs = [
         ('Home', url_for('index')),
@@ -1047,6 +1083,8 @@ def view_portal_request(request_id):
                            request=dict(request_data),
                            lines=lines,
                            currencies=[dict(c) for c in currencies],
+                           customer_currency_id=customer_currency_id,
+                           customer_currency_code=request_data.get('customer_currency_code') or base_currency.get('code'),
                            graph_user=(session.get('graph_last_user') or '').strip())
 
 
@@ -1292,9 +1330,14 @@ def load_line_from_parts_list(request_id, line_id):
                 pll.chosen_lead_days,
                 pll.chosen_currency_id,
                 COALESCE(pll.chosen_qty, pll.quantity) AS chosen_quantity,
-                c.{rate_column} as currency_rate
+                c.{rate_column} as currency_rate,
+                cust.currency_id as customer_currency_id,
+                cust_curr.currency_code as customer_currency_code,
+                cust_curr.{rate_column} as customer_currency_rate
             FROM portal_quote_request_lines pqrl
             JOIN portal_quote_requests pqr ON pqr.id = pqrl.portal_quote_request_id
+            JOIN customers cust ON cust.id = pqr.customer_id
+            LEFT JOIN currencies cust_curr ON cust_curr.id = cust.currency_id
             LEFT JOIN parts_list_lines pll ON pll.parts_list_id = pqr.parts_list_id
                 AND (
                     ({'pqrl.parts_list_line_id IS NOT NULL AND pll.id = pqrl.parts_list_line_id' if has_parts_list_line_id else 'FALSE'})
@@ -1320,11 +1363,20 @@ def load_line_from_parts_list(request_id, line_id):
             base_currency=base_currency
         )
 
+        customer_currency_id = line_data.get('customer_currency_id') or base_currency_id
+        display_price = _convert_from_base_currency(
+            price_in_base,
+            target_currency_id=customer_currency_id,
+            target_currency_code=line_data.get('customer_currency_code'),
+            target_currency_rate=line_data.get('customer_currency_rate'),
+            base_currency=base_currency,
+        )
+
         return jsonify({
             'success': True,
-            'price': price_in_base,
+            'price': display_price,
             'lead_days': line_data['chosen_lead_days'],
-            'currency_id': base_currency_id,
+            'currency_id': customer_currency_id,
             'quantity': line_data.get('chosen_quantity')
         })
 
@@ -1810,13 +1862,18 @@ def load_line_from_customer_quote(request_id, line_id):
         has_manufacturer = _table_has_column('portal_quote_request_lines', 'manufacturer')
         has_revision = _table_has_column('portal_quote_request_lines', 'revision')
         has_certs = _table_has_column('portal_quote_request_lines', 'certs')
-        base_currency_id = _get_base_currency().get('id')
+        rate_column = get_currency_rate_column()
+        base_currency = _get_base_currency()
+        base_currency_id = base_currency.get('id')
         line_data = db_execute(f"""
             SELECT 
                 pqrl.base_part_number,
                 pqrl.line_number,
                 {"pqrl.parts_list_line_id," if has_parts_list_line_id else "NULL as parts_list_line_id,"}
                 pqr.parts_list_id,
+                cust.currency_id as customer_currency_id,
+                cust_curr.currency_code as customer_currency_code,
+                cust_curr.{rate_column} as customer_currency_rate,
                 cql.quote_price_gbp,
                 COALESCE(cql.lead_days, pll.chosen_lead_days) AS quoted_lead_days,
                 COALESCE(pll.chosen_qty, pll.quantity) AS chosen_quantity,
@@ -1829,6 +1886,8 @@ def load_line_from_customer_quote(request_id, line_id):
                 pll.revision
             FROM portal_quote_request_lines pqrl
             JOIN portal_quote_requests pqr ON pqr.id = pqrl.portal_quote_request_id
+            JOIN customers cust ON cust.id = pqr.customer_id
+            LEFT JOIN currencies cust_curr ON cust_curr.id = cust.currency_id
             LEFT JOIN parts_list_lines pll ON pll.parts_list_id = pqr.parts_list_id
                 AND (
                     ({'pqrl.parts_list_line_id IS NOT NULL AND pll.id = pqrl.parts_list_line_id' if has_parts_list_line_id else 'FALSE'})
@@ -1849,11 +1908,20 @@ def load_line_from_customer_quote(request_id, line_id):
             or (line_data.get('display_part_number') or '').strip()
         )
 
+        customer_currency_id = line_data.get('customer_currency_id') or base_currency_id
+        display_price = _convert_from_base_currency(
+            line_data['quote_price_gbp'],
+            target_currency_id=customer_currency_id,
+            target_currency_code=line_data.get('customer_currency_code'),
+            target_currency_rate=line_data.get('customer_currency_rate'),
+            base_currency=base_currency,
+        )
+
         return jsonify({
             'success': True,
-            'price': line_data['quote_price_gbp'],
+            'price': display_price,
             'lead_days': line_data['quoted_lead_days'],
-            'currency_id': line_data['currency_id'],
+            'currency_id': customer_currency_id,
             'quantity': line_data.get('chosen_quantity'),
             'line_notes': line_data.get('line_notes') or '',
             'quoted_part_number': quoted_part_number if has_quoted_part_number else '',
