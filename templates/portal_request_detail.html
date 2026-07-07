@@ -88,6 +88,7 @@
             <div class="row">
                 <div class="col-md-6">
                     <p><strong>Customer:</strong> {{ request.customer_name }}</p>
+                    <p><strong>Default Currency:</strong> {{ customer_currency_code or 'GBP' }}</p>
                     <p><strong>Customer Ref:</strong> {{ request.customer_reference or '-' }}</p>
                     <p><strong>Submitted By:</strong> {{ request.first_name }} {{ request.last_name }} ({{ request.user_email }})</p>
                     <p><strong>Date Submitted:</strong> {{ request.date_submitted }}</p>
@@ -338,7 +339,7 @@
                             {% if line.status == 'no_bid' %}disabled{% endif %}>
                         {% for curr in currencies %}
                         <option value="{{ curr.id }}"
-                            {% if line.quoted_currency_id == curr.id or (not line.quoted_currency_id and curr.id == 3) %}selected{% endif %}>
+                            {% if line.quoted_currency_id == curr.id or (not line.quoted_currency_id and curr.id == customer_currency_id) %}selected{% endif %}>
                             {{ curr.currency_code }}
                         </option>
                         {% endfor %}
@@ -598,6 +599,9 @@
 
 <script>
 const requestId = {{ request.id }};
+const CUSTOMER_CURRENCY_ID = {{ customer_currency_id | tojson }};
+const CUSTOMER_CURRENCY_CODE = {{ (customer_currency_code or 'GBP') | tojson }};
+const CURRENCIES = {{ currencies | tojson }};
 
 function escapeHtml(value) {
     return String(value ?? '')
@@ -1243,7 +1247,7 @@ async function loadFromCustomerQuote(lineId) {
                 document.getElementById(`notes_${lineId}`).value = result.line_notes;
             }
 
-            // Set currency (should be GBP from customer quote)
+            // Set currency (defaults to the customer's currency from the quote request)
             if (result.currency_id) {
                 document.getElementById(`currency_${lineId}`).value = result.currency_id;
             }
