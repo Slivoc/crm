@@ -112,6 +112,73 @@
                 </div>
             </div>
 
+
+            <!-- Codex Debug Payload -->
+            <div class="card mt-4">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="mb-0">Codex Debug Payload</h5>
+                        <small class="text-muted">Copy this JSON into Codex to debug what the customer saw.</small>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-primary" id="copyCodexPayloadBtn">
+                        Copy Payload
+                    </button>
+                </div>
+                <div class="card-body">
+                    <textarea id="codexDebugPayload" class="form-control font-monospace" rows="18" readonly>{{ codex_debug_payload_json }}</textarea>
+                    <div class="form-text mt-2">
+                        Includes the search metadata, parsed parts, normalized base parts, saved result snapshots, and a replay request body.
+                    </div>
+                </div>
+            </div>
+
+            {% if search_lines %}
+            <!-- Search Result Snapshots -->
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h5 class="mb-0">Saved Result Snapshots</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Requested Part</th>
+                                    <th>Base Part</th>
+                                    <th>Qty</th>
+                                    <th>Price</th>
+                                    <th>Currency</th>
+                                    <th>Source</th>
+                                    <th>Had Price</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for line in search_lines %}
+                                <tr>
+                                    <td>{{ line.line_number }}</td>
+                                    <td><strong>{{ line.requested_part_number }}</strong></td>
+                                    <td><code>{{ line.base_part_number }}</code></td>
+                                    <td>{{ line.quantity }}</td>
+                                    <td>{{ line.estimated_price if line.estimated_price is not none else '-' }}</td>
+                                    <td>{{ line.estimated_currency or '-' }}</td>
+                                    <td>{{ line.price_source or '-' }}</td>
+                                    <td>
+                                        {% if line.has_price %}
+                                        <span class="badge bg-success">Yes</span>
+                                        {% else %}
+                                        <span class="badge bg-secondary">No</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
             <!-- Quick Actions -->
             <div class="card mt-4">
                 <div class="card-header">
@@ -140,4 +207,36 @@
         </div>
     </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const copyButton = document.getElementById('copyCodexPayloadBtn');
+    const payloadField = document.getElementById('codexDebugPayload');
+
+    if (!copyButton || !payloadField) {
+        return;
+    }
+
+    copyButton.addEventListener('click', async () => {
+        const originalText = copyButton.textContent.trim();
+        try {
+            await navigator.clipboard.writeText(payloadField.value);
+            copyButton.textContent = 'Copied!';
+            copyButton.classList.remove('btn-outline-primary');
+            copyButton.classList.add('btn-success');
+        } catch (error) {
+            payloadField.focus();
+            payloadField.select();
+            document.execCommand('copy');
+            copyButton.textContent = 'Copied!';
+        }
+
+        window.setTimeout(() => {
+            copyButton.textContent = originalText;
+            copyButton.classList.remove('btn-success');
+            copyButton.classList.add('btn-outline-primary');
+        }, 1800);
+    });
+});
+</script>
 {% endblock %}
