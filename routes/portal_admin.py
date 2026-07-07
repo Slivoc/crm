@@ -2789,6 +2789,76 @@ def view_search_details(search_id):
         except:
             pass
 
+    search_lines = db_execute("""
+        SELECT
+            id,
+            search_history_id,
+            customer_id,
+            line_number,
+            requested_part_number,
+            base_part_number,
+            quantity,
+            estimated_price,
+            estimated_currency,
+            price_source,
+            has_price,
+            created_at
+        FROM portal_search_history_lines
+        WHERE search_history_id = ?
+        ORDER BY line_number
+    """, (search_id,), fetch='all') or []
+
+    normalized_parts = []
+    for idx, part in enumerate(parts_searched, start=1):
+        part_number = (part.get('part_number') or '').strip()
+        if not part_number:
+            continue
+        try:
+            quantity = int(part.get('quantity') or 1)
+        except (TypeError, ValueError):
+            quantity = 1
+        if quantity <= 0:
+            quantity = 1
+        normalized_parts.append({
+            'line_number': idx,
+            'part_number': part_number,
+            'base_part_number': create_base_part_number(part_number),
+            'quantity': quantity,
+        })
+
+    codex_debug_payload = {
+        'task': 'Debug a customer portal quote-search result that did not show expected stock availability or pricing.',
+        'search_history_id': search_id,
+        'search': dict(search),
+        'parts_searched': parts_searched,
+        'normalized_parts': normalized_parts,
+        'search_result_snapshots': [dict(line) for line in search_lines],
+        'replay_request_body': {
+            'source': 'manual_quote_search',
+            'include_global_alternatives': True,
+            'parts': [
+                {
+                    'part_number': part['part_number'],
+                    'quantity': part['quantity'],
+                }
+                for part in normalized_parts
+            ],
+        },
+        'investigation_checklist': [
+            'Compare parts_searched to normalized_parts and search_result_snapshots for part-number/base-part mismatches.',
+            'Replay /api/portal/quote/analyze as this portal user/customer context and compare to tester account output.',
+            'Check stock_movements for each base_part_number with movement_type=IN, available_quantity, cost_per_unit, and movement_date.',
+            'Verify whether SUM(available_quantity) is greater than or equal to the requested quantity.',
+            'Check portal settings: min_stock_threshold, show_stock_quantities, show_estimated_prices, stock_margin_percentage, vq_margin_percentage, po_margin_percentage.',
+            'Confirm whether tester pricing came from stock or another source such as pricing_agreement, recent_quote, recent_sale, supplier quote, VQ, or PO.',
+        ],
+        'useful_files': [
+            'routes/portal_api.py',
+            'routes/portal_admin.py',
+            'templates/portal_search_detail.html',
+        ],
+    }
+    codex_debug_payload_json = json.dumps(codex_debug_payload, indent=2, default=str)
 
     breadcrumbs = [
         ('Home', url_for('index')),
@@ -2800,7 +2870,9 @@ def view_search_details(search_id):
     return render_template('portal_search_detail.html',
                            breadcrumbs=breadcrumbs,
                            search=dict(search),
-                           parts_searched=parts_searched)
+                           parts_searched=parts_searched,
+                           search_lines=[dict(line) for line in search_lines],
+                           codex_debug_payload_json=codex_debug_payload_json)
 
 
 @portal_admin_bp.route('/search-history/<int:search_id>/create-parts-list', methods=['POST'])
