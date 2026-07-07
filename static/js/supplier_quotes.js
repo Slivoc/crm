@@ -8,6 +8,7 @@ let showIlsOnly = false;
 let partNumberFilterValue = '';
 let emailedSuppliersCache = null;
 let activePdfPreviewUrl = null;
+let activeSupplierQuoteListId = null;
 let latestExtractionMatchDebug = null;
 let supplierMetaById = {};
 
@@ -799,7 +800,13 @@ function uploadAndExtractQuoteFile(file, config) {
 }
 
 // ========== MODAL MANAGEMENT ==========
+function getActiveSupplierQuoteListId() {
+    return activeSupplierQuoteListId || window.PARTS_LIST_ID;
+}
+
 function openSupplierQuotesModal() {
+    activeSupplierQuoteListId = window.PARTS_LIST_ID;
+    emailedSuppliersCache = null;
     document.getElementById('quotes-list-view').style.display = 'block';
     document.getElementById('quote-input-view').style.display = 'none';
     loadSupplierQuotes();
@@ -808,7 +815,7 @@ function openSupplierQuotesModal() {
 }
 
 function loadSupplierQuotes() {
-    fetch(`/parts_list/parts-lists/${window.PARTS_LIST_ID}/supplier-quotes`)
+    fetch(`/parts_list/parts-lists/${getActiveSupplierQuoteListId()}/supplier-quotes`)
         .then(response => response.json())
         .then(data => {
             if (data.success) {
@@ -906,6 +913,10 @@ function showQuoteInputView(quoteId = null) {
 }
 
 function showQuotesListView() {
+    if (activeSupplierQuoteListId !== window.PARTS_LIST_ID) {
+        openSupplierQuotesModal();
+        return;
+    }
     document.getElementById('quote-input-view').style.display = 'none';
     document.getElementById('quotes-list-view').style.display = 'block';
 
@@ -1131,7 +1142,7 @@ function initializeQuickQuoteSuppliers() {
 
 function initializeEmailedSupplierSelect() {
     const emailedSelect = document.getElementById('emailed-supplier-select');
-    if (!emailedSelect || !window.PARTS_LIST_ID) return;
+    if (!emailedSelect || !getActiveSupplierQuoteListId()) return;
 
     fetchEmailedSuppliers()
         .then(suppliers => {
@@ -1192,7 +1203,7 @@ function initializeEmailedSupplierSelect() {
 
 function fetchEmailedSuppliers() {
     if (emailedSuppliersCache) return Promise.resolve(emailedSuppliersCache);
-    return fetch(`/parts_list/parts-lists/${window.PARTS_LIST_ID}/emailed-suppliers`)
+    return fetch(`/parts_list/parts-lists/${getActiveSupplierQuoteListId()}/emailed-suppliers`)
         .then(response => response.json())
         .then(data => {
             if (!data.success) return [];
@@ -1201,7 +1212,13 @@ function fetchEmailedSuppliers() {
         });
 }
 
-function loadQuoteForEditing(quoteId) {
+function loadQuoteForEditing(quoteId, options = {}) {
+    if (options.partsListId) {
+        activeSupplierQuoteListId = parseInt(options.partsListId, 10) || window.PARTS_LIST_ID;
+        emailedSuppliersCache = null;
+    } else if (!activeSupplierQuoteListId) {
+        activeSupplierQuoteListId = window.PARTS_LIST_ID;
+    }
     showSentOnly = false;
     showIlsOnly = false;
     partNumberFilterValue = '';
@@ -1212,7 +1229,7 @@ function loadQuoteForEditing(quoteId) {
     const container = document.getElementById('quote-lines-table-container');
     container.innerHTML = '<div class="text-center p-4"><div class="spinner-border"></div><p class="mt-2">Loading quote...</p></div>';
 
-    fetch(`/parts_list/parts-lists/${window.PARTS_LIST_ID}/supplier-quotes/${quoteId}`)
+    fetch(`/parts_list/parts-lists/${getActiveSupplierQuoteListId()}/supplier-quotes/${quoteId}`)
         .then(response => response.json())
         .then(data => {
             if (data.success) {
@@ -1242,6 +1259,23 @@ function loadQuoteForEditing(quoteId) {
         });
 }
 
+
+function openSupplierQuoteFromPartsList(quoteId, partsListId) {
+    activeSupplierQuoteListId = parseInt(partsListId, 10) || window.PARTS_LIST_ID;
+    emailedSuppliersCache = null;
+
+    document.getElementById('quotes-list-view').style.display = 'none';
+    document.getElementById('quote-input-view').style.display = 'block';
+
+    const modalEl = document.getElementById('supplierQuotesModal');
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    modal.show();
+
+    loadQuoteForEditing(quoteId, { partsListId: activeSupplierQuoteListId });
+}
+
+window.openSupplierQuoteFromPartsList = openSupplierQuoteFromPartsList;
+
 function populateQuoteForm(quote) {
     const supplierSelect = $('#quote-supplier-select');
 
@@ -1266,7 +1300,7 @@ function populateQuoteForm(quote) {
 }
 
 function initializeEmptyQuoteLines(supplierId = null) {
-    let url = `/parts_list/parts-lists/${window.PARTS_LIST_ID}/lines`;
+    let url = `/parts_list/parts-lists/${getActiveSupplierQuoteListId()}/lines`;
 
     // Add supplier_id to URL if available
     if (supplierId) {
@@ -1811,7 +1845,7 @@ function saveSupplierQuote() {
 }
 
 function createQuoteHeader(quoteData) {
-    return fetch(`/parts_list/parts-lists/${window.PARTS_LIST_ID}/supplier-quotes/create`, {
+    return fetch(`/parts_list/parts-lists/${getActiveSupplierQuoteListId()}/supplier-quotes/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(quoteData)
@@ -1827,7 +1861,7 @@ function createQuoteHeader(quoteData) {
 }
 
 function updateQuoteHeader(quoteId, quoteData) {
-    return fetch(`/parts_list/parts-lists/${window.PARTS_LIST_ID}/supplier-quotes/${quoteId}/update`, {
+    return fetch(`/parts_list/parts-lists/${getActiveSupplierQuoteListId()}/supplier-quotes/${quoteId}/update`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(quoteData)
@@ -1889,7 +1923,7 @@ function saveQuoteLines(quoteId) {
         showToast(`Per-lb quoted quantities converted to pieces: ${preview}${suffix}.`, 'warning');
     }
 
-    return fetch(`/parts_list/parts-lists/${window.PARTS_LIST_ID}/supplier-quotes/${quoteId}/lines/save`, {
+    return fetch(`/parts_list/parts-lists/${getActiveSupplierQuoteListId()}/supplier-quotes/${quoteId}/lines/save`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lines })
@@ -1937,7 +1971,7 @@ function deleteSupplierQuote() {
         return;
     }
 
-    fetch(`/parts_list/parts-lists/${window.PARTS_LIST_ID}/supplier-quotes/${currentQuoteId}/delete`, {
+    fetch(`/parts_list/parts-lists/${getActiveSupplierQuoteListId()}/supplier-quotes/${currentQuoteId}/delete`, {
         method: 'POST'
     })
     .then(response => response.json())

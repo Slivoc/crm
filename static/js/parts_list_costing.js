@@ -1553,6 +1553,13 @@ function displayQuotes(quotes, lineId, requiredQty) {
                             data-quote-notes="${encodedQuoteNotes}">
                         Use
                     </button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary edit-other-offer-btn"
+                            title="Edit this supplier quote in its source parts list"
+                            aria-label="Edit supplier quote"
+                            data-quote-id="${quote.quote_id}"
+                            data-parts-list-id="${window.PARTS_LIST_ID}">
+                        <i class="bi bi-pencil-square"></i>
+                    </button>
                     <button type="button" class="btn btn-sm btn-outline-primary amortize-quote-btn"
                             title="Recover the supplier batch cost over a different customer quantity"
                             aria-label="Amortize batch cost">
@@ -1580,6 +1587,14 @@ function displayQuotes(quotes, lineId, requiredQty) {
                 this.dataset.quotedQuantity ? parseInt(this.dataset.quotedQuantity) : null,
                 this.dataset.quoteNotes ? decodeURIComponent(this.dataset.quoteNotes) : ''
             );
+        });
+    });
+
+    tbody.querySelectorAll('.edit-other-offer-btn').forEach(btn => {
+        btn.addEventListener('click', function () {
+            if (typeof window.openSupplierQuoteFromPartsList === 'function') {
+                window.openSupplierQuoteFromPartsList(this.dataset.quoteId, this.dataset.partsListId);
+            }
         });
     });
 
@@ -1761,6 +1776,13 @@ function displayOtherOffers(offers, lineId, requiredQty) {
                             data-quote-notes="${encodedOfferNotes}">
                         Use
                     </button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary edit-other-offer-btn"
+                            title="Edit this supplier quote in its source parts list"
+                            aria-label="Edit supplier quote"
+                            data-quote-id="${offer.quote_id}"
+                            data-parts-list-id="${offer.parts_list_id}">
+                        <i class="bi bi-pencil-square"></i>
+                    </button>
                     <button type="button" class="btn btn-sm btn-outline-primary amortize-quote-btn"
                             title="Recover the supplier batch cost over a different customer quantity"
                             aria-label="Amortize batch cost">
@@ -1787,6 +1809,14 @@ function displayOtherOffers(offers, lineId, requiredQty) {
                 this.dataset.quotedQuantity ? parseInt(this.dataset.quotedQuantity) : null,
                 this.dataset.quoteNotes ? decodeURIComponent(this.dataset.quoteNotes) : ''
             );
+        });
+    });
+
+    tbody.querySelectorAll('.edit-other-offer-btn').forEach(btn => {
+        btn.addEventListener('click', function () {
+            if (typeof window.openSupplierQuoteFromPartsList === 'function') {
+                window.openSupplierQuoteFromPartsList(this.dataset.quoteId, this.dataset.partsListId);
+            }
         });
     });
 
