@@ -136,7 +136,7 @@
             data-buffer="{{ supplier.buffer or 0 }}">
           <td><input type="text" value="{{ supplier.name }}" data-supplier-id="{{ supplier.id }}" data-field="name" class="form-control form-control-sm editable-field"></td>
           <td><input type="text" value="{{ supplier.contact_name }}" data-supplier-id="{{ supplier.id }}" data-field="contact_name" class="form-control form-control-sm editable-field"></td>
-          <td><input type="email" value="{{ supplier.contact_email }}" data-supplier-id="{{ supplier.id }}" data-field="contact_email" class="form-control form-control-sm editable-field"></td>
+          <td><input type="text" value="{{ supplier.contact_email }}" data-supplier-id="{{ supplier.id }}" data-field="contact_email" class="form-control form-control-sm editable-field"></td>
           <td><input type="text" value="{{ supplier.contact_phone }}" data-supplier-id="{{ supplier.id }}" data-field="contact_phone" class="form-control form-control-sm editable-field"></td>
           <td><input type="text" value="{{ supplier.warning or '' }}" data-supplier-id="{{ supplier.id }}" data-field="warning" class="form-control form-control-sm editable-field"></td>
           <td><input type="number" value="{{ supplier.buffer }}" data-supplier-id="{{ supplier.id }}" data-field="buffer" class="form-control form-control-sm editable-field"></td>
@@ -195,7 +195,8 @@
 
           <div class="mb-3">
             <label for="contact_email" class="form-label">Contact Email</label>
-            <input type="email" id="contact_email" name="contact_email" class="form-control" required>
+            <input type="text" id="contact_email" name="contact_email" class="form-control" required>
+            <small class="form-text text-muted">Use semicolons to send to multiple recipients.</small>
           </div>
           <div class="mb-3">
             <label for="contact_phone" class="form-label">Contact Phone</label>
