@@ -71,7 +71,7 @@
         }
 
         .pinned-parts-modal .modal-body {
-            background: #f6f7f9;
+            background: #f5f7fb;
         }
 
         .pinned-parts-grid {
@@ -81,10 +81,28 @@
         }
 
         .pinned-parts-panel {
+            --pinned-accent: #0d6efd;
+            --pinned-accent-bg: #eaf2ff;
             background: #ffffff;
-            border: 1px solid #dee2e6;
+            border: 1px solid #dce4ef;
             border-radius: 8px;
             overflow: hidden;
+            box-shadow: 0 1px 2px rgba(33, 37, 41, 0.05);
+        }
+
+        .pinned-parts-panel:nth-child(4n + 2) {
+            --pinned-accent: #198754;
+            --pinned-accent-bg: #e8f5ee;
+        }
+
+        .pinned-parts-panel:nth-child(4n + 3) {
+            --pinned-accent: #b35c00;
+            --pinned-accent-bg: #fff2df;
+        }
+
+        .pinned-parts-panel:nth-child(4n + 4) {
+            --pinned-accent: #6f42c1;
+            --pinned-accent-bg: #f1ebff;
         }
 
         .pinned-parts-panel-header {
@@ -93,9 +111,15 @@
             justify-content: space-between;
             gap: 0.75rem;
             padding: 0.65rem 0.8rem;
-            background: #f8f9fa;
-            border-bottom: 1px solid #e9ecef;
+            background: var(--pinned-accent-bg);
+            border-bottom: 1px solid rgba(13, 110, 253, 0.12);
+            border-top: 3px solid var(--pinned-accent);
             font-weight: 600;
+        }
+
+        .pinned-parts-count {
+            background: var(--pinned-accent);
+            color: #ffffff;
         }
 
         .pinned-parts-panel-title {
@@ -122,7 +146,7 @@
 
         .pinned-parts-row:hover,
         .pinned-parts-row:focus {
-            background: #eef5ff;
+            background: var(--pinned-accent-bg);
             color: inherit;
         }
 
@@ -139,13 +163,36 @@
             flex-wrap: wrap;
             gap: 0.35rem;
             margin-top: 0.25rem;
-            color: #6c757d;
             font-size: 0.78rem;
         }
 
+        .pinned-parts-chip {
+            display: inline-flex;
+            align-items: center;
+            max-width: 100%;
+            min-height: 1.35rem;
+            padding: 0.1rem 0.45rem;
+            border-radius: 999px;
+            background: #eef1f5;
+            color: #495057;
+            line-height: 1.1;
+        }
+
+        .pinned-parts-chip-status {
+            background: var(--pinned-accent-bg);
+            color: var(--pinned-accent);
+            font-weight: 600;
+        }
+
+        .pinned-parts-chip-value {
+            background: #eaf7f0;
+            color: #146c43;
+        }
+
         .pinned-parts-id {
-            color: #6c757d;
+            color: var(--pinned-accent);
             font-size: 0.78rem;
+            font-weight: 700;
             white-space: nowrap;
         }
 
@@ -1320,7 +1367,7 @@ input:-webkit-autofill {
                             <section class="pinned-parts-panel" aria-label="{{ customer_group.grouper }} pinned parts lists">
                                 <div class="pinned-parts-panel-header">
                                     <span class="pinned-parts-panel-title">{{ customer_group.grouper }}</span>
-                                    <span class="badge text-bg-secondary">{{ customer_group.list|length }}</span>
+                                    <span class="badge pinned-parts-count">{{ customer_group.list|length }}</span>
                                 </div>
                                 <div>
                                     {% for pinned_list in customer_group.list %}
@@ -1329,9 +1376,8 @@ input:-webkit-autofill {
                                             <span style="min-width: 0;">
                                                 <span class="pinned-parts-name">{{ pinned_list.name }}</span>
                                                 <span class="pinned-parts-meta">
-                                                    <span>{{ pinned_list.status_name }}</span>
-                                                    <span>&bull;</span>
-                                                    <span>&pound;{{ "{:,.2f}".format((pinned_list.quoted_value_gbp or 0)|float) }}</span>
+                                                    <span class="pinned-parts-chip pinned-parts-chip-status">{{ pinned_list.status_name }}</span>
+                                                    <span class="pinned-parts-chip pinned-parts-chip-value">&pound;{{ "{:,.2f}".format((pinned_list.quoted_value_gbp or 0)|float) }}</span>
                                                 </span>
                                             </span>
                                             <span class="pinned-parts-id">#{{ pinned_list.id }}</span>
