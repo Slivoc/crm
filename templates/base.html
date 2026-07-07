@@ -66,6 +66,89 @@
             box-shadow: 0 0 0 0.2rem rgba(108, 117, 125, 0.25);
         }
 
+        .pinned-parts-modal .modal-dialog {
+            max-width: min(1120px, calc(100vw - 2rem));
+        }
+
+        .pinned-parts-modal .modal-body {
+            background: #f6f7f9;
+        }
+
+        .pinned-parts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+            gap: 0.85rem;
+        }
+
+        .pinned-parts-panel {
+            background: #ffffff;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .pinned-parts-panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            padding: 0.65rem 0.8rem;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e9ecef;
+            font-weight: 600;
+        }
+
+        .pinned-parts-panel-title {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .pinned-parts-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 0.75rem;
+            align-items: center;
+            padding: 0.7rem 0.8rem;
+            color: inherit;
+            text-decoration: none;
+            border-bottom: 1px solid #eef0f2;
+        }
+
+        .pinned-parts-row:last-child {
+            border-bottom: 0;
+        }
+
+        .pinned-parts-row:hover,
+        .pinned-parts-row:focus {
+            background: #eef5ff;
+            color: inherit;
+        }
+
+        .pinned-parts-name {
+            display: block;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-weight: 600;
+        }
+
+        .pinned-parts-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+            margin-top: 0.25rem;
+            color: #6c757d;
+            font-size: 0.78rem;
+        }
+
+        .pinned-parts-id {
+            color: #6c757d;
+            font-size: 0.78rem;
+            white-space: nowrap;
+        }
+
         .btn-toggle-nav a {
             padding: 0.25rem 1rem;
             color: #333;
@@ -1187,42 +1270,16 @@ input:-webkit-autofill {
                             <i class="bi bi-list"></i>
                         </a>
                         <button type="button"
-                                class="btn btn-primary dropdown-toggle dropdown-toggle-split"
-                                data-bs-toggle="dropdown"
-                                aria-expanded="false"
-                                title="Pinned parts lists">
-                            <span class="visually-hidden">Pinned parts lists</span>
-                        </button>
-                        <ul class="dropdown-menu dropdown-menu-end">
+                                class="btn btn-primary"
+                                data-bs-toggle="modal"
+                                data-bs-target="#pinnedPartsListsModal"
+                                title="Pinned parts lists"
+                                aria-label="Pinned parts lists">
+                            <i class="bi bi-pin-angle-fill"></i>
                             {% if pinned_parts_lists %}
-                                {% for customer_group in pinned_parts_lists|groupby('customer_name') %}
-                                    <li><h6 class="dropdown-header">{{ customer_group.grouper }}</h6></li>
-                                    {% for pinned_list in customer_group.list %}
-                                        <li>
-                                            <a class="dropdown-item d-flex align-items-center justify-content-between"
-                                               href="{{ url_for('parts_list.view_parts_list', list_id=pinned_list.id) }}">
-                                                <span class="me-2" style="max-width: 280px;">
-                                                    <span class="d-block text-truncate" style="max-width: 280px;">
-                                                        {{ pinned_list.name }}
-                                                    </span>
-                                                    <small class="text-muted d-block">
-                                                        {{ pinned_list.status_name }} • £{{ "{:,.2f}".format((pinned_list.quoted_value_gbp or 0)|float) }}
-                                                    </small>
-                                                </span>
-                                                <small class="text-muted">#{{ pinned_list.id }}</small>
-                                            </a>
-                                        </li>
-                                    {% endfor %}
-                                    {% if not loop.last %}
-                                        <li><hr class="dropdown-divider"></li>
-                                    {% endif %}
-                                {% endfor %}
-                            {% else %}
-                                <li>
-                                    <span class="dropdown-item-text text-muted">No pinned lists yet</span>
-                                </li>
+                                <span class="badge text-bg-light ms-1">{{ pinned_parts_lists|length }}</span>
                             {% endif %}
-                        </ul>
+                        </button>
                     </div>
                 </div>
 
@@ -1234,6 +1291,66 @@ input:-webkit-autofill {
             </div>
         </div>
     </div>
+
+<div class="modal fade pinned-parts-modal" id="pinnedPartsListsModal" tabindex="-1" aria-labelledby="pinnedPartsListsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="me-auto">
+                    <h5 class="modal-title" id="pinnedPartsListsModalLabel">
+                        <i class="bi bi-pin-angle-fill me-2"></i>Pinned Parts Lists
+                    </h5>
+                    <div class="text-muted small">
+                        {% if pinned_parts_lists %}
+                            {{ pinned_parts_lists|length }} pinned list{{ '' if pinned_parts_lists|length == 1 else 's' }}
+                        {% else %}
+                            No pinned lists yet
+                        {% endif %}
+                    </div>
+                </div>
+                <a href="{{ url_for('parts_list.parts_list') }}" class="btn btn-outline-primary btn-sm">
+                    <i class="bi bi-list me-1"></i>All Lists
+                </a>
+                <button type="button" class="btn-close ms-0" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                {% if pinned_parts_lists %}
+                    <div class="pinned-parts-grid">
+                        {% for customer_group in pinned_parts_lists|groupby('customer_name') %}
+                            <section class="pinned-parts-panel" aria-label="{{ customer_group.grouper }} pinned parts lists">
+                                <div class="pinned-parts-panel-header">
+                                    <span class="pinned-parts-panel-title">{{ customer_group.grouper }}</span>
+                                    <span class="badge text-bg-secondary">{{ customer_group.list|length }}</span>
+                                </div>
+                                <div>
+                                    {% for pinned_list in customer_group.list %}
+                                        <a class="pinned-parts-row"
+                                           href="{{ url_for('parts_list.view_parts_list', list_id=pinned_list.id) }}">
+                                            <span style="min-width: 0;">
+                                                <span class="pinned-parts-name">{{ pinned_list.name }}</span>
+                                                <span class="pinned-parts-meta">
+                                                    <span>{{ pinned_list.status_name }}</span>
+                                                    <span>&bull;</span>
+                                                    <span>&pound;{{ "{:,.2f}".format((pinned_list.quoted_value_gbp or 0)|float) }}</span>
+                                                </span>
+                                            </span>
+                                            <span class="pinned-parts-id">#{{ pinned_list.id }}</span>
+                                        </a>
+                                    {% endfor %}
+                                </div>
+                            </section>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="text-center text-muted py-5">
+                        <i class="bi bi-pin-angle display-6 d-block mb-2"></i>
+                        No pinned lists yet.
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
 
  <!-- Enhanced Add Customer Modal -->
 <div class="modal fade" id="addCustomerModal" tabindex="-1" aria-labelledby="addCustomerModalLabel" aria-hidden="true">
