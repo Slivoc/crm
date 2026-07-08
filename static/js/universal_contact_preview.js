@@ -311,11 +311,7 @@ suggestTimezoneForCountry: async function(countryCode) {
         modal.show();
 
         $('#contactPreviewModal').one('shown.bs.modal', function() {
-            if (($('#contact-notes-input').val() || '').trim()) {
-                $('#contact-notes-input').trigger('focus');
-            } else {
-                $('#comm-notes').focus();
-            }
+            $('#comm-notes').focus();
         });
     },
 
@@ -513,7 +509,7 @@ openEditModal: async function() {
     updateNotesVisualState: function(notes) {
         const hasNotes = !!(notes && notes.trim());
         $('#contact-notes-row').toggleClass('notes-present', hasNotes);
-        $('#contact-notes-label').text(hasNotes ? '⚠ Important Contact Notes — read before logging' : 'Contact Notes');
+        $('#contact-notes-label').text(hasNotes ? 'Contact Notes Available' : 'Contact Notes');
     },
 
     queueNotesSave: function() {
