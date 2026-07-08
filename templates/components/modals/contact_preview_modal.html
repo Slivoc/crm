@@ -61,11 +61,11 @@
                         </div>
                     </div>
                     <div class="contact-notes-row mt-3" id="contact-notes-row">
-                        <small class="text-muted d-block mb-1" id="contact-notes-label">Notes</small>
-                        <div class="d-flex align-items-center gap-2">
-                            <input type="text" id="contact-notes-input" class="form-control form-control-sm contact-notes-input" placeholder="Add notes..." autocomplete="off" aria-label="Contact notes">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <small class="text-muted d-block" id="contact-notes-label">Contact Notes</small>
                             <span id="contact-notes-status" class="small text-muted"></span>
                         </div>
+                        <textarea id="contact-notes-input" class="form-control form-control-sm contact-notes-input" rows="3" placeholder="Add important contact notes..." autocomplete="off" aria-label="Contact notes"></textarea>
                     </div>
                 </div>
 
@@ -206,8 +206,11 @@
 
 #contactPreviewModal .contact-notes-input {
     background-color: #ffffff;
-    border: 1px solid transparent;
+    border: 1px solid #ced4da;
     box-shadow: none;
+    font-size: 0.95rem;
+    line-height: 1.45;
+    resize: vertical;
     transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
@@ -221,16 +224,27 @@
 }
 
 #contactPreviewModal .contact-notes-row.notes-present {
-    background: #fff3cd;
-    border: 1px solid #ffe69c;
-    border-left: 4px solid #ffc107;
-    border-radius: 0.375rem;
-    padding: 0.625rem;
+    background: linear-gradient(135deg, #fff3cd 0%, #ffe8a1 100%);
+    border: 2px solid #ffc107;
+    border-left: 8px solid #fd7e14;
+    border-radius: 0.5rem;
+    box-shadow: 0 0.5rem 1rem rgba(255, 193, 7, 0.2);
+    padding: 0.875rem;
 }
 
 #contactPreviewModal .contact-notes-row.notes-present #contact-notes-label {
     color: #664d03 !important;
-    font-weight: 700;
+    font-size: 0.95rem;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+    text-transform: uppercase;
+}
+
+#contactPreviewModal .contact-notes-row.notes-present .contact-notes-input {
+    border-color: #fd7e14;
+    color: #3d2f00;
+    font-weight: 600;
+    min-height: 6rem;
 }
 
 #contactPreviewModal .communication-history-section {
