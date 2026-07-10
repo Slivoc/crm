@@ -222,6 +222,9 @@
                             <a class="nav-link {% if status.id|string == selected_status_id|string %}active{% endif %}"
                                href="{{ url_for('parts_list.view_parts_lists', status_id=status.id, customer_id=selected_customer_id if selected_customer_id else '', project_filter=selected_project_filter if selected_project_filter else 'none', salesperson_id=selected_salesperson_id if selected_salesperson_id else '', quoted_date=selected_quoted_date if selected_quoted_date else '') }}">
                                 {{ status.name }}
+                                {% if status.id in [2, 3, 4, 5] %}
+                                    <span class="badge rounded-pill text-bg-light text-dark ms-1">{{ status_counts.get(status.id, 0) }}</span>
+                                {% endif %}
                             </a>
                         </li>
                         {% endfor %}
