@@ -6429,11 +6429,85 @@ def view_parts_lists():
                 selected_customer_name = customer_row['name']
 
         statuses = db_execute("SELECT id, name FROM parts_list_statuses ORDER BY display_order ASC", fetch='all')
+
+        status_count_clauses = []
+        status_count_params = []
+        if not include_portal_search_lists:
+            status_count_clauses.append("""
+                COALESCE(pl.name, '') NOT LIKE ?
+                AND COALESCE(pl.notes, '') NOT LIKE ?
+                AND COALESCE(pl.notes, '') NOT LIKE ?
+            """)
+            status_count_params.extend([
+                'Portal Search %',
+                'Auto-created from customer portal search%',
+                '%Search source: background_monroe_scrape%',
+            ])
+        if customer_id:
+            status_count_clauses.append("pl.customer_id = ?")
+            status_count_params.append(customer_id)
+        if project_filter == 'none':
+            status_count_clauses.append("pl.project_id IS NULL")
+        elif project_filter == 'with':
+            status_count_clauses.append("pl.project_id IS NOT NULL")
+        elif project_filter.startswith('id:'):
+            try:
+                project_id = int(project_filter.split(':', 1)[1])
+                status_count_clauses.append("pl.project_id = ?")
+                status_count_params.append(project_id)
+            except (TypeError, ValueError):
+                pass
+        if salesperson_id:
+            status_count_clauses.append("pl.salesperson_id = ?")
+            status_count_params.append(salesperson_id)
+        if start_date_filter:
+            status_count_clauses.append("DATE(pl.date_created) >= ?")
+            status_count_params.append(start_date_filter.isoformat())
+        if end_date_filter:
+            status_count_clauses.append("DATE(pl.date_created) <= ?")
+            status_count_params.append(end_date_filter.isoformat())
+        if quoted_date_filter:
+            status_count_clauses.append("""
+                EXISTS (
+                    SELECT 1
+                    FROM parts_list_lines pll2
+                    JOIN customer_quote_lines cql2 ON cql2.parts_list_line_id = pll2.id
+                    WHERE pll2.parts_list_id = pl.id
+                      AND cql2.quoted_status = 'quoted'
+                      AND cql2.quoted_on IS NOT NULL
+                      AND DATE(cql2.quoted_on) = ?
+                )
+            """)
+            status_count_params.append(quoted_date_filter)
+        if part_search:
+            status_count_clauses.append("""
+                EXISTS (
+                    SELECT 1
+                    FROM parts_list_lines pll_search
+                    WHERE pll_search.parts_list_id = pl.id
+                      AND (LOWER(pll_search.customer_part_number) LIKE ?
+                           OR LOWER(pll_search.base_part_number) LIKE ?)
+                )
+            """)
+            search_like = f"%{part_search.lower()}%"
+            status_count_params.extend([search_like, search_like])
+
+        status_counts_sql = """
+            SELECT pl.status_id, COUNT(*) AS list_count
+            FROM parts_lists pl
+        """
+        if status_count_clauses:
+            status_counts_sql += " WHERE " + " AND ".join(status_count_clauses)
+        status_counts_sql += " GROUP BY pl.status_id"
+        status_count_rows = db_execute(status_counts_sql, status_count_params, fetch='all')
+        status_counts = {row['status_id']: row['list_count'] for row in status_count_rows or []}
+
         projects = db_execute("SELECT id, name FROM projects ORDER BY name", fetch='all')
 
         return render_template('parts_lists.html',
                                lists=lists_data,
                                statuses=[dict(s) for s in statuses],
+                               status_counts=status_counts,
                                projects=[dict(p) for p in projects] if projects else [],
                                all_salespeople=[dict(sp) for sp in all_salespeople],
                                current_salesperson=dict(current_salesperson) if current_salesperson else None,
