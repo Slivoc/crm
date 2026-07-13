@@ -1182,7 +1182,6 @@ document.addEventListener('DOMContentLoaded', function() {
    // Build Email Quote Table (Fixed: Shows No Bids, Hides Empty Prices)
     function buildEmailQuoteTable() {
         const displayCurrencyId = getDisplayCurrencyId();
-        const displayCurrencyCode = getCurrencyCode(displayCurrencyId);
         // 1. Get Selected Columns
         const selectedCols = {};
         document.querySelectorAll('.email-col-check').forEach(cb => selectedCols[cb.value] = cb.checked);
@@ -1200,8 +1199,8 @@ document.addEventListener('DOMContentLoaded', function() {
         if (selectedCols.revision) headers += `<th align="left" style="${hStyle}">Rev</th>`;
         if (selectedCols.requested_qty) headers += `<th align="right" style="${hStyle}">Requested Qty</th>`;
         if (selectedCols.qty) headers += `<th align="right" style="${hStyle}">Quoted Qty</th>`;
-        if (selectedCols.unit_price) headers += `<th align="right" style="${hStyle}">Unit Price (${displayCurrencyCode})</th>`;
-        if (selectedCols.line_total) headers += `<th align="right" style="${hStyle}">Line Total (${displayCurrencyCode})</th>`;
+        if (selectedCols.unit_price) headers += `<th align="right" style="${hStyle}">Unit Price</th>`;
+        if (selectedCols.line_total) headers += `<th align="right" style="${hStyle}">Line Total</th>`;
         if (selectedCols.lead_days) headers += `<th align="left" style="${hStyle}">Lead (days)</th>`;
         if (selectedCols.quoted_on) headers += `<th align="left" style="${hStyle}">Quoted On</th>`;
         if (selectedCols.manufacturer) headers += `<th align="left" style="${hStyle}">Mfr</th>`;
@@ -1241,8 +1240,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
             // Default Styles
             let rowStyle = 'padding:4px 6px;border-bottom:1px solid #dee2e6;';
-            let unitPriceDisplay = quotePriceDisplay.toFixed(2);
-            let lineTotalDisplay = lineTotalDisplayAmount.toFixed(2);
+            let unitPriceDisplay = formatCurrency(quotePriceDisplay, displayCurrencyId);
+            let lineTotalDisplay = formatCurrency(lineTotalDisplayAmount, displayCurrencyId);
 
             // Handle "No Bid" Styling
             if (lastIsNoBid) {
