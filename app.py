@@ -416,6 +416,8 @@ def inject_pinned_parts_lists():
         """
         SELECT pl.id,
                pl.name,
+               pl.notes,
+               pl.date_modified,
                COALESCE(c.name, 'Unassigned Customer') AS customer_name,
                COALESCE(pls.name, 'Unknown') AS status_name,
                (

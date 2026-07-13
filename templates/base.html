@@ -67,7 +67,7 @@
         }
 
         .pinned-parts-modal .modal-dialog {
-            max-width: min(1120px, calc(100vw - 2rem));
+            max-width: min(1280px, calc(100vw - 2rem));
         }
 
         .pinned-parts-modal .modal-body {
@@ -131,13 +131,13 @@
 
         .pinned-parts-row {
             display: grid;
-            grid-template-columns: minmax(0, 1fr) auto;
-            gap: 0.75rem;
+            grid-template-columns: minmax(0, 1fr) auto auto;
+            gap: 0.6rem;
             align-items: center;
             padding: 0.7rem 0.8rem;
             color: inherit;
-            text-decoration: none;
             border-bottom: 1px solid #eef0f2;
+            position: relative;
         }
 
         .pinned-parts-row:last-child {
@@ -145,9 +145,19 @@
         }
 
         .pinned-parts-row:hover,
-        .pinned-parts-row:focus {
+        .pinned-parts-row:focus-within {
             background: var(--pinned-accent-bg);
             color: inherit;
+        }
+
+        .pinned-parts-main-link {
+            min-width: 0;
+            color: inherit;
+            text-decoration: none;
+        }
+
+        .pinned-parts-main-link:focus {
+            outline: 0;
         }
 
         .pinned-parts-name {
@@ -194,6 +204,96 @@
             font-size: 0.78rem;
             font-weight: 700;
             white-space: nowrap;
+        }
+
+        .pinned-parts-comment-wrap {
+            position: relative;
+        }
+
+        .pinned-parts-comment-btn {
+            --comment-color: #adb5bd;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 2rem;
+            height: 2rem;
+            border: 1px solid #d7dee8;
+            border-radius: 999px;
+            background: #ffffff;
+            color: var(--comment-color);
+            line-height: 1;
+        }
+
+        .pinned-parts-comment-btn:hover,
+        .pinned-parts-comment-btn:focus {
+            border-color: var(--comment-color);
+            box-shadow: 0 0 0 0.15rem rgba(13, 110, 253, 0.12);
+        }
+
+        .pinned-parts-comment-btn.comment-recent-week {
+            --comment-color: #198754;
+            background: #e8f5ee;
+        }
+
+        .pinned-parts-comment-btn.comment-recent-month {
+            --comment-color: #b58100;
+            background: #fff6db;
+        }
+
+        .pinned-parts-comment-btn.comment-stale {
+            --comment-color: #dc3545;
+            background: #fbeaec;
+        }
+
+        .pinned-parts-comment-btn.comment-empty {
+            --comment-color: #adb5bd;
+            background: #f8f9fa;
+        }
+
+        .pinned-parts-comment-popover {
+            display: none;
+            position: absolute;
+            z-index: 1065;
+            right: 0;
+            top: calc(100% + 0.35rem);
+            width: min(340px, calc(100vw - 3rem));
+            padding: 0.75rem;
+            border: 1px solid #d7dee8;
+            border-radius: 8px;
+            background: #ffffff;
+            box-shadow: 0 0.5rem 1.25rem rgba(33, 37, 41, 0.18);
+        }
+
+        .pinned-parts-comment-popover.is-open {
+            display: block;
+        }
+
+        .pinned-parts-comment-meta {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            color: #6c757d;
+            font-size: 0.72rem;
+        }
+
+        .pinned-parts-comment-dot {
+            width: 0.5rem;
+            height: 0.5rem;
+            border-radius: 50%;
+            background: #dc3545;
+            flex: 0 0 auto;
+        }
+
+        .pinned-parts-comment-dot.comment-recent-week {
+            background: #198754;
+        }
+
+        .pinned-parts-comment-dot.comment-recent-month {
+            background: #ffc107;
+        }
+
+        .pinned-parts-comment-dot.comment-empty {
+            background: #adb5bd;
         }
 
         .btn-toggle-nav a {
@@ -1371,17 +1471,47 @@ input:-webkit-autofill {
                                 </div>
                                 <div>
                                     {% for pinned_list in customer_group.list %}
-                                        <a class="pinned-parts-row"
-                                           href="{{ url_for('parts_list.view_parts_list', list_id=pinned_list.id) }}">
-                                            <span style="min-width: 0;">
+                                        {% set has_comment = pinned_list.notes and pinned_list.notes.strip() %}
+                                        <div class="pinned-parts-row"
+                                             data-pinned-list-row
+                                             data-list-id="{{ pinned_list.id }}"
+                                             data-update-url="{{ url_for('parts_list.update_parts_list_header', list_id=pinned_list.id) }}"
+                                             data-comment-updated-at="{{ pinned_list.date_modified.isoformat() if pinned_list.date_modified else '' }}">
+                                            <a class="pinned-parts-main-link"
+                                               href="{{ url_for('parts_list.view_parts_list', list_id=pinned_list.id) }}">
                                                 <span class="pinned-parts-name">{{ pinned_list.name }}</span>
                                                 <span class="pinned-parts-meta">
                                                     <span class="pinned-parts-chip pinned-parts-chip-status">{{ pinned_list.status_name }}</span>
                                                     <span class="pinned-parts-chip pinned-parts-chip-value">&pound;{{ "{:,.2f}".format((pinned_list.quoted_value_gbp or 0)|float) }}</span>
+                                                    <span class="pinned-parts-comment-meta" data-comment-meta>
+                                                        <span class="pinned-parts-comment-dot {% if not has_comment %}comment-empty{% endif %}" data-comment-dot></span>
+                                                        <span data-comment-date>{{ 'No comment' if not has_comment else 'Comment' }}</span>
+                                                    </span>
                                                 </span>
-                                            </span>
+                                            </a>
                                             <span class="pinned-parts-id">#{{ pinned_list.id }}</span>
-                                        </a>
+                                            <span class="pinned-parts-comment-wrap">
+                                                <button type="button"
+                                                        class="pinned-parts-comment-btn {% if not has_comment %}comment-empty{% endif %}"
+                                                        data-comment-toggle
+                                                        title="{% if has_comment %}View/edit comment{% else %}Add comment{% endif %}"
+                                                        aria-label="{% if has_comment %}View/edit comment{% else %}Add comment{% endif %}"
+                                                        aria-expanded="false">
+                                                    <i class="bi bi-chat-left-text{% if has_comment %}-fill{% endif %}"></i>
+                                                </button>
+                                                <div class="pinned-parts-comment-popover" data-comment-popover>
+                                                    <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+                                                        <label class="form-label small text-muted mb-0" for="pinnedPartsComment{{ pinned_list.id }}">Comment</label>
+                                                        <small class="text-muted" data-comment-status></small>
+                                                    </div>
+                                                    <textarea id="pinnedPartsComment{{ pinned_list.id }}"
+                                                              class="form-control form-control-sm"
+                                                              rows="3"
+                                                              data-comment-input
+                                                              placeholder="Add a comment...">{{ pinned_list.notes or '' }}</textarea>
+                                                </div>
+                                            </span>
+                                        </div>
                                     {% endfor %}
                                 </div>
                             </section>
@@ -2754,6 +2884,160 @@ document.addEventListener('DOMContentLoaded', function() {
     // Start polling for notifications
     checkForNotifications();
     setInterval(checkForNotifications, checkInterval);
+})();
+</script>
+
+<script>
+(function() {
+    const modal = document.getElementById('pinnedPartsListsModal');
+    if (!modal) return;
+
+    const rows = Array.from(modal.querySelectorAll('[data-pinned-list-row]'));
+    if (!rows.length) return;
+
+    const formatRelativeDate = (date) => {
+        const now = new Date();
+        const diffMs = now - date;
+        const diffMins = Math.floor(diffMs / 60000);
+        if (diffMins < 1) return 'Just now';
+        if (diffMins < 60) return `${diffMins}m ago`;
+        const diffHours = Math.floor(diffMins / 60);
+        if (diffHours < 24) return `${diffHours}h ago`;
+        const diffDays = Math.floor(diffHours / 24);
+        if (diffDays < 31) return `${diffDays}d ago`;
+        return date.toLocaleDateString();
+    };
+
+    const getCommentClass = (hasComment, timestamp) => {
+        if (!hasComment) return 'comment-empty';
+        const date = timestamp ? new Date(timestamp) : null;
+        if (!date || Number.isNaN(date.getTime())) return 'comment-stale';
+        const diffDays = (new Date() - date) / 86400000;
+        if (diffDays <= 3) return 'comment-recent-week';
+        if (diffDays <= 30) return 'comment-recent-month';
+        return 'comment-stale';
+    };
+
+    const applyCommentState = (row) => {
+        const input = row.querySelector('[data-comment-input]');
+        const button = row.querySelector('[data-comment-toggle]');
+        const icon = button?.querySelector('i');
+        const dot = row.querySelector('[data-comment-dot]');
+        const dateEl = row.querySelector('[data-comment-date]');
+        if (!input || !button || !dot || !dateEl) return;
+
+        const hasComment = input.value.trim().length > 0;
+        const timestamp = row.dataset.commentUpdatedAt || '';
+        const stateClass = getCommentClass(hasComment, timestamp);
+        const stateClasses = ['comment-empty', 'comment-recent-week', 'comment-recent-month', 'comment-stale'];
+
+        button.classList.remove(...stateClasses);
+        dot.classList.remove(...stateClasses);
+        button.classList.add(stateClass);
+        dot.classList.add(stateClass);
+        button.title = hasComment ? 'View/edit comment' : 'Add comment';
+        button.setAttribute('aria-label', button.title);
+
+        if (icon) {
+            icon.className = `bi bi-chat-left-text${hasComment ? '-fill' : ''}`;
+        }
+
+        if (!hasComment) {
+            dateEl.textContent = 'No comment';
+            return;
+        }
+
+        const date = timestamp ? new Date(timestamp) : null;
+        dateEl.textContent = date && !Number.isNaN(date.getTime())
+            ? formatRelativeDate(date)
+            : 'Comment';
+    };
+
+    const closePopovers = (exceptPopover = null) => {
+        modal.querySelectorAll('[data-comment-popover].is-open').forEach((popover) => {
+            if (popover === exceptPopover) return;
+            popover.classList.remove('is-open');
+            popover.closest('[data-pinned-list-row]')?.querySelector('[data-comment-toggle]')?.setAttribute('aria-expanded', 'false');
+        });
+    };
+
+    rows.forEach((row) => {
+        applyCommentState(row);
+
+        const button = row.querySelector('[data-comment-toggle]');
+        const popover = row.querySelector('[data-comment-popover]');
+        const input = row.querySelector('[data-comment-input]');
+        const status = row.querySelector('[data-comment-status]');
+        if (!button || !popover || !input) return;
+
+        let saveTimer = null;
+        let lastSavedValue = input.value;
+
+        const saveComment = () => {
+            if (saveTimer) {
+                clearTimeout(saveTimer);
+                saveTimer = null;
+            }
+            const notes = input.value;
+            if (notes === lastSavedValue) return;
+
+            if (status) {
+                status.textContent = 'Saving...';
+                status.classList.remove('text-danger');
+            }
+
+            fetch(row.dataset.updateUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ notes })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (!data.success) {
+                    throw new Error(data.message || 'Unable to save comment');
+                }
+                lastSavedValue = notes;
+                row.dataset.commentUpdatedAt = new Date().toISOString();
+                applyCommentState(row);
+                if (status) {
+                    status.textContent = 'Saved';
+                    setTimeout(() => {
+                        if (status.textContent === 'Saved') status.textContent = '';
+                    }, 1200);
+                }
+            })
+            .catch((error) => {
+                console.error('Error saving pinned parts list comment:', error);
+                if (status) {
+                    status.textContent = 'Save failed';
+                    status.classList.add('text-danger');
+                }
+            });
+        };
+
+        const scheduleSave = () => {
+            applyCommentState(row);
+            if (saveTimer) clearTimeout(saveTimer);
+            saveTimer = setTimeout(saveComment, 700);
+        };
+
+        button.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const isOpen = popover.classList.contains('is-open');
+            closePopovers(popover);
+            popover.classList.toggle('is-open', !isOpen);
+            button.setAttribute('aria-expanded', String(!isOpen));
+            if (!isOpen) input.focus();
+        });
+
+        popover.addEventListener('click', (event) => event.stopPropagation());
+        input.addEventListener('input', scheduleSave);
+        input.addEventListener('blur', saveComment);
+    });
+
+    document.addEventListener('click', () => closePopovers());
+    modal.addEventListener('hidden.bs.modal', () => closePopovers());
 })();
 </script>
 
