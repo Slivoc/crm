@@ -86,7 +86,7 @@
             background: #ffffff;
             border: 1px solid #dce4ef;
             border-radius: 8px;
-            overflow: hidden;
+            overflow: visible;
             box-shadow: 0 1px 2px rgba(33, 37, 41, 0.05);
         }
 
@@ -114,7 +114,13 @@
             background: var(--pinned-accent-bg);
             border-bottom: 1px solid rgba(13, 110, 253, 0.12);
             border-top: 3px solid var(--pinned-accent);
+            border-radius: 8px 8px 0 0;
             font-weight: 600;
+        }
+
+        .pinned-parts-panel-body {
+            background: #ffffff;
+            border-radius: 0 0 8px 8px;
         }
 
         .pinned-parts-count {
@@ -1469,7 +1475,7 @@ input:-webkit-autofill {
                                     <span class="pinned-parts-panel-title">{{ customer_group.grouper }}</span>
                                     <span class="badge pinned-parts-count">{{ customer_group.list|length }}</span>
                                 </div>
-                                <div>
+                                <div class="pinned-parts-panel-body">
                                     {% for pinned_list in customer_group.list %}
                                         {% set has_comment = pinned_list.notes and pinned_list.notes.strip() %}
                                         <div class="pinned-parts-row"
