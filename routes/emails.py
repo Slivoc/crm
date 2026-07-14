@@ -123,6 +123,8 @@ GRAPH_DEFAULTS = {
 }
 
 RESERVED_GRAPH_SCOPES = {"offline_access", "profile", "openid"}
+GRAPH_IMMUTABLE_ID_HEADER_VALUE = 'IdType="ImmutableId"'
+GRAPH_IMMUTABLE_ID_HEADERS = {"Prefer": GRAPH_IMMUTABLE_ID_HEADER_VALUE}
 
 INLINE_ATTACHMENT_CACHE_TTL = 300
 INLINE_ATTACHMENT_CACHE_MAX = 200
@@ -137,6 +139,63 @@ DEFAULT_TRIAGE_SETTINGS = {
         TRIAGE_CATEGORY_PARTS_LIST: {"enabled": False},
     },
 }
+
+
+def graph_headers(access_token, *, immutable_ids=True, extra=None):
+    headers = {"Authorization": f"Bearer {access_token}"}
+    if immutable_ids:
+        headers.update(GRAPH_IMMUTABLE_ID_HEADERS)
+    if extra:
+        headers.update(extra)
+    return headers
+
+
+def translate_graph_message_ids(access_token, ids, *, source_format="restId", target_format="restImmutableEntryId"):
+    message_ids = []
+    seen = set()
+    for message_id in ids or []:
+        message_id = (message_id or "").strip()
+        if message_id and message_id not in seen:
+            seen.add(message_id)
+            message_ids.append(message_id)
+    if not message_ids:
+        return {}
+
+    try:
+        resp = requests.post(
+            "https://graph.microsoft.com/v1.0/me/translateExchangeIds",
+            headers=graph_headers(access_token, extra={"Content-Type": "application/json"}),
+            json={
+                "inputIds": message_ids,
+                "sourceIdType": source_format,
+                "targetIdType": target_format,
+            },
+            timeout=20,
+        )
+        if resp.status_code >= 400:
+            logging.warning("Graph translateExchangeIds failed: %s %s", resp.status_code, resp.text[:300])
+            return {}
+        body = resp.json() if resp.content else {}
+    except Exception:
+        logging.exception("Graph translateExchangeIds request failed")
+        return {}
+
+    translated = {}
+    for item in body.get("value", []) if isinstance(body, dict) else []:
+        source_id = item.get("sourceId")
+        target_id = item.get("targetId")
+        if source_id and target_id:
+            translated[source_id] = target_id
+    return translated
+
+
+def translate_graph_message_id(access_token, message_id, *, source_format="restId", target_format="restImmutableEntryId"):
+    return translate_graph_message_ids(
+        access_token,
+        [message_id],
+        source_format=source_format,
+        target_format=target_format,
+    ).get(message_id)
 
 
 def _get_app_setting(key, default=None):
@@ -603,7 +662,7 @@ def sync_graph_mailbox_emails():
                 _update_sync_status(user_id, success=False, error="Failed to get access token")
                 continue
 
-            headers = {"Authorization": f"Bearer {token['access_token']}"}
+            headers = graph_headers(token['access_token'])
 
             select_fields = (
                 "id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,sentDateTime,"
@@ -696,7 +755,7 @@ def sync_graph_mailbox_contacts():
                 totals["errors"] += 1
                 continue
 
-            headers = {"Authorization": f"Bearer {token['access_token']}"}
+            headers = graph_headers(token['access_token'])
             state = _get_graph_delta_state(user_id)
             delta_link = state.get("delta_link")
             mailbox_email = state.get("mailbox_email")
@@ -1378,10 +1437,7 @@ def send_graph_email(subject, html_body, to_emails, *, cc_emails=None, bcc_email
     if final_attachments:
         message["attachments"] = final_attachments
 
-    headers = {
-        "Authorization": f"Bearer {token['access_token']}",
-        "Content-Type": "application/json",
-    }
+    headers = graph_headers(token['access_token'], extra={"Content-Type": "application/json"})
     payload = {"message": message, "saveToSentItems": True}
     resp = requests.post(
         "https://graph.microsoft.com/v1.0/me/sendMail",
@@ -1449,10 +1505,7 @@ def send_graph_reply(message_id, html_body, *, reply_all=False, user_id=None, cc
     html_body = html_body or ""
     html_body, signature_attachments = _inline_signature_images(html_body)
 
-    headers = {
-        "Authorization": f"Bearer {token['access_token']}",
-        "Content-Type": "application/json",
-    }
+    headers = graph_headers(token['access_token'], extra={"Content-Type": "application/json"})
     safe_message_id = quote(message_id, safe="")
     reply_endpoint = "createReplyAll" if reply_all else "createReply"
     draft_resp = requests.post(
@@ -1559,7 +1612,7 @@ def _cache_recent_sent_items(user_id, limit=20):
     if not token or "access_token" not in token:
         return 0
 
-    headers = {"Authorization": f"Bearer {token['access_token']}"}
+    headers = graph_headers(token['access_token'])
     params = {
         "$top": str(max(1, min(limit, 50))),
         "$select": (
@@ -2703,10 +2756,7 @@ def _fetch_recent_graph_messages_for_contact(cache, user_id, contact_email, days
     if not token or "access_token" not in token:
         return []
 
-    headers = {
-        "Authorization": f"Bearer {token['access_token']}",
-        "ConsistencyLevel": "eventual",
-    }
+    headers = graph_headers(token['access_token'], extra={"ConsistencyLevel": "eventual"})
     select_fields = (
         "id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,sentDateTime,"
         "body,bodyPreview,webLink,conversationId,hasAttachments,isRead,importance"
@@ -3570,7 +3620,7 @@ def graph_sync_cache():
                 "error": "Failed to get access token",
             }), 400
 
-        headers = {"Authorization": f"Bearer {token['access_token']}"}
+        headers = graph_headers(token['access_token'])
         select_fields = (
             "id,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,sentDateTime,"
             "bodyPreview,webLink,conversationId,hasAttachments,isRead,importance"
@@ -3654,7 +3704,7 @@ def graph_messages():
             "debug": token,
         }), 400
 
-    headers = {"Authorization": f"Bearer {token['access_token']}"}
+    headers = graph_headers(token['access_token'])
     page_size = request.args.get("page_size", "25")
     try:
         page_size = int(page_size)
@@ -3888,7 +3938,7 @@ def graph_message_detail(message_id):
             "debug": token,
         }), 400
 
-    headers = {"Authorization": f"Bearer {token['access_token']}"}
+    headers = graph_headers(token['access_token'])
     params = {
         "$select": "id,subject,from,receivedDateTime,body,bodyPreview,webLink,conversationId,hasAttachments",
     }
@@ -3973,7 +4023,7 @@ def graph_mail_folders():
             "debug": token,
         }), 400
 
-    headers = {"Authorization": f"Bearer {token['access_token']}"}
+    headers = graph_headers(token['access_token'])
     folders, error = _fetch_graph_mail_folders(headers)
     if error is not None:
         return jsonify({
@@ -4032,7 +4082,7 @@ def graph_move_message(message_id):
             "debug": token,
         }), 400
 
-    headers = {"Authorization": f"Bearer {token['access_token']}"}
+    headers = graph_headers(token['access_token'])
     safe_message_id = quote(message_id, safe="")
     resp = requests.post(
         f"https://graph.microsoft.com/v1.0/me/messages/{safe_message_id}/move",
@@ -4320,7 +4370,7 @@ def mailbox_triage_preview():
             "debug": token,
         }), 400
 
-    headers = {"Authorization": f"Bearer {token['access_token']}"}
+    headers = graph_headers(token['access_token'])
     message = _fetch_graph_message_for_triage(headers, message_id)
     if not message:
         return jsonify({
@@ -4639,7 +4689,7 @@ def graph_detect_signature():
             "debug": token,
         }), 400
 
-    headers = {"Authorization": f"Bearer {token['access_token']}"}
+    headers = graph_headers(token['access_token'])
     messages, error = _fetch_graph_sent_messages(headers, max_messages)
     if error:
         return jsonify({
@@ -7561,7 +7611,7 @@ def create_excess_list_from_email(email_id=None):
     if not token or "access_token" not in token:
         return jsonify(success=False, error='Failed to refresh Microsoft Graph access token'), 400
 
-    headers = {"Authorization": f"Bearer {token['access_token']}"}
+    headers = graph_headers(token['access_token'])
     safe_message_id = quote(message_id, safe="")
     message_resp = requests.get(
         f"https://graph.microsoft.com/v1.0/me/messages/{safe_message_id}",

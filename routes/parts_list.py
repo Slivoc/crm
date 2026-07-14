@@ -26,7 +26,13 @@ import html
 import io
 from io import StringIO
 from calendar import monthrange
-from routes.emails import send_graph_email, build_graph_inline_attachments
+from routes.emails import (
+    send_graph_email,
+    build_graph_inline_attachments,
+    graph_headers,
+    translate_graph_message_id,
+    translate_graph_message_ids,
+)
 from routes.email_signatures import get_user_default_signature
 from routes.parts_list_ai import trigger_monroe_auto_check
 
@@ -159,6 +165,71 @@ def _get_parts_list_customer_emails(list_id, parts_list):
             seen.add(email_value)
             normalized.append(email_value)
     return normalized
+
+
+def _translate_message_id_for_current_graph_user(message_id):
+    message_id = (message_id or '').strip()
+    if not message_id:
+        return None
+    try:
+        from routes.emails import (
+            _get_graph_settings,
+            _load_graph_cache_for_request,
+            _build_msal_app,
+            _save_graph_cache_for_request,
+        )
+        settings = _get_graph_settings(include_secret=True)
+        cache, user_id = _load_graph_cache_for_request()
+        app = _build_msal_app(settings, cache=cache)
+        accounts = app.get_accounts()
+        if not accounts:
+            return message_id
+        token = app.acquire_token_silent(settings["scopes"], account=accounts[0])
+        _save_graph_cache_for_request(user_id, cache)
+        if not token or "access_token" not in token:
+            return message_id
+        return translate_graph_message_id(token["access_token"], message_id) or message_id
+    except Exception:
+        logging.exception("Failed to translate Graph message ID to immutable ID")
+        return message_id
+
+
+def _repair_parts_list_email_tracking(list_id, message, *, replace_existing=False):
+    if not list_id or not isinstance(message, dict):
+        return
+    message_id = message.get('id')
+    conversation_id = message.get('conversationId')
+    if not message_id and not conversation_id:
+        return
+    try:
+        if replace_existing:
+            db_execute(
+                """
+                UPDATE parts_lists
+                SET email_message_id = COALESCE(?, email_message_id),
+                    email_conversation_id = COALESCE(?, email_conversation_id)
+                WHERE id = ?
+                """,
+                (message_id, conversation_id, list_id),
+                commit=True,
+            )
+        else:
+            db_execute(
+                """
+                UPDATE parts_lists
+                SET email_message_id = COALESCE(?, email_message_id),
+                    email_conversation_id = COALESCE(?, email_conversation_id)
+                WHERE id = ?
+                  AND (
+                      (email_message_id IS NULL AND ? IS NOT NULL)
+                      OR (email_conversation_id IS NULL AND ? IS NOT NULL)
+                  )
+                """,
+                (message_id, conversation_id, list_id, message_id, conversation_id),
+                commit=True,
+            )
+    except Exception:
+        logging.exception("Failed to repair parts list email tracking for list %s", list_id)
 
 
 def _ensure_part_number(base_part_number, part_number):
@@ -760,6 +831,7 @@ def create_supplier_quote(list_id):
 
         # Get email tracking fields if provided (for quotes created from mailbox)
         email_message_id = data.get('email_message_id') or None
+        email_message_id = _translate_message_id_for_current_graph_user(email_message_id)
         email_conversation_id = data.get('email_conversation_id') or None
 
         # Create quote header
@@ -11457,6 +11529,7 @@ def apply_quick_no_bid(list_id, supplier_id):
         mode_all = bool(data.get('all'))
         line_ids = data.get('line_ids') or []
         email_message_id = data.get('email_message_id') or None
+        email_message_id = _translate_message_id_for_current_graph_user(email_message_id)
         email_conversation_id = data.get('email_conversation_id') or None
 
         with db_cursor(commit=True) as cur:
@@ -12299,6 +12372,7 @@ def create_from_email():
     raw_body = request.get_data() if not uploaded_file else None
     email_message_id = request.form.get('email_message_id') if uploaded_file else request.headers.get('X-Email-Message-Id')
     email_conversation_id = request.form.get('email_conversation_id') if uploaded_file else request.headers.get('X-Email-Conversation-Id')
+    email_message_id = _translate_message_id_for_current_graph_user(email_message_id)
 
     if not uploaded_file and not raw_body:
         logging.warning("create-from-email: no multipart file and empty body")
@@ -12617,6 +12691,7 @@ def outlook_macro():
     body_text = data.get('body_text') or ''
     email_message_id = data.get('message_id') or data.get('email_message_id')
     email_conversation_id = data.get('conversation_id') or data.get('email_conversation_id')
+    email_message_id = _translate_message_id_for_current_graph_user(email_message_id)
 
     def _clean_body(text: str) -> str:
         """Remove control chars and collapse whitespace from email bodies."""
@@ -12909,7 +12984,12 @@ def get_related_emails(list_id):
         # Fetch emails for each conversation/message
         all_emails = []
         if graph_connected:
-            headers = {"Authorization": f"Bearer {token['access_token']}"}
+            headers = graph_headers(token['access_token'])
+            translated_message_ids = translate_graph_message_ids(token['access_token'], message_ids)
+            source_lookup_ids = {source_message_id}
+            if source_message_id in translated_message_ids:
+                source_lookup_ids.add(translated_message_ids[source_message_id])
+            fetch_message_ids = set(message_ids) | set(translated_message_ids.values())
 
             for conv_id in conversation_ids:
                 try:
@@ -12952,7 +13032,7 @@ def get_related_emails(list_id):
                     }
                     resp = requests.get(
                         "https://graph.microsoft.com/v1.0/me/messages",
-                        headers={**headers, "ConsistencyLevel": "eventual"},
+                        headers=graph_headers(token['access_token'], extra={"ConsistencyLevel": "eventual"}),
                         params=params,
                         timeout=20,
                     )
@@ -12968,7 +13048,7 @@ def get_related_emails(list_id):
                 except Exception as e:
                     logging.warning(f"Failed to fetch customer email matches for parts list {list_id}: {e}")
 
-            for msg_id in message_ids:
+            for msg_id in fetch_message_ids:
                 try:
                     resp = requests.get(
                         f"https://graph.microsoft.com/v1.0/me/messages/{url_quote(msg_id)}",
@@ -12981,7 +13061,7 @@ def get_related_emails(list_id):
                     if resp.status_code == 200:
                         msg = resp.json()
                         msg['_source_conversation_id'] = msg.get('conversationId')
-                        msg['_is_source_conversation'] = (msg_id == source_message_id)
+                        msg['_is_source_conversation'] = (msg_id in source_lookup_ids)
                         all_emails.append(msg)
                 except Exception as e:
                     logging.warning(f"Failed to fetch message {msg_id}: {e}")
@@ -13024,9 +13104,15 @@ def get_related_emails(list_id):
         source_email = None
         if source_message_id:
             for email_msg in unique_emails:
-                if email_msg.get('id') == source_message_id:
+                if email_msg.get('id') == source_message_id or email_msg.get('_is_source_conversation'):
                     source_email = email_msg
                     break
+        if source_email:
+            _repair_parts_list_email_tracking(list_id, source_email, replace_existing=True)
+        else:
+            fallback_source = next((msg for msg in unique_emails if msg.get('_is_customer_match')), None)
+            if fallback_source:
+                _repair_parts_list_email_tracking(list_id, fallback_source, replace_existing=False)
 
         breadcrumbs = [
             ('Home', url_for('index')),
@@ -13114,7 +13200,12 @@ def get_related_emails_data(list_id):
         if not token or "access_token" not in token:
             return jsonify(success=False, message="Failed to refresh access token"), 400
 
-        headers = {"Authorization": f"Bearer {token['access_token']}"}
+        headers = graph_headers(token['access_token'])
+        translated_message_ids = translate_graph_message_ids(token['access_token'], message_ids)
+        source_lookup_ids = {source_message_id}
+        if source_message_id in translated_message_ids:
+            source_lookup_ids.add(translated_message_ids[source_message_id])
+        fetch_message_ids = set(message_ids) | set(translated_message_ids.values())
         all_emails = []
 
         # 1. Search by conversation ID (finds emails in the same thread)
@@ -13154,7 +13245,7 @@ def get_related_emails_data(list_id):
             }
             resp = requests.get(
                 "https://graph.microsoft.com/v1.0/me/messages",
-                headers={**headers, "ConsistencyLevel": "eventual"},
+                headers=graph_headers(token['access_token'], extra={"ConsistencyLevel": "eventual"}),
                 params=params,
                 timeout=20,
             )
@@ -13170,7 +13261,7 @@ def get_related_emails_data(list_id):
 
         # 3. Try to fetch the original source message directly
         source_found = False
-        for msg_id in message_ids:
+        for msg_id in fetch_message_ids:
             resp = requests.get(
                 f"https://graph.microsoft.com/v1.0/me/messages/{url_quote(msg_id)}",
                 headers=headers,
@@ -13179,7 +13270,7 @@ def get_related_emails_data(list_id):
             )
             if resp.status_code == 200:
                 msg = resp.json()
-                msg['_is_source'] = (msg_id == source_message_id)
+                msg['_is_source'] = (msg_id in source_lookup_ids)
                 all_emails.append(msg)
                 source_found = True
 
@@ -13215,6 +13306,16 @@ def get_related_emails_data(list_id):
                 parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
             return parsed.strftime("%b %d, %Y %I:%M %p")
 
+        repaired_source_message_id = source_message_id
+        source_email = next((msg for msg in unique_emails if msg.get('_is_source')), None)
+        if source_email:
+            _repair_parts_list_email_tracking(list_id, source_email, replace_existing=True)
+            repaired_source_message_id = source_email.get('id') or repaired_source_message_id
+        else:
+            fallback_source = next((msg for msg in unique_emails if msg.get('_is_customer_match')), None)
+            if fallback_source:
+                _repair_parts_list_email_tracking(list_id, fallback_source, replace_existing=False)
+
         response_emails = []
         for email_msg in unique_emails:
             from_addr = email_msg.get('from', {}).get('emailAddress', {}) if isinstance(email_msg.get('from'), dict) else {}
@@ -13235,7 +13336,7 @@ def get_related_emails_data(list_id):
         return jsonify(
             success=True,
             emails=response_emails,
-            source_message_id=source_message_id,
+            source_message_id=repaired_source_message_id,
             graph_connected=True,
         )
 
