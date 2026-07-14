@@ -78,6 +78,89 @@ def _safe_row_get(row, key, default=None):
         return default
 
 
+def _normalize_email_for_match(value):
+    if not value:
+        return ''
+    return str(value).strip().lower()
+
+
+def _graph_email_address(recipient):
+    if not isinstance(recipient, dict):
+        return ''
+    email_data = recipient.get('emailAddress') or {}
+    return _normalize_email_for_match(email_data.get('address') or recipient.get('address'))
+
+
+def _graph_recipient_addresses(recipients):
+    addresses = []
+    seen = set()
+    for recipient in recipients or []:
+        address = _graph_email_address(recipient)
+        if address and address not in seen:
+            seen.add(address)
+            addresses.append(address)
+    return addresses
+
+
+def _graph_message_addresses(message):
+    if not isinstance(message, dict):
+        return {
+            'from_address': '',
+            'to_addresses': [],
+            'cc_addresses': [],
+        }
+    from_data = message.get('from', {}).get('emailAddress', {}) if isinstance(message.get('from'), dict) else {}
+    return {
+        'from_address': _normalize_email_for_match(from_data.get('address')),
+        'to_addresses': _graph_recipient_addresses(message.get('toRecipients')),
+        'cc_addresses': _graph_recipient_addresses(message.get('ccRecipients')),
+    }
+
+
+def _message_matches_any_email(message, emails):
+    normalized_emails = {_normalize_email_for_match(email) for email in (emails or []) if email}
+    normalized_emails.discard('')
+    if not normalized_emails:
+        return False
+    addresses = _graph_message_addresses(message)
+    message_emails = {addresses['from_address'], *addresses['to_addresses'], *addresses['cc_addresses']}
+    message_emails.discard('')
+    return bool(message_emails & normalized_emails)
+
+
+def _get_parts_list_customer_emails(list_id, parts_list):
+    emails = []
+    contact_email = _safe_row_get(parts_list, 'contact_email')
+    if contact_email:
+        emails.append(contact_email)
+    customer_id = _safe_row_get(parts_list, 'customer_id')
+    if customer_id:
+        rows = db_execute(
+            """
+            SELECT email
+            FROM contacts
+            WHERE customer_id = ?
+              AND email IS NOT NULL
+              AND TRIM(email) <> ''
+            ORDER BY
+              CASE WHEN id = ? THEN 0 ELSE 1 END,
+              id DESC
+            LIMIT 25
+            """,
+            (customer_id, _safe_row_get(parts_list, 'contact_id')),
+            fetch='all',
+        ) or []
+        emails.extend([_safe_row_get(row, 'email') for row in rows])
+    normalized = []
+    seen = set()
+    for email_value in emails:
+        email_value = _normalize_email_for_match(email_value)
+        if email_value and email_value not in seen:
+            seen.add(email_value)
+            normalized.append(email_value)
+    return normalized
+
+
 def _ensure_part_number(base_part_number, part_number):
     if not base_part_number:
         return
@@ -12688,9 +12771,11 @@ def get_related_emails(list_id):
         # Get parts list with email tracking fields
         parts_list = db_execute(
             """
-            SELECT id, name, email_message_id, email_conversation_id, customer_id
-            FROM parts_lists
-            WHERE id = ?
+            SELECT pl.id, pl.name, pl.email_message_id, pl.email_conversation_id,
+                   pl.customer_id, pl.contact_id, c.email as contact_email
+            FROM parts_lists pl
+            LEFT JOIN contacts c ON c.id = pl.contact_id
+            WHERE pl.id = ?
             """,
             (list_id,),
             fetch='one',
@@ -12708,6 +12793,7 @@ def get_related_emails(list_id):
         if parts_list.get('customer_id'):
             customer = db_execute("SELECT name FROM customers WHERE id = ?", (parts_list['customer_id'],), fetch='one')
             customer_name = customer['name'] if customer else None
+        customer_emails = _get_parts_list_customer_emails(list_id, parts_list)
 
         # Get supplier quotes with their email tracking
         supplier_quotes = db_execute(
@@ -12772,7 +12858,7 @@ def get_related_emails(list_id):
                 message_ids.add(sq_msg_id)
 
         # If no conversation or message IDs, show empty page
-        if not conversation_ids and not message_ids:
+        if not conversation_ids and not message_ids and not customer_emails:
             breadcrumbs = [
                 ('Home', url_for('index')),
                 ('Parts Lists', url_for('parts_list.view_parts_lists')),
@@ -12830,7 +12916,7 @@ def get_related_emails(list_id):
                     # Use filter to get all messages in this conversation
                     params = {
                         "$filter": f"conversationId eq '{conv_id}'",
-                        "$select": "id,subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,webLink,conversationId,hasAttachments",
+                        "$select": "id,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,bodyPreview,webLink,conversationId,hasAttachments",
                         "$orderby": "sentDateTime desc",
                         "$top": 50
                     }
@@ -12850,13 +12936,45 @@ def get_related_emails(list_id):
                 except Exception as e:
                     logging.warning(f"Failed to fetch conversation {conv_id}: {e}")
 
+            for customer_email in customer_emails:
+                try:
+                    safe_email = customer_email.replace("'", "''")
+                    params = {
+                        "$filter": (
+                            f"from/emailAddress/address eq '{safe_email}'"
+                            f" or toRecipients/any(r:r/emailAddress/address eq '{safe_email}')"
+                            f" or ccRecipients/any(r:r/emailAddress/address eq '{safe_email}')"
+                        ),
+                        "$select": "id,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,bodyPreview,webLink,conversationId,hasAttachments",
+                        "$orderby": "receivedDateTime desc",
+                        "$top": 20,
+                        "$count": "true",
+                    }
+                    resp = requests.get(
+                        "https://graph.microsoft.com/v1.0/me/messages",
+                        headers={**headers, "ConsistencyLevel": "eventual"},
+                        params=params,
+                        timeout=20,
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        for msg in data.get("value", []):
+                            if not _message_matches_any_email(msg, [customer_email]):
+                                continue
+                            msg['_source_conversation_id'] = msg.get('conversationId')
+                            msg['_is_source_conversation'] = False
+                            msg['_is_customer_match'] = True
+                            all_emails.append(msg)
+                except Exception as e:
+                    logging.warning(f"Failed to fetch customer email matches for parts list {list_id}: {e}")
+
             for msg_id in message_ids:
                 try:
                     resp = requests.get(
                         f"https://graph.microsoft.com/v1.0/me/messages/{url_quote(msg_id)}",
                         headers=headers,
                         params={
-                            "$select": "id,subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,webLink,conversationId,hasAttachments"
+                            "$select": "id,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,bodyPreview,webLink,conversationId,hasAttachments"
                         },
                         timeout=20,
                     )
@@ -12946,7 +13064,7 @@ def get_related_emails_data(list_id):
         parts_list = db_execute(
             """
             SELECT pl.id, pl.email_message_id, pl.email_conversation_id, pl.contact_id,
-                   c.email as contact_email
+                   pl.customer_id, c.email as contact_email
             FROM parts_lists pl
             LEFT JOIN contacts c ON c.id = pl.contact_id
             WHERE pl.id = ?
@@ -12959,7 +13077,7 @@ def get_related_emails_data(list_id):
 
         conversation_id = parts_list.get('email_conversation_id') if isinstance(parts_list, dict) else parts_list['email_conversation_id']
         source_message_id = parts_list.get('email_message_id') if isinstance(parts_list, dict) else parts_list['email_message_id']
-        contact_email = parts_list.get('contact_email') if isinstance(parts_list, dict) else parts_list.get('contact_email')
+        customer_emails = _get_parts_list_customer_emails(list_id, parts_list)
 
         conversation_ids = set()
         if conversation_id:
@@ -12968,7 +13086,7 @@ def get_related_emails_data(list_id):
         if source_message_id:
             message_ids.add(source_message_id)
 
-        if not conversation_ids and not message_ids and not contact_email:
+        if not conversation_ids and not message_ids and not customer_emails:
             return jsonify(success=True, emails=[], source_message_id=None, graph_connected=True)
 
         from routes.emails import (
@@ -13003,7 +13121,7 @@ def get_related_emails_data(list_id):
         for conv_id in conversation_ids:
             params = {
                 "$filter": f"conversationId eq '{conv_id}'",
-                "$select": "id,subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,conversationId",
+                "$select": "id,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,bodyPreview,conversationId",
                 "$orderby": "sentDateTime desc",
                 "$top": 50
             }
@@ -13020,18 +13138,23 @@ def get_related_emails_data(list_id):
                     msg['_is_source'] = False
                     all_emails.append(msg)
 
-        # 2. Search by customer contact email (finds recent emails even if thread broke)
-        if contact_email:
-            # Search for emails FROM this contact (customer replies)
+        # 2. Search by customer contact emails in either direction (finds recent emails even if thread broke)
+        for customer_email in customer_emails:
+            safe_email = customer_email.replace("'", "''")
             params = {
-                "$filter": f"from/emailAddress/address eq '{contact_email}'",
-                "$select": "id,subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,conversationId",
+                "$filter": (
+                    f"from/emailAddress/address eq '{safe_email}'"
+                    f" or toRecipients/any(r:r/emailAddress/address eq '{safe_email}')"
+                    f" or ccRecipients/any(r:r/emailAddress/address eq '{safe_email}')"
+                ),
+                "$select": "id,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,bodyPreview,conversationId",
                 "$orderby": "receivedDateTime desc",
-                "$top": 20
+                "$top": 20,
+                "$count": "true",
             }
             resp = requests.get(
                 "https://graph.microsoft.com/v1.0/me/messages",
-                headers=headers,
+                headers={**headers, "ConsistencyLevel": "eventual"},
                 params=params,
                 timeout=20,
             )
@@ -13039,7 +13162,10 @@ def get_related_emails_data(list_id):
                 data = resp.json()
                 messages = data.get("value", [])
                 for msg in messages:
+                    if not _message_matches_any_email(msg, [customer_email]):
+                        continue
                     msg['_is_source'] = False
+                    msg['_is_customer_match'] = True
                     all_emails.append(msg)
 
         # 3. Try to fetch the original source message directly
@@ -13048,7 +13174,7 @@ def get_related_emails_data(list_id):
             resp = requests.get(
                 f"https://graph.microsoft.com/v1.0/me/messages/{url_quote(msg_id)}",
                 headers=headers,
-                params={"$select": "id,subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,conversationId"},
+                params={"$select": "id,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,bodyPreview,conversationId"},
                 timeout=20,
             )
             if resp.status_code == 200:
@@ -13092,14 +13218,18 @@ def get_related_emails_data(list_id):
         response_emails = []
         for email_msg in unique_emails:
             from_addr = email_msg.get('from', {}).get('emailAddress', {}) if isinstance(email_msg.get('from'), dict) else {}
+            addresses = _graph_message_addresses(email_msg)
             response_emails.append({
                 "id": email_msg.get("id"),
                 "subject": email_msg.get("subject"),
                 "from_address": from_addr.get("address"),
                 "from_name": from_addr.get("name"),
+                "to_addresses": addresses["to_addresses"],
+                "cc_addresses": addresses["cc_addresses"],
                 "receivedDateTime": email_msg.get("receivedDateTime") or email_msg.get("sentDateTime"),
                 "receivedDateTime_display": _format_graph_datetime_display(email_msg.get("receivedDateTime") or email_msg.get("sentDateTime")),
                 "is_source": bool(email_msg.get("_is_source")),
+                "is_customer_match": bool(email_msg.get("_is_customer_match")),
             })
 
         return jsonify(

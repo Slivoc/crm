@@ -1465,6 +1465,34 @@ document.addEventListener('DOMContentLoaded', function() {
     // Email Quote
    // --- REFACTORED EMAIL QUOTE LOGIC ---
     let relatedEmailsLoaded = false;
+    let lastAutoReplyCc = [];
+    const relatedReplyEmailById = new Map();
+
+    function splitEmailList(value) {
+        return (value || '')
+            .split(/[;,]/)
+            .map(email => email.trim())
+            .filter(Boolean);
+    }
+
+    function mergeEmailLists(...lists) {
+        const merged = [];
+        const seen = new Set();
+        lists.flatMap(list => Array.isArray(list) ? list : splitEmailList(list)).forEach(email => {
+            const normalized = email.toLowerCase();
+            if (!normalized || seen.has(normalized)) {
+                return;
+            }
+            seen.add(normalized);
+            merged.push(email);
+        });
+        return merged;
+    }
+
+    function withoutEmails(sourceList, emailsToRemove) {
+        const removeSet = new Set((emailsToRemove || []).map(email => email.toLowerCase()));
+        return splitEmailList(sourceList).filter(email => !removeSet.has(email.toLowerCase()));
+    }
 
     async function loadRelatedEmailsForReply() {
         if (relatedEmailsLoaded) {
@@ -1475,6 +1503,7 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         replySelect.innerHTML = '<option value="">Send new email (no reply)</option>';
+        relatedReplyEmailById.clear();
         try {
             const response = await fetch(`/parts_list/parts-lists/${LIST_ID}/related-emails/data`);
             const result = await response.json();
@@ -1482,10 +1511,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
             const emails = result.emails || [];
+            let preferredReplyId = '';
             emails.forEach(email => {
                 if (!email.id) {
                     return;
                 }
+                relatedReplyEmailById.set(email.id, email);
                 const fromLabel = email.from_name ? `${email.from_name} <${email.from_address || ''}>` : (email.from_address || 'Unknown');
                 const dateLabel = email.receivedDateTime_display || '';
                 const subjectLabel = email.subject || '(No subject)';
@@ -1494,10 +1525,19 @@ document.addEventListener('DOMContentLoaded', function() {
                 option.textContent = `${subjectLabel} - ${fromLabel}${dateLabel ? ` (${dateLabel})` : ''}`;
                 if (email.is_source) {
                     option.textContent = `[Source] ${option.textContent}`;
+                    if (!preferredReplyId) {
+                        preferredReplyId = email.id;
+                    }
+                } else if (!preferredReplyId && email.is_customer_match) {
+                    preferredReplyId = email.id;
                 }
                 replySelect.appendChild(option);
             });
+            if (preferredReplyId) {
+                replySelect.value = preferredReplyId;
+            }
             relatedEmailsLoaded = true;
+            updateReplyModeState();
         } catch (error) {
             console.warn('Failed to load related emails for reply.', error);
         }
@@ -1560,7 +1600,18 @@ document.addEventListener('DOMContentLoaded', function() {
             toInput.disabled = Boolean(isReply);
         }
         if (ccInput) {
-            ccInput.disabled = Boolean(isReply);
+            const selectedEmail = isReply ? relatedReplyEmailById.get(replySelect.value) : null;
+            const manualCc = withoutEmails(ccInput.value, lastAutoReplyCc);
+            if (selectedEmail) {
+                const selectedCc = selectedEmail.cc_addresses || [];
+                const mergedCc = mergeEmailLists(manualCc, selectedCc);
+                ccInput.value = mergedCc.join(', ');
+                lastAutoReplyCc = selectedCc;
+            } else {
+                ccInput.value = manualCc.join(', ');
+                lastAutoReplyCc = [];
+            }
+            ccInput.disabled = false;
         }
         if (subjectInput) {
             if (isReply) {
@@ -1850,7 +1901,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
             document.getElementById('emailQuoteBody').innerHTML = `${buildEmailBodyHtml()}<p></p>`;
-            loadRelatedEmailsForReply();
+            await loadRelatedEmailsForReply();
             updateReplyModeState();
             new bootstrap.Modal(document.getElementById('emailQuoteModal')).show();
 
@@ -2022,10 +2073,8 @@ document.addEventListener('DOMContentLoaded', function() {
             const toEmails = document.getElementById('emailQuoteTo')?.value || '';
             const ccEmails = document.getElementById('emailQuoteCc')?.value || '';
             const sendAdminInternal = Boolean(document.getElementById('emailQuoteCcHarry')?.checked);
-            const ccList = ccEmails
-                .split(/[;,]/)
-                .map(email => email.trim())
-                .filter(Boolean);
+            const selectedReplyEmail = replyToMessageId ? relatedReplyEmailById.get(replyToMessageId) : null;
+            const ccList = mergeEmailLists(ccEmails, selectedReplyEmail?.cc_addresses || []);
             
             const finalCcEmails = ccList.join(', ');
 
@@ -2042,6 +2091,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     ? {
                         message_id: replyToMessageId,
                         html_body: bodyHtml,
+                        reply_all: true,
                         cc_emails: finalCcEmails
                     }
                     : {

@@ -210,6 +210,8 @@ def get_contacts_by_customer(customer_id, limit=None, offset=None):
         base_query += ", c.notes"
     if "timezone" in column_names:
         base_query += ", c.timezone"
+    if "linkedin_url" in column_names:
+        base_query += ", c.linkedin_url"
     if "updated_at" in column_names:
         base_query += ", c.updated_at"
 
@@ -245,6 +247,7 @@ def get_contacts_by_customer(customer_id, limit=None, offset=None):
         contact_dict['status_id'] = contact_dict.get('status_id', 1)
         contact_dict['notes'] = contact_dict.get('notes', '')
         contact_dict['timezone'] = contact_dict.get('timezone', 'UTC')
+        contact_dict['linkedin_url'] = contact_dict.get('linkedin_url', '')
 
         # Handle status information
         contact_dict['status_name'] = contact_dict.get('status_name', 'Active')
@@ -264,6 +267,7 @@ def get_contact_by_id(contact_id):
 
     query = """
         SELECT c.id, c.name, c.second_name, c.email, c.job_title, c.customer_id, c.notes, c.phone, c.status_id, c.timezone,
+               c.linkedin_url,
                cu.name as customer_name, cs.name as status_name, cs.color as status_color
         FROM contacts c
         LEFT JOIN customers cu ON c.customer_id = cu.id
@@ -294,9 +298,10 @@ def get_contact_by_id(contact_id):
                     'phone': result[7] or '',
                     'status_id': result[8] or 1,
                     'timezone': result[9] or 'UTC',
-                    'customer_name': result[10],
-                    'status_name': result[11] or 'Active',
-                    'status_color': result[12] or '#28a745'
+                    'linkedin_url': result[10] or '',
+                    'customer_name': result[11],
+                    'status_name': result[12] or 'Active',
+                    'status_color': result[13] or '#28a745'
                 }
 
             print(f"DEBUG: Final contact_dict: {contact_dict}")

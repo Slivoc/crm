@@ -461,7 +461,7 @@ def get_email_signature_by_id(signature_id):
     return None
 
 
-def update_contact(contact_id, name, second_name, email, job_title, phone=None, status_id=1, customer_id=None, timezone=None):
+def update_contact(contact_id, name, second_name, email, job_title, phone=None, status_id=1, customer_id=None, timezone=None, linkedin_url=None):
     """
     Update a contact with all editable fields
 
@@ -475,23 +475,24 @@ def update_contact(contact_id, name, second_name, email, job_title, phone=None, 
         status_id: Status ID (defaults to 1 - active)
         customer_id: Customer ID (optional - allows moving contact to different customer)
         timezone: Timezone (optional)
+        linkedin_url: LinkedIn profile URL (optional)
     """
     if customer_id is not None:
         # Update contact including customer_id (allows moving contact between customers)
         query = """
             UPDATE contacts
-            SET name = ?, second_name = ?, email = ?, job_title = ?, phone = ?, status_id = ?, customer_id = ?, timezone = ?, updated_at = CURRENT_TIMESTAMP
+            SET name = ?, second_name = ?, email = ?, job_title = ?, phone = ?, status_id = ?, customer_id = ?, timezone = ?, linkedin_url = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
         """
-        params = (name, second_name, email, job_title, phone, status_id, customer_id, timezone, contact_id)
+        params = (name, second_name, email, job_title, phone, status_id, customer_id, timezone, linkedin_url, contact_id)
     else:
         # Update contact without changing customer_id (maintains existing customer relationship)
         query = """
             UPDATE contacts
-            SET name = ?, second_name = ?, email = ?, job_title = ?, phone = ?, status_id = ?, timezone = ?, updated_at = CURRENT_TIMESTAMP
+            SET name = ?, second_name = ?, email = ?, job_title = ?, phone = ?, status_id = ?, timezone = ?, linkedin_url = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
         """
-        params = (name, second_name, email, job_title, phone, status_id, timezone, contact_id)
+        params = (name, second_name, email, job_title, phone, status_id, timezone, linkedin_url, contact_id)
 
     db_execute(query, params, commit=True)
 
@@ -917,7 +918,7 @@ def delete_contact(contact_id):
     finally:
         db.close()
 
-def add_contact_ajax(customer_id, name, second_name, email, job_title=None, phone=None, status_id=None):
+def add_contact_ajax(customer_id, name, second_name, email, job_title=None, phone=None, status_id=None, linkedin_url=None):
     """
     Add a contact via AJAX with improved error handling
     Returns contact_id if successful
@@ -947,8 +948,8 @@ def add_contact_ajax(customer_id, name, second_name, email, job_title=None, phon
         db.execute('BEGIN TRANSACTION')
 
         # Build insert query with RETURNING for Postgres
-        insert_query = 'INSERT INTO contacts (customer_id, name, second_name, email, job_title, phone, status_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
-        params = (customer_id, name, second_name, email, job_title, phone, status_id)
+        insert_query = 'INSERT INTO contacts (customer_id, name, second_name, email, job_title, phone, status_id, linkedin_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        params = (customer_id, name, second_name, email, job_title, phone, status_id, linkedin_url)
 
         if _using_postgres():
             insert_query += ' RETURNING id'

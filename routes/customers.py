@@ -1580,7 +1580,8 @@ def add_contact():
             email=data['email'],
             job_title=data.get('job_title', ''),
             phone=data.get('phone', ''),
-            status_id=status_id
+            status_id=status_id,
+            linkedin_url=data.get('linkedin_url', '')
         )
 
         # Get the added contact with status info
@@ -6847,7 +6848,8 @@ def edit_contact(contact_id):
                     'status_id': contact.get('status_id'),
                     'status_name': contact.get('status_name'),
                     'status_color': contact.get('status_color'),
-                    'timezone': contact.get('timezone', 'UTC')
+                    'timezone': contact.get('timezone', 'UTC'),
+                    'linkedin_url': contact.get('linkedin_url', '')
                 },
                 'statuses': statuses
             })
@@ -6863,6 +6865,7 @@ def edit_contact(contact_id):
             notes = data.get('notes')
             status_id = data.get('status_id')
             timezone = data.get('timezone')  # Get timezone from form data
+            linkedin_url = data.get('linkedin_url')
 
             # Update contact including status field and timezone
             with db_cursor(commit=True) as cur:
@@ -6874,11 +6877,12 @@ def edit_contact(contact_id):
                         customer_id = ?, notes = COALESCE(?, notes), 
                         status_id = COALESCE(?, status_id),
                         timezone = COALESCE(?, timezone),
+                        linkedin_url = ?,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                     ''',
                     (name, second_name, email, company, job_title, customer_id,
-                     notes, status_id, timezone, contact_id)
+                     notes, status_id, timezone, linkedin_url, contact_id)
                 )
 
             return jsonify({'success': True})
@@ -7065,7 +7069,8 @@ def update_contact_details(contact_id):
             phone=data.get('phone', ''),
             status_id=status_id,
             customer_id=customer_id,
-            timezone=data.get('timezone', '')  # Add timezone parameter
+            timezone=data.get('timezone', ''),  # Add timezone parameter
+            linkedin_url=data.get('linkedin_url', '')
         )
 
         return jsonify({

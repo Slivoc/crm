@@ -237,6 +237,12 @@
                                         (+{{ source_email.toRecipients|length - 1 }} more)
                                     {% endif %}
                                 {% endif %}
+                                {% if source_email.ccRecipients %}
+                                    | Cc: {{ source_email.ccRecipients[0].emailAddress.address if source_email.ccRecipients[0].emailAddress else 'Unknown' }}
+                                    {% if source_email.ccRecipients|length > 1 %}
+                                        (+{{ source_email.ccRecipients|length - 1 }} more)
+                                    {% endif %}
+                                {% endif %}
                             </div>
                             <div class="related-email-preview">
                                 {{ source_email.bodyPreview or 'No preview available' }}
@@ -254,6 +260,8 @@
                                 {{ email.subject or '(No subject)' }}
                                 {% if email._is_source_conversation %}
                                     <span class="badge bg-light text-dark border ms-2">Conversation</span>
+                                {% elif email._is_customer_match %}
+                                    <span class="badge bg-light text-dark border ms-2">Customer Match</span>
                                 {% else %}
                                     <span class="badge bg-light text-dark border ms-2">Quote Email</span>
                                 {% endif %}
@@ -264,6 +272,12 @@
                                     | To: {{ email.toRecipients[0].emailAddress.address if email.toRecipients[0].emailAddress else 'Unknown' }}
                                     {% if email.toRecipients|length > 1 %}
                                         (+{{ email.toRecipients|length - 1 }} more)
+                                    {% endif %}
+                                {% endif %}
+                                {% if email.ccRecipients %}
+                                    | Cc: {{ email.ccRecipients[0].emailAddress.address if email.ccRecipients[0].emailAddress else 'Unknown' }}
+                                    {% if email.ccRecipients|length > 1 %}
+                                        (+{{ email.ccRecipients|length - 1 }} more)
                                     {% endif %}
                                 {% endif %}
                             </div>

@@ -35,6 +35,10 @@
             <input type="text" id="contact_job_title" name="job_title" class="form-control">
           </div>
           <div class="col-md-6">
+            <label for="contact_linkedin_url" class="form-label">LinkedIn URL</label>
+            <input type="url" id="contact_linkedin_url" name="linkedin_url" class="form-control" placeholder="https://www.linkedin.com/in/...">
+          </div>
+          <div class="col-md-6">
             <label for="contact_status" class="form-label">Status</label>
             <select id="contact_status" name="status_id" class="form-select">
               <!-- Options will be loaded dynamically -->
@@ -65,6 +69,7 @@
               <th>Job Title</th>
               <th>Email</th>
               <th>Phone</th>
+              <th>LinkedIn</th>
               <th>Status</th>
               <th>Actions</th>
             </tr>
@@ -110,6 +115,15 @@
                 {% endif %}
               </td>
               <td>
+                {% if contact.linkedin_url %}
+                <a href="{{ contact.linkedin_url }}" target="_blank" rel="noopener" class="text-decoration-none contact-linkedin-url">
+                  <i class="bi bi-linkedin me-1"></i>Profile
+                </a>
+                {% else %}
+                <span class="contact-linkedin-url">-</span>
+                {% endif %}
+              </td>
+              <td>
                 <span class="badge contact-status" data-status-id="{{ contact.status_id or 2 }}" style="background-color: {{ contact.status_color or '#28a745' }};">
                   {{ contact.status_name or 'Active' }}
                 </span>
@@ -141,7 +155,7 @@
             </tr>
             {% else %}
             <tr id="no-contacts-row">
-              <td colspan="6" class="text-center py-4 text-muted">No contacts available for this customer.</td>
+              <td colspan="7" class="text-center py-4 text-muted">No contacts available for this customer.</td>
             </tr>
             {% endfor %}
           </tbody>
@@ -187,6 +201,10 @@
               <div class="col-12">
                 <label for="edit_job_title" class="form-label">Job Title</label>
                 <input type="text" id="edit_job_title" name="job_title" class="form-control">
+              </div>
+              <div class="col-12">
+                <label for="edit_linkedin_url" class="form-label">LinkedIn URL</label>
+                <input type="url" id="edit_linkedin_url" name="linkedin_url" class="form-control" placeholder="https://www.linkedin.com/in/...">
               </div>
               <!-- Add this after the edit_job_title field in the modal -->
 <div class="col-md-6">
@@ -471,6 +489,7 @@ const handleEditContact = async (contactId) => {
       document.getElementById('edit_email').value = contact.email || '';
       document.getElementById('edit_phone').value = contact.phone || '';
       document.getElementById('edit_job_title').value = contact.job_title || '';
+      document.getElementById('edit_linkedin_url').value = contact.linkedin_url || '';
       document.getElementById('edit_status').value = contact.status_id || 1;
       document.getElementById('edit_timezone').value = contact.timezone || 'UTC';
 
@@ -522,6 +541,7 @@ const handleSaveContact = async () => {
     email: form.email.value.trim(),
     phone: form.phone.value.trim(),
     job_title: form.job_title.value.trim(),
+    linkedin_url: form.linkedin_url.value.trim(),
     status_id: form.status_id.value || 1,
     customer_id: form.customer_id.value || null,
     timezone: form.timezone.value || 'UTC'
@@ -764,6 +784,7 @@ const handleSaveContact = async () => {
       email: form.email.value.trim(),
       phone: form.phone.value.trim(),
       job_title: form.job_title.value.trim(),
+      linkedin_url: form.linkedin_url.value.trim(),
       status_id: form.status_id.value || null
     };
 
@@ -811,7 +832,7 @@ const handleSaveContact = async () => {
 
         const tbody = document.getElementById('contacts-tbody');
         if (tbody.children.length === 0) {
-          tbody.innerHTML = '<tr id="no-contacts-row"><td colspan="6" class="text-center py-4 text-muted">No contacts available for this customer.</td></tr>';
+          tbody.innerHTML = '<tr id="no-contacts-row"><td colspan="7" class="text-center py-4 text-muted">No contacts available for this customer.</td></tr>';
         }
       } else {
         alert('Failed to delete contact');
@@ -858,6 +879,11 @@ const handleSaveContact = async () => {
         ${contact.phone ?
           `<a href="tel:${contact.phone}" class="text-decoration-none contact-phone"><i class="bi bi-telephone me-1"></i>${contact.phone}</a>` :
           '<span class="contact-phone">—</span>'}
+      </td>
+      <td>
+        ${contact.linkedin_url ?
+          `<a href="${contact.linkedin_url}" target="_blank" rel="noopener" class="text-decoration-none contact-linkedin-url"><i class="bi bi-linkedin me-1"></i>Profile</a>` :
+          '<span class="contact-linkedin-url">-</span>'}
       </td>
       <td><span class="badge contact-status" data-status-id="${contact.status_id}" style="background-color: ${status.color};">${status.name}</span></td>
       <td>
@@ -917,6 +943,22 @@ const handleSaveContact = async () => {
       }
     } else {
       emailParent.innerHTML = '<span class="contact-email">—</span>';
+    }
+
+    const linkedinEl = row.querySelector('.contact-linkedin-url');
+    const linkedinParent = linkedinEl.closest('a') || linkedinEl.parentElement;
+
+    if (contactData.linkedin_url) {
+      if (linkedinParent.tagName === 'A') {
+        linkedinEl.innerHTML = '<i class="bi bi-linkedin me-1"></i>Profile';
+        linkedinParent.href = contactData.linkedin_url;
+        linkedinParent.target = '_blank';
+        linkedinParent.rel = 'noopener';
+      } else {
+        linkedinParent.innerHTML = `<a href="${contactData.linkedin_url}" target="_blank" rel="noopener" class="text-decoration-none contact-linkedin-url"><i class="bi bi-linkedin me-1"></i>Profile</a>`;
+      }
+    } else {
+      linkedinParent.innerHTML = '<span class="contact-linkedin-url">-</span>';
     }
 
     const statusEl = row.querySelector('.contact-status');

@@ -346,6 +346,7 @@ openEditModal: async function() {
         $('#edit_preview_email').val(contact.email || '');
         $('#edit_preview_phone').val(contact.phone || '');
         $('#edit_preview_job_title').val(contact.job_title || '');
+        $('#edit_preview_linkedin_url').val(contact.linkedin_url || '');
 
         // Ensure statuses are loaded before setting the value
         if (this.contactStatuses.length === 0) {
@@ -407,6 +408,7 @@ openEditModal: async function() {
             email: $('#edit_preview_email').val().trim(),
             phone: $('#edit_preview_phone').val().trim(),
             job_title: $('#edit_preview_job_title').val().trim(),
+            linkedin_url: $('#edit_preview_linkedin_url').val().trim(),
             status_id: $('#edit_preview_status').val(),
             timezone: $('#edit_preview_timezone').val() || 'UTC'
         };
@@ -436,6 +438,7 @@ openEditModal: async function() {
                     email: formData.email,
                     phone: formData.phone,
                     job_title: formData.job_title,
+                    linkedin_url: formData.linkedin_url,
                     status_id: formData.status_id,
                     timezone: formData.timezone
                 };
@@ -665,6 +668,15 @@ openEditModal: async function() {
             $('#contact-job-title-container').show();
         } else {
             $('#contact-job-title-container').hide();
+        }
+
+        if (contact.linkedin_url) {
+            $('#contact-modal-linkedin')
+                .attr('href', contact.linkedin_url)
+                .text('View profile');
+            $('#contact-linkedin-container').show();
+        } else {
+            $('#contact-linkedin-container').hide();
         }
 
         // Build URL for full contact page with optional salesperson_id

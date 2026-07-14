@@ -1428,8 +1428,9 @@ def send_customer_quote_email(list_id):
             result = send_graph_reply(
                 reply_to_message_id,
                 body_html,
-                reply_all=False,
+                reply_all=True,
                 user_id=current_user.id,
+                cc_emails=cc_emails or None,
             )
         else:
             result = send_graph_email(
