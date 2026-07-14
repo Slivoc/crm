@@ -123,6 +123,71 @@
             border-radius: 0 0 8px 8px;
         }
 
+        .pinned-parts-status-filters {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+            padding: 0.65rem 1rem;
+            background: #ffffff;
+            border-bottom: 1px solid #eef0f2;
+        }
+
+        .pinned-parts-status-filter {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            border: 1px solid #d7dee8;
+            border-radius: 999px;
+            background: #f8f9fa;
+            color: #495057;
+            padding: 0.25rem 0.65rem;
+            font-size: 0.82rem;
+            font-weight: 600;
+            line-height: 1.2;
+            transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .pinned-parts-status-filter:hover,
+        .pinned-parts-status-filter:focus {
+            border-color: #0d6efd;
+            box-shadow: 0 0 0 0.15rem rgba(13, 110, 253, 0.12);
+        }
+
+        .pinned-parts-status-filter.is-active {
+            background: #0d6efd;
+            border-color: #0d6efd;
+            color: #ffffff;
+        }
+
+        .pinned-parts-status-filter-count {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 1.35rem;
+            min-height: 1.35rem;
+            padding: 0 0.35rem;
+            border-radius: 999px;
+            background: rgba(73, 80, 87, 0.12);
+            font-size: 0.74rem;
+        }
+
+        .pinned-parts-status-filter.is-active .pinned-parts-status-filter-count {
+            background: rgba(255, 255, 255, 0.22);
+        }
+
+        .pinned-parts-row.is-status-hidden,
+        .pinned-parts-panel.is-status-hidden {
+            display: none;
+        }
+
+        .pinned-parts-empty-filter {
+            display: none;
+        }
+
+        .pinned-parts-empty-filter.is-visible {
+            display: block;
+        }
+
         .pinned-parts-count {
             background: var(--pinned-accent);
             color: #ffffff;
@@ -1461,14 +1526,37 @@ input:-webkit-autofill {
                         {% endif %}
                     </div>
                 </div>
+                {% if pinned_parts_lists %}
+                    <button type="button" class="btn btn-outline-secondary btn-sm" data-pinned-status-reset>
+                        <i class="bi bi-arrow-counterclockwise me-1"></i>All Statuses
+                    </button>
+                {% endif %}
                 <a href="{{ url_for('parts_list.parts_list') }}" class="btn btn-outline-primary btn-sm">
                     <i class="bi bi-list me-1"></i>All Lists
                 </a>
                 <button type="button" class="btn-close ms-0" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
+            {% if pinned_parts_lists %}
+                <div class="pinned-parts-status-filters" aria-label="Filter pinned parts lists by status">
+                    {% for status_group in pinned_parts_lists|groupby('status_name') %}
+                        <button type="button"
+                                class="pinned-parts-status-filter is-active"
+                                data-pinned-status-filter
+                                data-status-name="{{ status_group.grouper }}"
+                                aria-pressed="true">
+                            <span>{{ status_group.grouper }}</span>
+                            <span class="pinned-parts-status-filter-count">{{ status_group.list|length }}</span>
+                        </button>
+                    {% endfor %}
+                </div>
+            {% endif %}
             <div class="modal-body">
                 {% if pinned_parts_lists %}
-                    <div class="pinned-parts-grid">
+                    <div class="pinned-parts-empty-filter text-center text-muted py-5" data-pinned-empty-filter>
+                        <i class="bi bi-funnel display-6 d-block mb-2"></i>
+                        No pinned lists match the selected statuses.
+                    </div>
+                    <div class="pinned-parts-grid" data-pinned-parts-grid>
                         {% for customer_group in pinned_parts_lists|groupby('customer_name') %}
                             <section class="pinned-parts-panel" aria-label="{{ customer_group.grouper }} pinned parts lists">
                                 <div class="pinned-parts-panel-header">
@@ -1481,6 +1569,7 @@ input:-webkit-autofill {
                                         <div class="pinned-parts-row"
                                              data-pinned-list-row
                                              data-list-id="{{ pinned_list.id }}"
+                                             data-status-name="{{ pinned_list.status_name }}"
                                              data-update-url="{{ url_for('parts_list.update_parts_list_header', list_id=pinned_list.id) }}"
                                              data-comment-updated-at="{{ pinned_list.date_modified.isoformat() if pinned_list.date_modified else '' }}">
                                             <a class="pinned-parts-main-link"
@@ -2900,6 +2989,61 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const rows = Array.from(modal.querySelectorAll('[data-pinned-list-row]'));
     if (!rows.length) return;
+
+    const statusFilters = Array.from(modal.querySelectorAll('[data-pinned-status-filter]'));
+    const resetStatusButton = modal.querySelector('[data-pinned-status-reset]');
+    const emptyFilterMessage = modal.querySelector('[data-pinned-empty-filter]');
+    const activeStatuses = new Set(statusFilters.map((filter) => filter.dataset.statusName || ''));
+
+    const updatePinnedStatusFilters = () => {
+        const visiblePanels = new Set();
+        let visibleRows = 0;
+
+        rows.forEach((row) => {
+            const isVisible = activeStatuses.has(row.dataset.statusName || '');
+            row.classList.toggle('is-status-hidden', !isVisible);
+            if (isVisible) {
+                visibleRows += 1;
+                const panel = row.closest('.pinned-parts-panel');
+                if (panel) visiblePanels.add(panel);
+            }
+        });
+
+        modal.querySelectorAll('.pinned-parts-panel').forEach((panel) => {
+            panel.classList.toggle('is-status-hidden', !visiblePanels.has(panel));
+            const count = panel.querySelector('.pinned-parts-count');
+            if (count) {
+                count.textContent = String(panel.querySelectorAll('[data-pinned-list-row]:not(.is-status-hidden)').length);
+            }
+        });
+
+        statusFilters.forEach((filter) => {
+            const isActive = activeStatuses.has(filter.dataset.statusName || '');
+            filter.classList.toggle('is-active', isActive);
+            filter.setAttribute('aria-pressed', String(isActive));
+        });
+
+        emptyFilterMessage?.classList.toggle('is-visible', visibleRows === 0);
+    };
+
+    statusFilters.forEach((filter) => {
+        filter.addEventListener('click', () => {
+            const statusName = filter.dataset.statusName || '';
+            if (activeStatuses.has(statusName)) {
+                activeStatuses.delete(statusName);
+            } else {
+                activeStatuses.add(statusName);
+            }
+            updatePinnedStatusFilters();
+        });
+    });
+
+    resetStatusButton?.addEventListener('click', () => {
+        statusFilters.forEach((filter) => activeStatuses.add(filter.dataset.statusName || ''));
+        updatePinnedStatusFilters();
+    });
+
+    updatePinnedStatusFilters();
 
     const formatRelativeDate = (date) => {
         const now = new Date();
