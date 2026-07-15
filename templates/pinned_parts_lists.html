@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+
+{% block title %}Pinned Parts Forecast{% endblock %}
+
+{% block content %}
+<style>
+    .forecast-page { --forecast-accent: #0d6efd; }
+    .forecast-toolbar, .forecast-summary { background: #fff; border: 1px solid #dce4ef; border-radius: .75rem; }
+    .forecast-summary { border-top: 3px solid var(--forecast-accent); }
+    .forecast-table-wrap { background: #fff; border: 1px solid #dce4ef; border-radius: .75rem; overflow: visible; }
+    .forecast-table { margin-bottom: 0; }
+    .forecast-table > :not(caption) > * > * { padding: .8rem .7rem; vertical-align: middle; }
+    .forecast-row { --heat: #adb5bd; --heat-bg: #f8f9fa; border-left: 4px solid var(--heat); }
+    .forecast-row:hover { background: var(--heat-bg); }
+    .forecast-row.heat-recent { --heat: #198754; --heat-bg: #eef8f2; }
+    .forecast-row.heat-warm { --heat: #d39e00; --heat-bg: #fff9e8; }
+    .forecast-row.heat-stale { --heat: #dc3545; --heat-bg: #fdf0f1; }
+    .forecast-name { color: #212529; font-weight: 650; text-decoration: none; }
+    .forecast-name:hover { color: #0d6efd; }
+    .forecast-chip { display: inline-flex; padding: .2rem .48rem; border-radius: 999px; background: #eaf2ff; color: #0b5ed7; font-size: .75rem; font-weight: 600; }
+    .forecast-field { min-width: 7.5rem; }
+    .forecast-amount { min-width: 9rem; }
+    .forecast-comment { min-width: 14rem; resize: vertical; }
+    .forecast-save-state { min-height: 1.15rem; font-size: .72rem; }
+    .forecast-customer-heading { display: none; }
+    .is-grouped .forecast-customer-heading { display: table-row; }
+    .forecast-customer-heading td { background: #edf3fb; color: #344054; font-weight: 700; border-top: 2px solid #d5e0ee; }
+    @media (max-width: 991.98px) {
+        .forecast-table-wrap { overflow-x: auto; }
+        .forecast-table { min-width: 1120px; }
+    }
+</style>
+
+<div class="container-fluid py-4 forecast-page" data-forecast-page>
+    <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-3">
+        <div>
+            <h1 class="h3 mb-1"><i class="bi bi-pin-angle-fill text-primary me-2"></i>Pinned Parts Forecast</h1>
+            <p class="text-muted mb-0">Manage probability, timing and expected value separately from the live quoted value.</p>
+        </div>
+        <div class="btn-group" role="group" aria-label="List layout">
+            <button class="btn btn-primary" type="button" data-layout="value"><i class="bi bi-sort-down me-1"></i>Value order</button>
+            <button class="btn btn-outline-primary" type="button" data-layout="customer"><i class="bi bi-people me-1"></i>Group by customer</button>
+        </div>
+    </div>
+
+    {% set totals = namespace(expected=0, actual=0, weighted=0) %}
+    {% for item in forecast_lists %}
+        {% set totals.expected = totals.expected + ((item.expected_amount_gbp or 0)|float) %}
+        {% set totals.actual = totals.actual + ((item.quoted_value_gbp or 0)|float) %}
+        {% set totals.weighted = totals.weighted + (((item.expected_amount_gbp or 0)|float) * ((item.likelihood_score or 0)|float) / 100) %}
+    {% endfor %}
+    <div class="row g-3 mb-3">
+        <div class="col-sm-6 col-xl-3"><div class="forecast-summary p-3"><div class="small text-muted">Pinned lists</div><div class="h4 mb-0">{{ forecast_lists|length }}</div></div></div>
+        <div class="col-sm-6 col-xl-3"><div class="forecast-summary p-3"><div class="small text-muted">Expected amount</div><div class="h4 mb-0">&pound;{{ "{:,.2f}".format(totals.expected) }}</div></div></div>
+        <div class="col-sm-6 col-xl-3"><div class="forecast-summary p-3"><div class="small text-muted">Likelihood weighted</div><div class="h4 mb-0 text-primary">&pound;{{ "{:,.2f}".format(totals.weighted) }}</div></div></div>
+        <div class="col-sm-6 col-xl-3"><div class="forecast-summary p-3"><div class="small text-muted">Actual quoted value</div><div class="h4 mb-0 text-success">&pound;{{ "{:,.2f}".format(totals.actual) }}</div></div></div>
+    </div>
+
+    <div class="forecast-toolbar d-flex flex-wrap align-items-center gap-2 p-3 mb-3">
+        <div class="input-group input-group-sm" style="max-width: 22rem;">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input class="form-control" type="search" placeholder="Search list or customer" data-forecast-search>
+        </div>
+        <select class="form-select form-select-sm" style="max-width: 13rem;" data-status-filter>
+            <option value="">All statuses</option>
+            {% for status_group in forecast_lists|groupby('status_name') %}<option value="{{ status_group.grouper }}">{{ status_group.grouper }} ({{ status_group.list|length }})</option>{% endfor %}
+        </select>
+        <span class="small text-muted ms-auto"><span class="text-success">●</span> 3 days &nbsp; <span class="text-warning">●</span> 30 days &nbsp; <span class="text-danger">●</span> older</span>
+    </div>
+
+    <div class="forecast-table-wrap" data-table-wrap>
+        <table class="table forecast-table">
+            <thead class="table-light"><tr><th>List</th><th>Customer</th><th>Status</th><th class="text-end">Actual value</th><th>Likelihood</th><th>Expected date</th><th>Expected amount</th><th>Comment</th></tr></thead>
+            <tbody data-forecast-body>
+            {% if forecast_lists %}
+                {% for customer_group in forecast_lists|groupby('customer_name') %}
+                    <tr class="forecast-customer-heading" data-customer-heading="{{ customer_group.grouper|lower }}"><td colspan="8">{{ customer_group.grouper }} <span class="badge text-bg-light ms-1">{{ customer_group.list|length }}</span></td></tr>
+                    {% for item in customer_group.list %}
+                    <tr class="forecast-row" data-forecast-row data-customer="{{ item.customer_name|lower }}" data-status="{{ item.status_name }}" data-value="{{ (item.expected_amount_gbp or 0)|float }}" data-modified="{{ item.date_modified.isoformat() if item.date_modified else '' }}" data-update-url="{{ url_for('parts_list.update_parts_list_header', list_id=item.id) }}">
+                        <td><a class="forecast-name" href="{{ url_for('parts_list.view_parts_list', list_id=item.id) }}">{{ item.name }}</a><div class="small text-muted">#{{ item.id }} · <span data-recency-label></span></div></td>
+                        <td>{{ item.customer_name }}</td>
+                        <td><span class="forecast-chip">{{ item.status_name }}</span></td>
+                        <td class="text-end fw-semibold text-success">&pound;{{ "{:,.2f}".format((item.quoted_value_gbp or 0)|float) }}</td>
+                        <td><div class="input-group input-group-sm forecast-field"><input class="form-control text-end" type="number" min="0" max="100" step="1" value="{{ item.likelihood_score if item.likelihood_score is not none else '' }}" data-field="likelihood_score"><span class="input-group-text">%</span></div></td>
+                        <td><input class="form-control form-control-sm forecast-field" type="date" value="{{ item.expected_date.isoformat() if item.expected_date else '' }}" data-field="expected_date"></td>
+                        <td><div class="input-group input-group-sm forecast-amount"><span class="input-group-text">£</span><input class="form-control text-end" type="number" min="0" step="0.01" value="{{ item.expected_amount_gbp if item.expected_amount_gbp is not none else '' }}" data-field="expected_amount_gbp"></div><div class="forecast-save-state text-muted" data-save-state></div></td>
+                        <td><textarea class="form-control form-control-sm forecast-comment" rows="2" placeholder="Add a comment..." data-field="notes">{{ item.notes or '' }}</textarea></td>
+                    </tr>
+                    {% endfor %}
+                {% endfor %}
+            {% else %}
+                <tr><td colspan="8" class="text-center text-muted py-5"><i class="bi bi-pin-angle display-6 d-block mb-2"></i>No pinned lists yet.</td></tr>
+            {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+(function () {
+    const page = document.querySelector('[data-forecast-page]');
+    if (!page) return;
+    const body = page.querySelector('[data-forecast-body]');
+    const rows = Array.from(page.querySelectorAll('[data-forecast-row]'));
+    const headings = Array.from(page.querySelectorAll('[data-customer-heading]'));
+    const search = page.querySelector('[data-forecast-search]');
+    const statusFilter = page.querySelector('[data-status-filter]');
+    let layout = 'value';
+
+    const relativeAge = (value) => {
+        const date = value ? new Date(value) : null;
+        if (!date || Number.isNaN(date.getTime())) return { cls: 'heat-stale', label: 'No update date' };
+        const days = Math.max(0, Math.floor((new Date() - date) / 86400000));
+        if (days <= 3) return { cls: 'heat-recent', label: days === 0 ? 'Updated today' : `Updated ${days}d ago` };
+        if (days <= 30) return { cls: 'heat-warm', label: `Updated ${days}d ago` };
+        return { cls: 'heat-stale', label: `Updated ${days}d ago` };
+    };
+    rows.forEach(row => {
+        const age = relativeAge(row.dataset.modified);
+        row.classList.add(age.cls);
+        row.querySelector('[data-recency-label]').textContent = age.label;
+    });
+
+    const applyFilters = () => {
+        const needle = (search.value || '').trim().toLowerCase();
+        const status = statusFilter.value;
+        rows.forEach(row => {
+            const matchesText = !needle || row.textContent.toLowerCase().includes(needle);
+            row.hidden = !matchesText || (!!status && row.dataset.status !== status);
+        });
+        headings.forEach(heading => {
+            heading.hidden = !rows.some(row => !row.hidden && row.dataset.customer === heading.dataset.customerHeading);
+        });
+    };
+    search.addEventListener('input', applyFilters);
+    statusFilter.addEventListener('change', applyFilters);
+
+    const setLayout = (nextLayout) => {
+        layout = nextLayout;
+        page.querySelector('[data-table-wrap]').classList.toggle('is-grouped', layout === 'customer');
+        page.querySelectorAll('[data-layout]').forEach(button => {
+            const active = button.dataset.layout === layout;
+            button.classList.toggle('btn-primary', active);
+            button.classList.toggle('btn-outline-primary', !active);
+        });
+        const nodes = layout === 'value'
+            ? [...rows].sort((a, b) => Number(b.dataset.value) - Number(a.dataset.value))
+            : headings.flatMap(heading => [heading, ...rows.filter(row => row.dataset.customer === heading.dataset.customerHeading)]);
+        nodes.forEach(node => body.appendChild(node));
+        applyFilters();
+    };
+    page.querySelectorAll('[data-layout]').forEach(button => button.addEventListener('click', () => setLayout(button.dataset.layout)));
+    setLayout('value');
+
+    rows.forEach(row => {
+        const state = row.querySelector('[data-save-state]');
+        const save = (input) => {
+            const payload = { [input.dataset.field]: input.value };
+            state.textContent = 'Saving…';
+            fetch(row.dataset.updateUrl, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) })
+                .then(response => response.json().then(data => ({ ok: response.ok, data })))
+                .then(({ok, data}) => {
+                    if (!ok || !data.success) throw new Error(data.message || 'Save failed');
+                    if (input.dataset.field === 'expected_amount_gbp') row.dataset.value = input.value || '0';
+                    state.textContent = 'Saved';
+                    setTimeout(() => { if (state.textContent === 'Saved') state.textContent = ''; }, 1200);
+                })
+                .catch(error => { state.textContent = error.message; state.classList.add('text-danger'); });
+        };
+        row.querySelectorAll('[data-field]').forEach(input => {
+            let timer;
+            input.addEventListener('input', () => { clearTimeout(timer); state.classList.remove('text-danger'); state.textContent = 'Unsaved'; timer = setTimeout(() => save(input), input.tagName === 'TEXTAREA' ? 700 : 400); });
+            input.addEventListener('change', () => { clearTimeout(timer); save(input); });
+        });
+    });
+})();
+</script>
+{% endblock %}

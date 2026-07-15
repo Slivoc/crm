@@ -56,6 +56,52 @@ AI_PARTS_HEADER_LINES = 20
 AI_PARTS_HEADER_CHAR_LIMIT = 2000
 
 
+@parts_list_bp.route('/parts-lists/pinned')
+def pinned_parts_lists():
+    """Expanded forecast view for the current salesperson's pinned lists."""
+    salesperson_id = getattr(g, 'current_salesperson_id', None)
+    rows = []
+    if salesperson_id:
+        rows = db_execute(
+            """
+            SELECT pl.id,
+                   pl.name,
+                   pl.notes,
+                   pl.date_modified,
+                   pl.likelihood_score,
+                   pl.expected_date,
+                   pl.expected_amount_gbp,
+                   COALESCE(c.name, 'Unassigned Customer') AS customer_name,
+                   COALESCE(pls.name, 'Unknown') AS status_name,
+                   (SELECT COALESCE(SUM(
+                       CASE WHEN cql.quoted_status = 'quoted'
+                                  AND COALESCE(cql.is_no_bid::int, 0) = 0
+                                  AND cql.quote_price_gbp > 0
+                            THEN cql.quote_price_gbp * COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0)
+                            ELSE 0 END
+                   ), 0)
+                    FROM parts_list_lines pll
+                    LEFT JOIN customer_quote_lines cql ON cql.parts_list_line_id = pll.id
+                    WHERE pll.parts_list_id = pl.id) AS quoted_value_gbp
+            FROM parts_lists pl
+            LEFT JOIN customers c ON c.id = pl.customer_id
+            LEFT JOIN parts_list_statuses pls ON pls.id = pl.status_id
+            WHERE COALESCE(pl.is_pinned, FALSE) = TRUE
+              AND pl.salesperson_id = ?
+            ORDER BY COALESCE(pl.expected_amount_gbp, 0) DESC,
+                     pl.date_modified DESC,
+                     pl.id DESC
+            """,
+            (salesperson_id,),
+            fetch='all',
+        ) or []
+
+    return render_template(
+        'pinned_parts_lists.html',
+        forecast_lists=[dict(row) for row in rows],
+    )
+
+
 def _execute_with_cursor(cur, query, params=None):
     """Execute a query on the given cursor with Postgres placeholder translation."""
     prepared = query.replace('?', '%s') if os.getenv('DATABASE_URL', '').startswith(('postgres://', 'postgresql://')) else query
@@ -7674,10 +7720,33 @@ def update_parts_list_header(list_id):
         fields = []
         params = []
 
-        for key in ('name', 'customer_id', 'contact_id', 'salesperson_id', 'status_id', 'notes', 'project_id', 'is_pinned'):
+        for key in ('name', 'customer_id', 'contact_id', 'salesperson_id', 'status_id', 'notes', 'project_id', 'is_pinned', 'likelihood_score', 'expected_date', 'expected_amount_gbp'):
             if key in data:
+                value = data.get(key)
+                if key == 'likelihood_score':
+                    if value in ('', None):
+                        value = None
+                    else:
+                        try:
+                            value = int(value)
+                        except (TypeError, ValueError):
+                            return jsonify(success=False, message="Likelihood must be a whole number"), 400
+                        if value < 0 or value > 100:
+                            return jsonify(success=False, message="Likelihood must be between 0 and 100"), 400
+                elif key == 'expected_amount_gbp':
+                    if value in ('', None):
+                        value = None
+                    else:
+                        try:
+                            value = Decimal(str(value))
+                        except Exception:
+                            return jsonify(success=False, message="Expected amount must be a number"), 400
+                        if value < 0:
+                            return jsonify(success=False, message="Expected amount cannot be negative"), 400
+                elif key == 'expected_date' and value == '':
+                    value = None
                 fields.append(f"{key} = ?")
-                params.append(data.get(key))
+                params.append(value)
 
         if not fields:
             return jsonify(success=False, message="No fields to update"), 400

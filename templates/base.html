@@ -1534,6 +1534,9 @@ input:-webkit-autofill {
                 <a href="{{ url_for('parts_list.parts_list') }}" class="btn btn-outline-primary btn-sm">
                     <i class="bi bi-list me-1"></i>All Lists
                 </a>
+                <a href="{{ url_for('parts_list.pinned_parts_lists') }}" class="btn btn-primary btn-sm">
+                    <i class="bi bi-arrows-angle-expand me-1"></i>Expanded View
+                </a>
                 <button type="button" class="btn-close ms-0" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             {% if pinned_parts_lists %}
