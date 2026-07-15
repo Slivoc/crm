@@ -9,7 +9,6 @@ from flask import (
     jsonify,
     current_app,
     Response,
-    logging,
     current_app,
     has_request_context,
 
@@ -21,6 +20,7 @@ import base64
 import quopri
 from email.utils import parsedate_to_datetime
 # Standard library imports
+import logging
 import os
 import html
 import email  # Import the base email library
