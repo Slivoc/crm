@@ -67,6 +67,7 @@ def pinned_parts_lists():
             SELECT pl.id,
                    pl.name,
                    pl.notes,
+                   pl.date_created,
                    pl.date_modified,
                    pl.likelihood_score,
                    pl.expected_date,
@@ -96,10 +97,80 @@ def pinned_parts_lists():
             fetch='all',
         ) or []
 
+    today = date.today()
+    month_end = today.replace(day=monthrange(today.year, today.month)[1])
+    weighted_this_month = sum(
+        Decimal(str(row['expected_amount_gbp'] or 0))
+        * Decimal(str(row['likelihood_score'] or 0)) / Decimal('100')
+        for row in rows
+        if row['expected_date'] and today <= row['expected_date'] <= month_end
+    )
+
     return render_template(
         'pinned_parts_lists.html',
         forecast_lists=[dict(row) for row in rows],
+        weighted_this_month=weighted_this_month,
+        forecast_month_label=today.strftime('%B %Y'),
     )
+
+
+@parts_list_bp.route('/parts-lists/<int:list_id>/forecast-lines')
+def pinned_forecast_lines(list_id):
+    """Return current quoted line values for the expected-amount helper."""
+    salesperson_id = getattr(g, 'current_salesperson_id', None)
+    if not salesperson_id:
+        return jsonify(success=False, message="No salesperson is linked to this user"), 403
+
+    parts_list = db_execute(
+        "SELECT id FROM parts_lists WHERE id = ? AND salesperson_id = ?",
+        (list_id, salesperson_id),
+        fetch='one',
+    )
+    if not parts_list:
+        return jsonify(success=False, message="Parts list not found"), 404
+
+    rows = db_execute(
+        """
+        SELECT pll.id,
+               COALESCE(NULLIF(pll.customer_part_number, ''), pll.base_part_number, '') AS requested_part_number,
+               COALESCE(NULLIF(cql.quoted_part_number, ''),
+                        NULLIF(cql.display_part_number, ''),
+                        NULLIF(pll.customer_part_number, ''),
+                        pll.base_part_number,
+                        '') AS quoted_part_number,
+               COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0) AS quantity,
+               cql.quote_price_gbp AS unit_price_gbp,
+               cql.quote_price_gbp * COALESCE(NULLIF(pll.chosen_qty, 0), pll.quantity, 0) AS line_value_gbp
+        FROM parts_list_lines pll
+        JOIN LATERAL (
+            SELECT quoted_part_number, display_part_number, quote_price_gbp
+            FROM customer_quote_lines
+            WHERE parts_list_line_id = pll.id
+              AND quoted_status = 'quoted'
+              AND COALESCE(is_no_bid::int, 0) = 0
+              AND COALESCE(quote_price_gbp, 0) > 0
+            ORDER BY date_modified DESC NULLS LAST, id DESC
+            LIMIT 1
+        ) cql ON TRUE
+        WHERE pll.parts_list_id = ?
+        ORDER BY pll.line_number ASC, pll.id ASC
+        """,
+        (list_id,),
+        fetch='all',
+    ) or []
+
+    lines = []
+    for row in rows:
+        line = dict(row)
+        lines.append({
+            'id': line['id'],
+            'requested_part_number': line['requested_part_number'],
+            'quoted_part_number': line['quoted_part_number'],
+            'quantity': float(line['quantity'] or 0),
+            'unit_price_gbp': float(line['unit_price_gbp'] or 0),
+            'line_value_gbp': float(line['line_value_gbp'] or 0),
+        })
+    return jsonify(success=True, lines=lines)
 
 
 def _execute_with_cursor(cur, query, params=None):

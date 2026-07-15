@@ -52,7 +52,7 @@
     <div class="row g-3 mb-3">
         <div class="col-sm-6 col-xl-3"><div class="forecast-summary p-3"><div class="small text-muted">Pinned lists</div><div class="h4 mb-0">{{ forecast_lists|length }}</div></div></div>
         <div class="col-sm-6 col-xl-3"><div class="forecast-summary p-3"><div class="small text-muted">Expected amount</div><div class="h4 mb-0">&pound;{{ "{:,.2f}".format(totals.expected) }}</div></div></div>
-        <div class="col-sm-6 col-xl-3"><div class="forecast-summary p-3"><div class="small text-muted">Likelihood weighted</div><div class="h4 mb-0 text-primary">&pound;{{ "{:,.2f}".format(totals.weighted) }}</div></div></div>
+        <div class="col-sm-6 col-xl-3"><div class="forecast-summary p-3"><div class="small text-muted">Weighted due · {{ forecast_month_label }}</div><div class="h4 mb-0 text-primary">&pound;{{ "{:,.2f}".format(weighted_this_month|float) }}</div></div></div>
         <div class="col-sm-6 col-xl-3"><div class="forecast-summary p-3"><div class="small text-muted">Actual quoted value</div><div class="h4 mb-0 text-success">&pound;{{ "{:,.2f}".format(totals.actual) }}</div></div></div>
     </div>
 
@@ -70,29 +70,56 @@
 
     <div class="forecast-table-wrap" data-table-wrap>
         <table class="table forecast-table">
-            <thead class="table-light"><tr><th>List</th><th>Customer</th><th>Status</th><th class="text-end">Actual value</th><th>Likelihood</th><th>Expected date</th><th>Expected amount</th><th>Comment</th></tr></thead>
+            <thead class="table-light"><tr><th>List</th><th>Created</th><th>Customer</th><th>Status</th><th class="text-end">Actual value</th><th>Likelihood</th><th>Expected date</th><th>Expected amount</th><th>Comment</th></tr></thead>
             <tbody data-forecast-body>
             {% if forecast_lists %}
                 {% for customer_group in forecast_lists|groupby('customer_name') %}
-                    <tr class="forecast-customer-heading" data-customer-heading="{{ customer_group.grouper|lower }}"><td colspan="8">{{ customer_group.grouper }} <span class="badge text-bg-light ms-1">{{ customer_group.list|length }}</span></td></tr>
+                    <tr class="forecast-customer-heading" data-customer-heading="{{ customer_group.grouper|lower }}"><td colspan="9">{{ customer_group.grouper }} <span class="badge text-bg-light ms-1">{{ customer_group.list|length }}</span></td></tr>
                     {% for item in customer_group.list %}
                     <tr class="forecast-row" data-forecast-row data-customer="{{ item.customer_name|lower }}" data-status="{{ item.status_name }}" data-value="{{ (item.expected_amount_gbp or 0)|float }}" data-modified="{{ item.date_modified.isoformat() if item.date_modified else '' }}" data-update-url="{{ url_for('parts_list.update_parts_list_header', list_id=item.id) }}">
                         <td><a class="forecast-name" href="{{ url_for('parts_list.view_parts_list', list_id=item.id) }}">{{ item.name }}</a><div class="small text-muted">#{{ item.id }} · <span data-recency-label></span></div></td>
+                        <td class="text-nowrap"><span class="small fw-semibold">{{ item.date_created.strftime('%d %b %Y') if item.date_created else '—' }}</span></td>
                         <td>{{ item.customer_name }}</td>
                         <td><span class="forecast-chip">{{ item.status_name }}</span></td>
                         <td class="text-end fw-semibold text-success">&pound;{{ "{:,.2f}".format((item.quoted_value_gbp or 0)|float) }}</td>
                         <td><div class="input-group input-group-sm forecast-field"><input class="form-control text-end" type="number" min="0" max="100" step="1" value="{{ item.likelihood_score if item.likelihood_score is not none else '' }}" data-field="likelihood_score"><span class="input-group-text">%</span></div></td>
                         <td><input class="form-control form-control-sm forecast-field" type="date" value="{{ item.expected_date.isoformat() if item.expected_date else '' }}" data-field="expected_date"></td>
-                        <td><div class="input-group input-group-sm forecast-amount"><span class="input-group-text">£</span><input class="form-control text-end" type="number" min="0" step="0.01" value="{{ item.expected_amount_gbp if item.expected_amount_gbp is not none else '' }}" data-field="expected_amount_gbp"></div><div class="forecast-save-state text-muted" data-save-state></div></td>
-                        <td><textarea class="form-control form-control-sm forecast-comment" rows="2" placeholder="Add a comment..." data-field="notes">{{ item.notes or '' }}</textarea></td>
+                        <td><div class="input-group input-group-sm forecast-amount"><span class="input-group-text">£</span><input class="form-control text-end" type="number" min="0" step="0.01" value="{{ item.expected_amount_gbp if item.expected_amount_gbp is not none else '' }}" data-field="expected_amount_gbp"><button class="btn btn-outline-primary" type="button" data-amount-helper data-helper-url="{{ url_for('parts_list.pinned_forecast_lines', list_id=item.id) }}" title="Calculate from quoted lines" aria-label="Calculate expected amount from quoted lines"><i class="bi bi-calculator"></i></button></div><div class="forecast-save-state text-muted" data-save-state></div></td>
+                        <td><textarea class="form-control form-control-sm forecast-comment" rows="2" placeholder="Add a comment..." data-field="notes">{{ item.notes or '' }}</textarea><div class="small text-muted mt-1" data-comment-date>{{ 'Commented ' ~ item.date_modified.strftime('%d %b %Y') if item.notes and item.date_modified else 'No comment date' }}</div></td>
                     </tr>
                     {% endfor %}
                 {% endfor %}
             {% else %}
-                <tr><td colspan="8" class="text-center text-muted py-5"><i class="bi bi-pin-angle display-6 d-block mb-2"></i>No pinned lists yet.</td></tr>
+                <tr><td colspan="9" class="text-center text-muted py-5"><i class="bi bi-pin-angle display-6 d-block mb-2"></i>No pinned lists yet.</td></tr>
             {% endif %}
             </tbody>
         </table>
+    </div>
+</div>
+
+<div class="modal fade" id="expectedAmountHelperModal" tabindex="-1" aria-labelledby="expectedAmountHelperModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div><h5 class="modal-title" id="expectedAmountHelperModalLabel"><i class="bi bi-calculator me-2"></i>Expected Amount Helper</h5><div class="small text-muted" data-helper-list-name></div></div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-0">
+                <div class="text-center text-muted py-5" data-helper-loading><span class="spinner-border spinner-border-sm me-2"></span>Loading quoted lines…</div>
+                <div class="table-responsive d-none" data-helper-table-wrap>
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-light"><tr><th style="width: 3rem;"><input class="form-check-input" type="checkbox" checked data-helper-toggle-all aria-label="Select all lines"></th><th>Requested part</th><th>Quoted part number</th><th class="text-end">Qty</th><th class="text-end">Unit price</th><th class="text-end">Value</th></tr></thead>
+                        <tbody data-helper-lines></tbody>
+                    </table>
+                </div>
+                <div class="text-center text-muted py-5 d-none" data-helper-empty>No quoted lines with a value were found.</div>
+                <div class="alert alert-danger m-3 d-none" data-helper-error></div>
+            </div>
+            <div class="modal-footer justify-content-between">
+                <div><span class="text-muted me-2">Selected total</span><strong class="fs-5 text-success" data-helper-total>£0.00</strong></div>
+                <div><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button><button type="button" class="btn btn-primary" data-helper-use-total><i class="bi bi-check2 me-1"></i>Use calculation</button></div>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -162,6 +189,7 @@
                 .then(({ok, data}) => {
                     if (!ok || !data.success) throw new Error(data.message || 'Save failed');
                     if (input.dataset.field === 'expected_amount_gbp') row.dataset.value = input.value || '0';
+                    if (input.dataset.field === 'notes') row.querySelector('[data-comment-date]').textContent = input.value.trim() ? `Commented ${new Date().toLocaleDateString('en-GB', {day: '2-digit', month: 'short', year: 'numeric'})}` : 'No comment date';
                     state.textContent = 'Saved';
                     setTimeout(() => { if (state.textContent === 'Saved') state.textContent = ''; }, 1200);
                 })
@@ -172,6 +200,55 @@
             input.addEventListener('input', () => { clearTimeout(timer); state.classList.remove('text-danger'); state.textContent = 'Unsaved'; timer = setTimeout(() => save(input), input.tagName === 'TEXTAREA' ? 700 : 400); });
             input.addEventListener('change', () => { clearTimeout(timer); save(input); });
         });
+    });
+
+    const helperElement = document.getElementById('expectedAmountHelperModal');
+    const helperModal = helperElement ? bootstrap.Modal.getOrCreateInstance(helperElement) : null;
+    let helperTargetInput = null;
+    const helperTotal = helperElement?.querySelector('[data-helper-total]');
+    const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[character]));
+    const recalculateHelper = () => {
+        const total = Array.from(helperElement.querySelectorAll('[data-helper-line]:checked')).reduce((sum, checkbox) => sum + Number(checkbox.dataset.value || 0), 0);
+        helperTotal.textContent = total.toLocaleString('en-GB', {style: 'currency', currency: 'GBP'});
+        helperTotal.dataset.value = total.toFixed(2);
+    };
+    page.querySelectorAll('[data-amount-helper]').forEach(button => button.addEventListener('click', () => {
+        const row = button.closest('[data-forecast-row]');
+        helperTargetInput = row.querySelector('[data-field="expected_amount_gbp"]');
+        helperElement.querySelector('[data-helper-list-name]').textContent = row.querySelector('.forecast-name').textContent.trim();
+        helperElement.querySelector('[data-helper-loading]').classList.remove('d-none');
+        helperElement.querySelector('[data-helper-table-wrap]').classList.add('d-none');
+        helperElement.querySelector('[data-helper-empty]').classList.add('d-none');
+        helperElement.querySelector('[data-helper-error]').classList.add('d-none');
+        helperElement.querySelector('[data-helper-lines]').innerHTML = '';
+        helperModal.show();
+        fetch(button.dataset.helperUrl)
+            .then(response => response.json().then(data => ({ok: response.ok, data})))
+            .then(({ok, data}) => {
+                if (!ok || !data.success) throw new Error(data.message || 'Unable to load quoted lines');
+                const tbody = helperElement.querySelector('[data-helper-lines]');
+                data.lines.forEach(line => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `<td><input class="form-check-input" type="checkbox" checked data-helper-line data-value="${Number(line.line_value_gbp)}"></td><td>${escapeHtml(line.requested_part_number || '—')}</td><td class="fw-semibold">${escapeHtml(line.quoted_part_number || '—')}</td><td class="text-end">${Number(line.quantity).toLocaleString()}</td><td class="text-end">${Number(line.unit_price_gbp).toLocaleString('en-GB', {style:'currency', currency:'GBP'})}</td><td class="text-end fw-semibold">${Number(line.line_value_gbp).toLocaleString('en-GB', {style:'currency', currency:'GBP'})}</td>`;
+                    tbody.appendChild(tr);
+                });
+                helperElement.querySelector('[data-helper-loading]').classList.add('d-none');
+                helperElement.querySelector('[data-helper-table-wrap]').classList.toggle('d-none', !data.lines.length);
+                helperElement.querySelector('[data-helper-empty]').classList.toggle('d-none', !!data.lines.length);
+                helperElement.querySelector('[data-helper-toggle-all]').checked = true;
+                recalculateHelper();
+            })
+            .catch(error => { helperElement.querySelector('[data-helper-loading]').classList.add('d-none'); const errorBox = helperElement.querySelector('[data-helper-error]'); errorBox.textContent = error.message; errorBox.classList.remove('d-none'); });
+    }));
+    helperElement?.addEventListener('change', event => {
+        if (event.target.matches('[data-helper-toggle-all]')) helperElement.querySelectorAll('[data-helper-line]').forEach(input => input.checked = event.target.checked);
+        if (event.target.matches('[data-helper-line], [data-helper-toggle-all]')) recalculateHelper();
+    });
+    helperElement?.querySelector('[data-helper-use-total]')?.addEventListener('click', () => {
+        if (!helperTargetInput) return;
+        helperTargetInput.value = helperTotal.dataset.value || '0.00';
+        helperTargetInput.dispatchEvent(new Event('change', {bubbles: true}));
+        helperModal.hide();
     });
 })();
 </script>
