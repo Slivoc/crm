@@ -168,6 +168,88 @@ def _get_parts_list_customer_emails(list_id, parts_list):
 
 
 
+
+def _fetch_graph_mail_folder_ids(access_token, *, max_folders=100):
+    """Return mailbox folder ids for Graph fallbacks that must search moved messages."""
+    import requests
+    from urllib.parse import quote as url_quote
+
+    folder_ids = []
+    seen = set()
+
+    def _append_folders(list_url, params=None):
+        nonlocal folder_ids
+        url = list_url
+        while url and len(folder_ids) < max_folders:
+            resp = requests.get(
+                url,
+                headers=graph_headers(access_token),
+                params=params,
+                timeout=20,
+            )
+            if resp.status_code != 200:
+                logging.warning(
+                    "Graph folder fallback could not list mail folders: %s %s",
+                    resp.status_code,
+                    resp.text[:300],
+                )
+                break
+            data = resp.json() if resp.content else {}
+            for folder in data.get('value', []) if isinstance(data, dict) else []:
+                folder_id = folder.get('id')
+                if folder_id and folder_id not in seen:
+                    seen.add(folder_id)
+                    folder_ids.append(folder_id)
+                    if len(folder_ids) >= max_folders:
+                        break
+            url = data.get('@odata.nextLink') if isinstance(data, dict) else None
+            params = None
+
+    root_params = {
+        "$select": "id,displayName",
+        "$top": min(max_folders, 100),
+        "includeHiddenFolders": "true",
+    }
+    _append_folders("https://graph.microsoft.com/v1.0/me/mailFolders", root_params)
+
+    for folder_id in list(folder_ids):
+        if len(folder_ids) >= max_folders:
+            break
+        _append_folders(
+            f"https://graph.microsoft.com/v1.0/me/mailFolders/{url_quote(folder_id, safe='')}/childFolders",
+            root_params,
+        )
+
+    return folder_ids
+
+
+def _fetch_graph_messages_from_folders(access_token, folder_ids, params, *, top_per_folder=20):
+    """Run the same message query inside individual folders to catch moved messages."""
+    import requests
+    from urllib.parse import quote as url_quote
+
+    messages = []
+    query_params = dict(params or {})
+    if top_per_folder:
+        query_params['$top'] = min(int(query_params.get('$top') or top_per_folder), top_per_folder)
+    headers = graph_headers(access_token, extra={"ConsistencyLevel": "eventual"} if query_params.get('$count') else None)
+    for folder_id in folder_ids or []:
+        try:
+            resp = requests.get(
+                f"https://graph.microsoft.com/v1.0/me/mailFolders/{url_quote(folder_id, safe='')}/messages",
+                headers=headers,
+                params=query_params,
+                timeout=20,
+            )
+            if resp.status_code == 200:
+                data = resp.json() if resp.content else {}
+                messages.extend(data.get('value', []) if isinstance(data, dict) else [])
+            else:
+                logging.debug("Graph folder message fallback failed for folder %s: %s %s", folder_id, resp.status_code, resp.text[:200])
+        except Exception:
+            logging.exception("Graph folder message fallback errored for folder %s", folder_id)
+    return messages
+
 def _build_supplier_email_groups(list_id, supplier_line_emails):
     """Return every parts-list line with its recorded supplier emails attached."""
     lines = db_execute(
@@ -8536,14 +8618,22 @@ def get_supplier_emails(list_id, line_id):
                 se.recipient_email,
                 se.recipient_name,
                 se.notes,
-                u.username as sent_by_username
+                u.username as sent_by_username,
+                EXISTS (
+                    SELECT 1
+                    FROM parts_list_supplier_quote_lines sql
+                    JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                    WHERE sql.parts_list_line_id = se.parts_list_line_id
+                      AND sq.supplier_id = se.supplier_id
+                      AND sq.parts_list_id = ?
+                ) as used_for_quote
             FROM parts_list_line_supplier_emails se
             JOIN suppliers s ON s.id = se.supplier_id
             LEFT JOIN users u ON u.id = se.sent_by_user_id
             WHERE se.parts_list_line_id = ?
             ORDER BY se.date_sent DESC
             """,
-            (line_id,),
+            (list_id, line_id),
             fetch='all',
         )
 
@@ -12956,7 +13046,15 @@ def get_related_emails(list_id):
                 se.recipient_email,
                 se.recipient_name,
                 se.notes,
-                u.username as sent_by_username
+                u.username as sent_by_username,
+                EXISTS (
+                    SELECT 1
+                    FROM parts_list_supplier_quote_lines sql
+                    JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
+                    WHERE sql.parts_list_line_id = se.parts_list_line_id
+                      AND sq.supplier_id = se.supplier_id
+                      AND sq.parts_list_id = pll.parts_list_id
+                ) as used_for_quote
             FROM parts_list_line_supplier_emails se
             JOIN parts_list_lines pll ON pll.id = se.parts_list_line_id
             JOIN suppliers s ON s.id = se.supplier_id
@@ -13037,6 +13135,13 @@ def get_related_emails(list_id):
         all_emails = []
         if graph_connected:
             headers = graph_headers(token['access_token'])
+            fallback_folder_ids = None
+
+            def _folder_ids_for_fallback():
+                nonlocal fallback_folder_ids
+                if fallback_folder_ids is None:
+                    fallback_folder_ids = _fetch_graph_mail_folder_ids(token['access_token'])
+                return fallback_folder_ids
             translated_message_ids = translate_graph_message_ids(token['access_token'], message_ids)
             source_lookup_ids = {source_message_id}
             if source_message_id in translated_message_ids:
@@ -13058,13 +13163,21 @@ def get_related_emails(list_id):
                         params=params,
                         timeout=20,
                     )
+                    messages = []
                     if resp.status_code == 200:
                         data = resp.json()
                         messages = data.get("value", [])
-                        for msg in messages:
-                            msg['_source_conversation_id'] = conv_id
-                            msg['_is_source_conversation'] = (conv_id == conversation_id)
-                            all_emails.append(msg)
+                    if not messages:
+                        messages = _fetch_graph_messages_from_folders(
+                            token['access_token'],
+                            _folder_ids_for_fallback(),
+                            params,
+                            top_per_folder=20,
+                        )
+                    for msg in messages:
+                        msg['_source_conversation_id'] = conv_id
+                        msg['_is_source_conversation'] = (conv_id == conversation_id)
+                        all_emails.append(msg)
                 except Exception as e:
                     logging.warning(f"Failed to fetch conversation {conv_id}: {e}")
 
@@ -13088,15 +13201,24 @@ def get_related_emails(list_id):
                         params=params,
                         timeout=20,
                     )
+                    messages = []
                     if resp.status_code == 200:
                         data = resp.json()
-                        for msg in data.get("value", []):
-                            if not _message_matches_any_email(msg, [customer_email]):
-                                continue
-                            msg['_source_conversation_id'] = msg.get('conversationId')
-                            msg['_is_source_conversation'] = False
-                            msg['_is_customer_match'] = True
-                            all_emails.append(msg)
+                        messages = data.get("value", [])
+                    if not messages:
+                        messages = _fetch_graph_messages_from_folders(
+                            token['access_token'],
+                            _folder_ids_for_fallback(),
+                            params,
+                            top_per_folder=10,
+                        )
+                    for msg in messages:
+                        if not _message_matches_any_email(msg, [customer_email]):
+                            continue
+                        msg['_source_conversation_id'] = msg.get('conversationId')
+                        msg['_is_source_conversation'] = False
+                        msg['_is_customer_match'] = True
+                        all_emails.append(msg)
                 except Exception as e:
                     logging.warning(f"Failed to fetch customer email matches for parts list {list_id}: {e}")
 
@@ -13260,6 +13382,13 @@ def get_related_emails_data(list_id):
             source_lookup_ids.add(translated_message_ids[source_message_id])
         fetch_message_ids = set(message_ids) | set(translated_message_ids.values())
         all_emails = []
+        fallback_folder_ids = None
+
+        def _folder_ids_for_fallback():
+            nonlocal fallback_folder_ids
+            if fallback_folder_ids is None:
+                fallback_folder_ids = _fetch_graph_mail_folder_ids(token['access_token'])
+            return fallback_folder_ids
 
         # 1. Search by conversation ID (finds emails in the same thread)
         for conv_id in conversation_ids:
@@ -13275,12 +13404,20 @@ def get_related_emails_data(list_id):
                 params=params,
                 timeout=20,
             )
+            messages = []
             if resp.status_code == 200:
                 data = resp.json()
                 messages = data.get("value", [])
-                for msg in messages:
-                    msg['_is_source'] = False
-                    all_emails.append(msg)
+            if not messages:
+                messages = _fetch_graph_messages_from_folders(
+                    token['access_token'],
+                    _folder_ids_for_fallback(),
+                    params,
+                    top_per_folder=20,
+                )
+            for msg in messages:
+                msg['_is_source'] = False
+                all_emails.append(msg)
 
         # 2. Search by customer contact emails in either direction (finds recent emails even if thread broke)
         for customer_email in customer_emails:
@@ -13302,15 +13439,23 @@ def get_related_emails_data(list_id):
                 params=params,
                 timeout=20,
             )
+            messages = []
             if resp.status_code == 200:
                 data = resp.json()
                 messages = data.get("value", [])
-                for msg in messages:
-                    if not _message_matches_any_email(msg, [customer_email]):
-                        continue
-                    msg['_is_source'] = False
-                    msg['_is_customer_match'] = True
-                    all_emails.append(msg)
+            if not messages:
+                messages = _fetch_graph_messages_from_folders(
+                    token['access_token'],
+                    _folder_ids_for_fallback(),
+                    params,
+                    top_per_folder=10,
+                )
+            for msg in messages:
+                if not _message_matches_any_email(msg, [customer_email]):
+                    continue
+                msg['_is_source'] = False
+                msg['_is_customer_match'] = True
+                all_emails.append(msg)
 
         # 3. Try to fetch the original source message directly
         source_found = False
