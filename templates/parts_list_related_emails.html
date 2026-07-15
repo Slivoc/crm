@@ -192,6 +192,40 @@
     font-size: 0.875rem;
     color: #6c757d;
 }
+
+.supplier-line-group {
+    border-bottom: 1px solid #e9ecef;
+}
+
+.supplier-line-group:last-child {
+    border-bottom: none;
+}
+
+.supplier-line-header {
+    padding: 0.75rem 1rem;
+    background: #fbfcfd;
+    border-bottom: 1px solid #f1f3f5;
+}
+
+.supplier-line-title {
+    font-weight: 700;
+    color: #212529;
+}
+
+.supplier-line-meta {
+    font-size: 0.8rem;
+    color: #6c757d;
+}
+
+.supplier-line-emails {
+    padding-left: 0.75rem;
+}
+
+.supplier-line-empty {
+    padding: 0.75rem 1rem 1rem 1rem;
+    font-size: 0.875rem;
+    color: #868e96;
+}
 </style>
 {% endblock %}
 
@@ -356,38 +390,60 @@
                     {% endif %}
                 </h5>
                 <div class="supplier-emails-list">
-                    {% for email in supplier_line_emails %}
-                    <div class="supplier-email-item">
-                        <div class="supplier-email-info">
-                            <i class="bi bi-envelope me-1"></i>
-                            {{ email.supplier_name }}
-                            {% if email.part_number %}
-                                - {{ email.part_number }}
-                            {% endif %}
-                        </div>
-                        <div class="supplier-email-meta">
-                            {% if email.email_subject %}
-                                <div><strong>Subject:</strong> {{ email.email_subject }}</div>
-                            {% endif %}
-                            <div>
-                                {% if email.recipient_email %}
-                                    To: {{ email.recipient_email }}
+                    {% for line in supplier_email_groups %}
+                    <div class="supplier-line-group">
+                        <div class="supplier-line-header">
+                            <div class="supplier-line-title">
+                                {% if line.line_number %}
+                                    Line {{ line.line_number }} ·
                                 {% endif %}
-                                {% if email.recipient_name %}
-                                    ({{ email.recipient_name }})
+                                {{ line.part_number or 'No part number' }}
+                                {% if line.emails %}
+                                    <span class="badge bg-light text-dark border ms-2">{{ line.emails|length }} email{{ '' if line.emails|length == 1 else 's' }}</span>
                                 {% endif %}
                             </div>
-                            {% if email.date_sent %}
-                                <div>Sent: {{ email.date_sent.strftime('%b %d, %Y %I:%M %p') }}</div>
-                            {% endif %}
-                            {% if email.sent_by_username %}
-                                <div>By: {{ email.sent_by_username }}</div>
-                            {% endif %}
+                            <div class="supplier-line-meta">
+                                {% if line.quantity %}Qty {{ line.quantity }}{% endif %}
+                                {% if line.description %}{{ ' · ' if line.quantity else '' }}{{ line.description }}{% endif %}
+                            </div>
                         </div>
+                        {% if line.emails %}
+                            <div class="supplier-line-emails">
+                                {% for email in line.emails %}
+                                <div class="supplier-email-item">
+                                    <div class="supplier-email-info">
+                                        <i class="bi bi-envelope me-1"></i>
+                                        {{ email.supplier_name }}
+                                    </div>
+                                    <div class="supplier-email-meta">
+                                        {% if email.email_subject %}
+                                            <div><strong>Subject:</strong> {{ email.email_subject }}</div>
+                                        {% endif %}
+                                        <div>
+                                            {% if email.recipient_email %}
+                                                To: {{ email.recipient_email }}
+                                            {% endif %}
+                                            {% if email.recipient_name %}
+                                                ({{ email.recipient_name }})
+                                            {% endif %}
+                                        </div>
+                                        {% if email.date_sent %}
+                                            <div>Sent: {{ email.date_sent.strftime('%b %d, %Y %I:%M %p') }}</div>
+                                        {% endif %}
+                                        {% if email.sent_by_username %}
+                                            <div>By: {{ email.sent_by_username }}</div>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        {% else %}
+                            <div class="supplier-line-empty">No supplier emails recorded for this line yet.</div>
+                        {% endif %}
                     </div>
                     {% endfor %}
 
-                    {% if not supplier_line_emails %}
+                    {% if not supplier_email_groups %}
                         <div class="no-data-message">
                             <i class="bi bi-envelope-open"></i>
                             <p>No supplier emails found.</p>
