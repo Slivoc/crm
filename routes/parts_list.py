@@ -167,6 +167,54 @@ def _get_parts_list_customer_emails(list_id, parts_list):
     return normalized
 
 
+
+def _build_supplier_email_groups(list_id, supplier_line_emails):
+    """Return every parts-list line with its recorded supplier emails attached."""
+    lines = db_execute(
+        """
+        SELECT
+            id as parts_list_line_id,
+            line_number,
+            COALESCE(NULLIF(customer_part_number, ''), base_part_number) as part_number,
+            quantity,
+            description
+        FROM parts_list_lines
+        WHERE parts_list_id = ?
+        ORDER BY line_number ASC, id ASC
+        """,
+        (list_id,),
+        fetch='all',
+    ) or []
+
+    grouped = []
+    by_line_id = {}
+    for line in lines:
+        line_dict = dict(line)
+        line_dict['emails'] = []
+        grouped.append(line_dict)
+        by_line_id[line_dict.get('parts_list_line_id')] = line_dict
+
+    unassigned = []
+    for email_row in supplier_line_emails or []:
+        email_dict = dict(email_row)
+        group = by_line_id.get(email_dict.get('parts_list_line_id'))
+        if group is None:
+            unassigned.append(email_dict)
+        else:
+            group['emails'].append(email_dict)
+
+    if unassigned:
+        grouped.append({
+            'parts_list_line_id': None,
+            'line_number': None,
+            'part_number': 'Unassigned / removed lines',
+            'quantity': None,
+            'description': None,
+            'emails': unassigned,
+        })
+
+    return grouped
+
 def _translate_message_id_for_current_graph_user(message_id):
     message_id = (message_id or '').strip()
     if not message_id:
@@ -12846,7 +12894,7 @@ def get_related_emails(list_id):
         # Get parts list with email tracking fields
         parts_list = db_execute(
             """
-            SELECT pl.id, pl.name, pl.email_message_id, pl.email_conversation_id,
+            SELECT pl.id, pl.name, pl.notes, pl.email_message_id, pl.email_conversation_id,
                    pl.customer_id, pl.contact_id, c.email as contact_email
             FROM parts_lists pl
             LEFT JOIN contacts c ON c.id = pl.contact_id
@@ -12865,9 +12913,9 @@ def get_related_emails(list_id):
 
         # Get customer info for breadcrumbs
         customer_name = None
-        if parts_list.get('customer_id'):
-            customer = db_execute("SELECT name FROM customers WHERE id = ?", (parts_list['customer_id'],), fetch='one')
-            customer_name = customer['name'] if customer else None
+        if _safe_row_get(parts_list, 'customer_id'):
+            customer = db_execute("SELECT name FROM customers WHERE id = ?", (_safe_row_get(parts_list, 'customer_id'),), fetch='one')
+            customer_name = _safe_row_get(customer, 'name') if customer else None
         customer_emails = _get_parts_list_customer_emails(list_id, parts_list)
 
         # Get supplier quotes with their email tracking
@@ -12897,7 +12945,10 @@ def get_related_emails(list_id):
             SELECT
                 se.id,
                 se.parts_list_line_id,
-                COALESCE(pll.customer_part_number, pll.base_part_number) as part_number,
+                pll.line_number,
+                COALESCE(NULLIF(pll.customer_part_number, ''), pll.base_part_number) as part_number,
+                pll.quantity,
+                pll.description,
                 se.supplier_id,
                 s.name as supplier_name,
                 se.date_sent,
@@ -12911,7 +12962,7 @@ def get_related_emails(list_id):
             JOIN suppliers s ON s.id = se.supplier_id
             LEFT JOIN users u ON u.id = se.sent_by_user_id
             WHERE pll.parts_list_id = ?
-            ORDER BY se.date_sent DESC
+            ORDER BY pll.line_number ASC, se.date_sent DESC, se.id DESC
             """,
             (list_id,),
             fetch='all',
@@ -12949,6 +13000,7 @@ def get_related_emails(list_id):
                                    conversation_emails=[],
                                    supplier_quote_emails=[dict(sq) for sq in (supplier_quotes or [])],
                                    supplier_line_emails=[dict(se) for se in (supplier_line_emails or [])],
+                                   supplier_email_groups=_build_supplier_email_groups(list_id, supplier_line_emails),
                                    has_email_tracking=False,
                                    graph_connected=True)
 
@@ -13130,6 +13182,7 @@ def get_related_emails(list_id):
                                conversation_emails=unique_emails,
                                supplier_quote_emails=[dict(sq) for sq in (supplier_quotes or [])],
                                supplier_line_emails=[dict(se) for se in (supplier_line_emails or [])],
+                               supplier_email_groups=_build_supplier_email_groups(list_id, supplier_line_emails),
                                has_email_tracking=bool(conversation_id or source_message_id or message_ids),
                                graph_connected=graph_connected)
 
