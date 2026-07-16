@@ -93,6 +93,14 @@
     .pin-icon-btn:hover {
         background: rgba(255, 193, 7, 0.12);
     }
+
+    .bulk-toolbar {
+        position: sticky;
+        top: 0;
+        z-index: 3;
+        background: #f8f9fa;
+        border-bottom: 1px solid #dee2e6;
+    }
 </style>
 <div class="container-fluid mt-4">
     <div class="row mb-3 align-items-center">
@@ -272,6 +280,20 @@
                     <small class="text-muted">Defaults to lists created in the last 45 days.</small>
                 </div>
 
+                <div class="col-md-3">
+                    <label for="olderThanFilter" class="form-label">Inactive for</label>
+                    <div class="input-group">
+                    <select id="olderThanFilter" class="form-select" onchange="filterByAge(this.value)">
+                        <option value="">Recent date range</option>
+                        {% for days, label in [(30, '30+ days'), (60, '60+ days'), (90, '90+ days'), (180, '6+ months'), (365, '1+ year')] %}
+                            <option value="{{ days }}" {% if selected_older_than_days == days %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                    <button class="btn btn-outline-warning" type="button" onclick="reviewOldQuoted()" title="Show quoted lists inactive for the selected period">Quoted cleanup</button>
+                    </div>
+                    <small class="text-muted">Uses the last modified date and searches all history.</small>
+                </div>
+
             </div>
         </div>
     </div>
@@ -331,11 +353,23 @@
             </div>
         </div>
         <div class="card-body table-container">
+            <div class="bulk-toolbar px-3 py-2 d-flex flex-wrap align-items-center gap-2">
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="selectVisibleListsBtn">
+                    <i class="bi bi-check2-square me-1"></i>Select visible
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="clearSelectedListsBtn">Clear</button>
+                <span class="small text-muted me-auto"><strong id="selectedListsCount">0</strong> selected</span>
+                <select class="form-select form-select-sm" id="bulkStatusSelect" style="width: auto; min-width: 150px;">
+                    <option value="">Choose status...</option>
+                    {% for status in statuses %}<option value="{{ status.id }}">{{ status.name }}</option>{% endfor %}
+                </select>
+                <button type="button" class="btn btn-sm btn-primary" id="applyBulkStatusBtn" disabled>Update selected</button>
+            </div>
             <div class="table-responsive">
                 <table class="table table-hover align-middle mb-0" id="partsListsTable">
                     <thead>
     <tr>
-        <th></th>
+        <th class="text-center"><input class="form-check-input" type="checkbox" id="selectAllLists" aria-label="Select all visible lists"></th>
         <th class="text-nowrap sortable-header" data-sort-type="number">List # <i class="bi bi-arrow-down-up sort-icon"></i></th>
         <th class="sortable-header" data-sort-type="text">Name <i class="bi bi-arrow-down-up sort-icon"></i></th>
         <th class="sortable-header" data-sort-type="text">Customer <i class="bi bi-arrow-down-up sort-icon"></i></th>
@@ -353,8 +387,9 @@
                     <tbody>
                         {% for list in lists %}
                        <tr class="parts-list-row" data-detail-row="list-details-{{ list.id }}" style="cursor: pointer;" onclick="window.location='{{ url_for('parts_list.view_parts_list', list_id=list.id) }}';">
-    <td onclick="event.stopPropagation();">
-        <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#list-details-{{ list.id }}" aria-expanded="false" aria-controls="list-details-{{ list.id }}" title="Show line statuses">
+    <td class="text-center" onclick="event.stopPropagation();">
+        <input class="form-check-input parts-list-checkbox" type="checkbox" value="{{ list.id }}" aria-label="Select {{ list.name }}">
+        <button class="btn btn-sm btn-link px-1" type="button" data-bs-toggle="collapse" data-bs-target="#list-details-{{ list.id }}" aria-expanded="false" aria-controls="list-details-{{ list.id }}" title="Show line statuses">
             <i class="bi bi-chevron-down"></i>
         </button>
     </td>
@@ -585,6 +620,28 @@ function filterByProjectAssociation(projectFilter) {
     window.location.href = "{{ url_for('parts_list.view_parts_lists') }}" + (params.toString() ? '?' + params.toString() : '');
 }
 
+function filterByAge(days) {
+    const params = new URLSearchParams();
+    appendCurrentListFilters(params);
+    params.delete('start_date');
+    params.delete('end_date');
+    if (days) params.set('older_than_days', days);
+    else params.delete('older_than_days');
+    window.location.href = "{{ url_for('parts_list.view_parts_lists') }}" + (params.toString() ? '?' + params.toString() : '');
+}
+
+function reviewOldQuoted() {
+    const days = document.getElementById('olderThanFilter').value || '90';
+    const quotedStatusId = "{{ statuses|selectattr('name', 'equalto', 'Quoted')|map(attribute='id')|first|default('') }}";
+    const params = new URLSearchParams();
+    appendCurrentListFilters(params);
+    params.delete('start_date');
+    params.delete('end_date');
+    params.set('older_than_days', days);
+    if (quotedStatusId) params.set('status_id', quotedStatusId);
+    window.location.href = "{{ url_for('parts_list.view_parts_lists') }}" + '?' + params.toString();
+}
+
 let partsListDataTable = null;
 let partsListTextFilter = '';
 
@@ -685,6 +742,8 @@ function appendCurrentListFilters(params) {
     if (currentProjectFilter) params.set('project_filter', currentProjectFilter);
     if (currentSalesperson) params.set('salesperson_id', currentSalesperson);
     if (currentQuotedDate) params.set('quoted_date', currentQuotedDate);
+    const currentOlderThan = "{{ selected_older_than_days or '' }}";
+    if (currentOlderThan) params.set('older_than_days', currentOlderThan);
     if (startDate) params.set('start_date', startDate);
     if (endDate) params.set('end_date', endDate);
 }
@@ -766,6 +825,7 @@ function applyListTextFilter(term) {
             detail.style.display = isMatch ? '' : 'none';
         }
     });
+    updateBulkSelectionState();
 }
 
 function clearListSearch() {
@@ -774,6 +834,72 @@ function clearListSearch() {
         input.value = '';
         applyListTextFilter('');
         input.focus();
+    }
+}
+
+function visibleListCheckboxes() {
+    return Array.from(document.querySelectorAll('.parts-list-checkbox')).filter(checkbox => {
+        const row = checkbox.closest('.parts-list-row');
+        return row && row.style.display !== 'none';
+    });
+}
+
+function updateBulkSelectionState() {
+    const selected = document.querySelectorAll('.parts-list-checkbox:checked');
+    const visible = visibleListCheckboxes();
+    const selectedVisible = visible.filter(checkbox => checkbox.checked);
+    const selectAll = document.getElementById('selectAllLists');
+    const selectedCount = document.getElementById('selectedListsCount');
+    const applyButton = document.getElementById('applyBulkStatusBtn');
+    const statusSelect = document.getElementById('bulkStatusSelect');
+    if (!selectAll || !selectedCount || !applyButton || !statusSelect) return;
+    selectedCount.textContent = selected.length;
+    applyButton.disabled = selected.length === 0 || !statusSelect.value;
+    selectAll.checked = visible.length > 0 && selectedVisible.length === visible.length;
+    selectAll.indeterminate = selectedVisible.length > 0 && selectedVisible.length < visible.length;
+}
+
+function setVisibleListSelection(checked) {
+    visibleListCheckboxes().forEach(checkbox => { checkbox.checked = checked; });
+    updateBulkSelectionState();
+}
+
+async function applyBulkStatus() {
+    const listIds = Array.from(document.querySelectorAll('.parts-list-checkbox:checked')).map(checkbox => Number(checkbox.value));
+    const statusSelect = document.getElementById('bulkStatusSelect');
+    const statusName = statusSelect.options[statusSelect.selectedIndex].textContent.trim();
+    if (!listIds.length || !statusSelect.value) return;
+    if (!confirm(`Move ${listIds.length} selected parts list${listIds.length === 1 ? '' : 's'} to ${statusName}?`)) return;
+
+    const button = document.getElementById('applyBulkStatusBtn');
+    button.disabled = true;
+    button.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Updating...';
+    try {
+        const response = await fetch("{{ url_for('parts_list.bulk_update_parts_list_status') }}", {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({list_ids: listIds, status_id: Number(statusSelect.value)})
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.message || 'Unable to update lists');
+
+        listIds.forEach(listId => {
+            const checkbox = document.querySelector(`.parts-list-checkbox[value="${listId}"]`);
+            const row = checkbox && checkbox.closest('.parts-list-row');
+            const rowStatus = row && row.querySelector('select[data-original-status]');
+            if (rowStatus) {
+                rowStatus.value = String(data.new_status_id);
+                rowStatus.dataset.originalStatus = String(data.new_status_id);
+            }
+            if (checkbox) checkbox.checked = false;
+        });
+        updateBulkSelectionState();
+        button.textContent = `${data.updated_count} updated`;
+        setTimeout(() => { button.textContent = 'Update selected'; updateBulkSelectionState(); }, 1400);
+    } catch (error) {
+        alert(error.message || 'Error updating statuses');
+        button.textContent = 'Update selected';
+        updateBulkSelectionState();
     }
 }
 
@@ -1109,6 +1235,24 @@ document.addEventListener('DOMContentLoaded', function() {
     if (statusSelect) {
         statusSelect.addEventListener('change', loadTopQuotes);
     }
+
+    document.querySelectorAll('.parts-list-checkbox').forEach(checkbox => {
+        checkbox.addEventListener('change', updateBulkSelectionState);
+    });
+    const selectAllLists = document.getElementById('selectAllLists');
+    if (selectAllLists) selectAllLists.addEventListener('change', event => setVisibleListSelection(event.target.checked));
+    const selectVisibleButton = document.getElementById('selectVisibleListsBtn');
+    if (selectVisibleButton) selectVisibleButton.addEventListener('click', () => setVisibleListSelection(true));
+    const clearSelectedButton = document.getElementById('clearSelectedListsBtn');
+    if (clearSelectedButton) clearSelectedButton.addEventListener('click', () => {
+        document.querySelectorAll('.parts-list-checkbox').forEach(checkbox => { checkbox.checked = false; });
+        updateBulkSelectionState();
+    });
+    const bulkStatusSelect = document.getElementById('bulkStatusSelect');
+    if (bulkStatusSelect) bulkStatusSelect.addEventListener('change', updateBulkSelectionState);
+    const applyBulkButton = document.getElementById('applyBulkStatusBtn');
+    if (applyBulkButton) applyBulkButton.addEventListener('click', applyBulkStatus);
+    updateBulkSelectionState();
 
     // Auto-run a part search when the page is loaded with ?q=...
     const urlParams = new URLSearchParams(window.location.search);

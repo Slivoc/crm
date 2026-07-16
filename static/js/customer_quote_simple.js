@@ -1463,8 +1463,9 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     // Email Quote
-   // --- REFACTORED EMAIL QUOTE LOGIC ---
+    // --- REFACTORED EMAIL QUOTE LOGIC ---
     let relatedEmailsLoaded = false;
+    let relatedEmailsLoadPromise = null;
     let lastAutoReplyCc = [];
     const relatedReplyEmailById = new Map();
 
@@ -1498,49 +1499,61 @@ document.addEventListener('DOMContentLoaded', function() {
         if (relatedEmailsLoaded) {
             return;
         }
+        if (relatedEmailsLoadPromise) {
+            return relatedEmailsLoadPromise;
+        }
         const replySelect = document.getElementById('emailQuoteReplySelect');
         if (!replySelect) {
             return;
         }
-        replySelect.innerHTML = '<option value="">Send new email (no reply)</option>';
+        replySelect.innerHTML = '<option value="">Finding related emails...</option>';
+        replySelect.disabled = true;
         relatedReplyEmailById.clear();
-        try {
-            const response = await fetch(`/parts_list/parts-lists/${LIST_ID}/related-emails/data`);
-            const result = await response.json();
-            if (!response.ok || !result.success) {
-                return;
-            }
-            const emails = result.emails || [];
-            let preferredReplyId = '';
-            emails.forEach(email => {
-                if (!email.id) {
-                    return;
+        relatedEmailsLoadPromise = (async () => {
+            try {
+                const response = await fetch(`/parts_list/parts-lists/${LIST_ID}/related-emails/data`);
+                const result = await response.json();
+                if (!response.ok || !result.success) {
+                    throw new Error(result.message || 'Unable to find related emails.');
                 }
-                relatedReplyEmailById.set(email.id, email);
-                const fromLabel = email.from_name ? `${email.from_name} <${email.from_address || ''}>` : (email.from_address || 'Unknown');
-                const dateLabel = email.receivedDateTime_display || '';
-                const subjectLabel = email.subject || '(No subject)';
-                const option = document.createElement('option');
-                option.value = email.id;
-                option.textContent = `${subjectLabel} - ${fromLabel}${dateLabel ? ` (${dateLabel})` : ''}`;
-                if (email.is_source) {
-                    option.textContent = `[Source] ${option.textContent}`;
-                    if (!preferredReplyId) {
+                replySelect.innerHTML = '<option value="">Send new email (no reply)</option>';
+                const emails = result.emails || [];
+                let preferredReplyId = '';
+                emails.forEach(email => {
+                    if (!email.id) {
+                        return;
+                    }
+                    relatedReplyEmailById.set(email.id, email);
+                    const fromLabel = email.from_name ? `${email.from_name} <${email.from_address || ''}>` : (email.from_address || 'Unknown');
+                    const dateLabel = email.receivedDateTime_display || '';
+                    const subjectLabel = email.subject || '(No subject)';
+                    const option = document.createElement('option');
+                    option.value = email.id;
+                    option.textContent = `${subjectLabel} - ${fromLabel}${dateLabel ? ` (${dateLabel})` : ''}`;
+                    if (email.is_source) {
+                        option.textContent = `[Source] ${option.textContent}`;
+                        if (!preferredReplyId) {
+                            preferredReplyId = email.id;
+                        }
+                    } else if (!preferredReplyId && email.is_customer_match) {
                         preferredReplyId = email.id;
                     }
-                } else if (!preferredReplyId && email.is_customer_match) {
-                    preferredReplyId = email.id;
+                    replySelect.appendChild(option);
+                });
+                if (preferredReplyId) {
+                    replySelect.value = preferredReplyId;
                 }
-                replySelect.appendChild(option);
-            });
-            if (preferredReplyId) {
-                replySelect.value = preferredReplyId;
+                relatedEmailsLoaded = true;
+                updateReplyModeState();
+            } catch (error) {
+                replySelect.innerHTML = '<option value="">Send new email (related emails unavailable)</option>';
+                console.warn('Failed to load related emails for reply.', error);
+            } finally {
+                replySelect.disabled = false;
+                relatedEmailsLoadPromise = null;
             }
-            relatedEmailsLoaded = true;
-            updateReplyModeState();
-        } catch (error) {
-            console.warn('Failed to load related emails for reply.', error);
-        }
+        })();
+        return relatedEmailsLoadPromise;
     }
 
     let manualSubjectValue = '';
@@ -1901,9 +1914,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
             document.getElementById('emailQuoteBody').innerHTML = `${buildEmailBodyHtml()}<p></p>`;
-            await loadRelatedEmailsForReply();
             updateReplyModeState();
-            new bootstrap.Modal(document.getElementById('emailQuoteModal')).show();
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('emailQuoteModal')).show();
+            loadRelatedEmailsForReply();
 
         } catch (error) {
             console.error(error);

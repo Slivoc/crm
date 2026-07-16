@@ -6546,6 +6546,9 @@ def view_parts_lists():
         part_search = (request.args.get('q') or '').strip()
         include_portal_search_lists = request.args.get('include_portal_search_lists') in ('1', 'true', 'yes', 'on')
         quoted_date = (request.args.get('quoted_date') or '').strip()
+        older_than_days = request.args.get('older_than_days', type=int)
+        if older_than_days not in (30, 60, 90, 180, 365):
+            older_than_days = None
         quoted_date_filter = None
         if quoted_date:
             try:
@@ -6566,9 +6569,10 @@ def view_parts_lists():
             except ValueError:
                 return fallback
 
-        start_date_filter = _parse_filter_date(start_date_raw, default_start_date)
-        end_date_filter = _parse_filter_date(end_date_raw, default_end_date)
-        if start_date_filter > end_date_filter:
+        # An age-cleanup view intentionally searches all historical records.
+        start_date_filter = None if older_than_days else _parse_filter_date(start_date_raw, default_start_date)
+        end_date_filter = None if older_than_days else _parse_filter_date(end_date_raw, default_end_date)
+        if start_date_filter and end_date_filter and start_date_filter > end_date_filter:
             start_date_filter, end_date_filter = end_date_filter, start_date_filter
 
         current_user_salesperson_id = None
@@ -6599,6 +6603,7 @@ def view_parts_lists():
             request.args.get('q'),
             request.args.get('start_date'),
             request.args.get('end_date'),
+            request.args.get('older_than_days'),
         ])
         if raw_status_id is None and not has_explicit_filters:
             status_id = 1
@@ -6746,6 +6751,10 @@ def view_parts_lists():
                 where_clauses.append("DATE(pl.date_created) <= ?")
                 params.append(end_date_filter.isoformat())
 
+            if older_than_days:
+                where_clauses.append("pl.date_modified < CURRENT_TIMESTAMP - (? * INTERVAL '1 day')")
+                params.append(older_than_days)
+
             if quoted_date_filter:
                 where_clauses.append("""
                     EXISTS (
@@ -6868,6 +6877,9 @@ def view_parts_lists():
         if end_date_filter:
             status_count_clauses.append("DATE(pl.date_created) <= ?")
             status_count_params.append(end_date_filter.isoformat())
+        if older_than_days:
+            status_count_clauses.append("pl.date_modified < CURRENT_TIMESTAMP - (? * INTERVAL '1 day')")
+            status_count_params.append(older_than_days)
         if quoted_date_filter:
             status_count_clauses.append("""
                 EXISTS (
@@ -6923,6 +6935,7 @@ def view_parts_lists():
                                selected_quoted_date=quoted_date_filter,
                                selected_start_date=start_date_filter.isoformat() if start_date_filter else '',
                                selected_end_date=end_date_filter.isoformat() if end_date_filter else '',
+                               selected_older_than_days=older_than_days,
                                initial_part_search=part_search)
     except Exception as e:
         logging.exception(e)
@@ -6937,6 +6950,7 @@ def view_parts_lists():
                                selected_quoted_date=None,
                                selected_start_date='',
                                selected_end_date='',
+                               selected_older_than_days=None,
                                initial_part_search=part_search)
 
 def _get_common_parts_report_customer_filters():
@@ -12241,6 +12255,54 @@ def update_parts_list_status(list_id):
     except Exception as e:
         logging.exception(e)
         return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@parts_list_bp.route('/parts-lists/bulk-update-status', methods=['POST'])
+def bulk_update_parts_list_status():
+    """Apply one validated status change to a selected set of parts lists."""
+    try:
+        data = request.get_json(silent=True) or {}
+        raw_ids = data.get('list_ids') or []
+        try:
+            list_ids = list(dict.fromkeys(int(value) for value in raw_ids))
+            status_id = int(data.get('status_id'))
+        except (TypeError, ValueError):
+            return jsonify(success=False, message='Invalid list or status selection'), 400
+
+        if not list_ids:
+            return jsonify(success=False, message='Select at least one parts list'), 400
+        if len(list_ids) > 500:
+            return jsonify(success=False, message='A maximum of 500 lists can be updated at once'), 400
+
+        with db_cursor(commit=True) as cur:
+            status = _execute_with_cursor(
+                cur, "SELECT id, name FROM parts_list_statuses WHERE id = ?", (status_id,)
+            ).fetchone()
+            if not status:
+                return jsonify(success=False, message='Invalid status'), 400
+
+            placeholders = ','.join('?' for _ in list_ids)
+            result = _execute_with_cursor(
+                cur,
+                f"""
+                UPDATE parts_lists
+                SET status_id = ?, date_modified = CURRENT_TIMESTAMP
+                WHERE id IN ({placeholders})
+                  AND status_id <> ?
+                """,
+                (status_id, *list_ids, status_id),
+            )
+            updated_count = result.rowcount
+
+        return jsonify(
+            success=True,
+            updated_count=updated_count,
+            new_status_id=status_id,
+            new_status_name=status['name'],
+        )
+    except Exception as e:
+        logging.exception(e)
+        return jsonify(success=False, message=str(e)), 500
 
 
 @parts_list_bp.route('/parts-lists/<int:list_id>/lines/<int:line_id>/set-cost', methods=['POST'])
