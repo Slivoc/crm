@@ -715,6 +715,16 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
+        const selectOfferBtn = e.target.closest('.select-supplier-offer-btn');
+        if (selectOfferBtn) {
+            const row = selectOfferBtn.closest('tr');
+            if (!row || row.dataset.locked === '1') return;
+            const cached = rowCache.get(row);
+            if (!cached) return;
+            showSupplierOfferModal(row, cached);
+            return;
+        }
+
         const bulkMarginBtn = e.target.closest('.apply-bulk-margin-btn');
         if (bulkMarginBtn) {
             const row = bulkMarginBtn.closest('tr');
@@ -914,7 +924,128 @@ document.addEventListener('DOMContentLoaded', function() {
         handleRowChange(row);
     });
 
-    // --- 7. UTILITY FEATURES (Restored Full Logic) ---
+    // --- 7. SUPPLIER OFFER SELECTOR ---
+
+    function setSupplierOfferModalState({ loading, empty, showTable }) {
+        document.getElementById('simple-offers-loading').style.display = loading ? 'block' : 'none';
+        document.getElementById('simple-offers-empty').style.display = empty ? 'block' : 'none';
+        document.getElementById('simple-offers-table-wrap').style.display = showTable ? 'block' : 'none';
+    }
+
+    async function showSupplierOfferModal(row, cached) {
+        const modalElement = document.getElementById('simpleSupplierOfferModal');
+        if (!modalElement || typeof bootstrap === 'undefined') return;
+
+        const { lineData, elements } = cached;
+        const requestedPart = getRequestedPartNumber(lineData) || lineData.base_part_number || '-';
+        const requiredQty = parseFloat(elements.chosenQty?.value) || lineData.quantity || '-';
+        document.getElementById('simple-offer-part-number').textContent = requestedPart;
+        document.getElementById('simple-offer-required-qty').textContent = requiredQty;
+        document.getElementById('simple-offers-empty').textContent = 'No supplier offers for this part were found on this parts list.';
+        document.getElementById('simple-offers-table-body').replaceChildren();
+        setSupplierOfferModalState({ loading: true, empty: false, showTable: false });
+        bootstrap.Modal.getOrCreateInstance(modalElement).show();
+
+        try {
+            const response = await fetch(`/parts_list/parts-lists/${LIST_ID}/lines/${lineData.id}/quotes`);
+            const result = await response.json();
+            const offers = result.success && Array.isArray(result.quotes) ? result.quotes : [];
+            setSupplierOfferModalState({ loading: false, empty: offers.length === 0, showTable: offers.length > 0 });
+            if (offers.length) renderSupplierOffers(offers, row, cached);
+        } catch (error) {
+            console.error('Unable to load supplier offers', error);
+            setSupplierOfferModalState({ loading: false, empty: true, showTable: false });
+            document.getElementById('simple-offers-empty').textContent = 'Unable to load supplier offers. Please try again.';
+        }
+    }
+
+    function renderSupplierOffers(offers, row, cached) {
+        const body = document.getElementById('simple-offers-table-body');
+        body.replaceChildren();
+        offers.forEach(offer => {
+            const price = Number.parseFloat(offer.unit_price);
+            const isUsable = !offer.is_no_bid && Number.isFinite(price) && price >= 0 && offer.supplier_id && offer.currency_id;
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>${escapeHtml(offer.supplier_name || '-')}</td>
+                <td>${escapeHtml(offer.quoted_part_number || '-')}</td>
+                <td>${escapeHtml(offer.manufacturer || '-')}</td>
+                <td class="text-end">${escapeHtml(offer.quantity_quoted ?? '-')}</td>
+                <td class="text-end">${escapeHtml(offer.qty_available ?? '-')}</td>
+                <td class="text-end">${Number.isFinite(price) ? price.toFixed(4) : '-'}</td>
+                <td>${escapeHtml(offer.currency_code || '-')}</td>
+                <td class="text-center">${offer.lead_time_days ? `${escapeHtml(offer.lead_time_days)}d` : '-'}</td>
+                <td>${escapeHtml(offer.condition_code || '-')}</td>
+                <td>${escapeHtml(offer.certifications || '-')}</td>
+                <td class="text-end"><button type="button" class="btn btn-sm btn-primary" ${isUsable ? '' : 'disabled'}>${offer.is_no_bid ? 'No bid' : 'Use offer'}</button></td>`;
+            if (isUsable) {
+                const useButton = tr.querySelector('button');
+                useButton.addEventListener('click', () => applySupplierOffer(offer, row, cached, useButton));
+            }
+            body.appendChild(tr);
+        });
+    }
+
+    async function applySupplierOffer(offer, row, cached, button) {
+        if (button) {
+            button.disabled = true;
+            button.textContent = 'Applying...';
+        }
+        const selectedQty = parseFloat(cached.elements.chosenQty?.value) || offer.quantity_quoted || cached.lineData.quantity || null;
+        const payload = {
+            supplier_id: offer.supplier_id,
+            cost: Number.parseFloat(offer.unit_price),
+            currency_id: offer.currency_id,
+            lead_days: offer.lead_time_days || null,
+            chosen_qty: selectedQty,
+            source_type: 'quote',
+            source_reference: String(offer.quote_line_id)
+        };
+        try {
+            const saveResponse = await fetch(`/parts_list/parts-lists/${LIST_ID}/lines/${cached.lineData.id}/use-cost`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+            });
+            const saveResult = await saveResponse.json();
+            if (!saveResponse.ok || !saveResult.success) throw new Error(saveResult.message || 'Unable to apply supplier offer');
+
+            const calculateResponse = await fetch(`/customer-quoting/parts-lists/${LIST_ID}/customer-quote/line/${cached.lineData.id}/calculate-base-cost`, { method: 'POST' });
+            const calculateResult = await calculateResponse.json();
+            if (!calculateResponse.ok || !calculateResult.success) throw new Error(calculateResult.message || 'Unable to refresh quote cost');
+
+            const currency = getCurrencyMeta(offer.currency_id);
+            cached.lineData.chosen_supplier_id = offer.supplier_id;
+            cached.lineData.chosen_supplier_name = offer.supplier_name;
+            cached.lineData.chosen_cost = payload.cost;
+            cached.lineData.chosen_currency_id = offer.currency_id;
+            cached.lineData.chosen_currency_code = offer.currency_code;
+            cached.lineData.chosen_source_type = 'quote';
+            cached.lineData.chosen_source_reference = String(offer.quote_line_id);
+            cached.lineData.supplier_quoted_part_number = offer.quoted_part_number || '';
+            cached.lineData.supplier_manufacturer = offer.manufacturer || '';
+            cached.lineData.supplier_condition_code = offer.condition_code || '';
+            cached.lineData.supplier_certifications = offer.certifications || '';
+            cached.lineData.supplier_revision = offer.revision || '';
+            cached.lineData.base_cost_gbp = calculateResult.base_cost_gbp;
+            if (cached.elements.chosenQty && selectedQty) cached.elements.chosenQty.value = selectedQty;
+            if (cached.elements.leadDays) cached.elements.leadDays.value = offer.lead_time_days || '';
+            if (cached.elements.manufacturer && offer.manufacturer) cached.elements.manufacturer.value = offer.manufacturer;
+            if (cached.elements.standardCondition && offer.condition_code) cached.elements.standardCondition.value = offer.condition_code;
+            if (cached.elements.standardCerts && offer.certifications) cached.elements.standardCerts.value = offer.certifications;
+            updateBaseCostCell(cached.elements, calculateResult.base_cost_gbp);
+            row.querySelector('.chosen-supplier-name').textContent = offer.supplier_name || '-';
+            row.querySelector('.chosen-cost-value').textContent = Number.parseFloat(offer.unit_price).toFixed(2);
+            row.querySelector('.chosen-currency-code').textContent = offer.currency_code || currency?.currency_code || 'GBP';
+            handleRowChange(row);
+            markUnsaved();
+            bootstrap.Modal.getInstance(document.getElementById('simpleSupplierOfferModal'))?.hide();
+        } catch (error) {
+            console.error('Unable to apply supplier offer', error);
+            alert(error.message || 'Unable to apply supplier offer');
+            if (button) { button.disabled = false; button.textContent = 'Use offer'; }
+        }
+    }
+
+    // --- 8. UTILITY FEATURES (Restored Full Logic) ---
 
     function autoSelectDiffColumns() {
         let pnDiff = false;

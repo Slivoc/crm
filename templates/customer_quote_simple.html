@@ -936,18 +936,27 @@
 
         {% set is_stock_source = line.chosen_source_type == 'stock' %}
         <td class="read-only">
-            {% if line.chosen_supplier_name %}
-                {{ line.chosen_supplier_name }}
-            {% elif is_stock_source %}
-                <span class="badge bg-secondary">Stock</span>
-            {% else %}
-                -
-            {% endif %}
+            <div class="d-flex align-items-center gap-1">
+                <span class="chosen-supplier-name">
+                    {% if line.chosen_supplier_name %}
+                        {{ line.chosen_supplier_name }}
+                    {% elif is_stock_source %}
+                        Stock
+                    {% else %}
+                        -
+                    {% endif %}
+                </span>
+                <button type="button" class="btn btn-sm btn-outline-primary select-supplier-offer-btn"
+                        title="Choose from supplier offers for this part on this parts list">
+                    <i class="bi bi-list-check"></i>
+                    <span class="visually-hidden">Choose supplier offer</span>
+                </button>
+            </div>
         </td>
 
-        <td class="read-only">{{ '%.2f'|format(line.chosen_cost or 0) }}</td>
+        <td class="read-only chosen-cost-value">{{ '%.2f'|format(line.chosen_cost or 0) }}</td>
 
-        <td class="read-only">{{ line.chosen_currency_code or 'GBP' }}</td>
+        <td class="read-only chosen-currency-code">{{ line.chosen_currency_code or 'GBP' }}</td>
 
         <td class="read-only">
             <div class="value-stack">
@@ -1092,6 +1101,41 @@
 
 <!-- Reuse modals from original template -->
 {% include 'customer_quote_modals.html' %}
+
+<!-- Supplier offer selector for the simple customer quote page -->
+<div class="modal fade" id="simpleSupplierOfferModal" tabindex="-1" aria-labelledby="simpleSupplierOfferModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title" id="simpleSupplierOfferModalLabel"><i class="bi bi-list-check me-2"></i>Choose Supplier Offer</h5>
+                    <div class="text-muted small">Part: <strong id="simple-offer-part-number"></strong> &middot; Required qty: <strong id="simple-offer-required-qty"></strong></div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="simple-offers-loading" class="text-center py-4">
+                    <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading offers...</span></div>
+                </div>
+                <div id="simple-offers-empty" class="alert alert-light border mb-0" style="display: none;">
+                    No supplier offers for this part were found on this parts list.
+                </div>
+                <div id="simple-offers-table-wrap" class="table-responsive" style="display: none;">
+                    <table class="table table-sm table-hover align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Supplier</th><th>Quoted P/N</th><th>Manufacturer</th><th class="text-end">Qty</th>
+                                <th class="text-end">Available</th><th class="text-end">Unit price</th><th>Currency</th>
+                                <th class="text-center">Lead</th><th>Condition</th><th>Certs</th><th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="simple-offers-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 
 <!-- Hidden data for JS -->
 <script>
