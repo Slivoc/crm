@@ -449,7 +449,7 @@
     <div class="row mb-4">
         <div class="col">
             <h2 class="mb-1"><i class="bi bi-file-earmark-check me-2"></i>Check Customer PO</h2>
-            <p class="text-muted mb-0">Upload a customer purchase order PDF to match against quoted parts lists</p>
+            <p class="text-muted mb-0">Upload a customer PO or paste a parts list to match against quoted parts lists</p>
         </div>
         <div class="col-auto">
             <a href="{{ url_for('parts_list.view_parts_lists') }}" class="btn btn-outline-secondary">
@@ -495,6 +495,21 @@
                 </div>
             </div>
 
+            <div class="border-top mt-4 pt-3">
+                <label for="pastedPartsList" class="form-label fw-semibold">
+                    <i class="bi bi-clipboard me-1"></i>Or paste a parts list
+                </label>
+                <textarea id="pastedPartsList" class="form-control font-monospace" rows="7"
+                          placeholder="pn&#9;qty&#10;AS5174K0606&#9;100&#10;MS17825-8&#9;150"></textarea>
+                <div class="d-flex justify-content-between align-items-center mt-2 gap-3">
+                    <small class="text-muted">Paste from Excel or use tab, comma, or spaces between the part number and quantity. A header row is optional.</small>
+                    <button type="button" id="pasteMatchBtn" class="btn btn-outline-primary flex-shrink-0" disabled>
+                        <i class="bi bi-search me-1"></i>Match Pasted List
+                    </button>
+                </div>
+                <div id="pasteValidation" class="small mt-2" aria-live="polite"></div>
+            </div>
+
             <div class="mt-4 text-end">
                 <button id="extractBtn" class="btn btn-primary btn-lg" disabled>
                     <i class="bi bi-magic me-2"></i>Extract & Match PO Lines
@@ -510,7 +525,7 @@
             <!-- PO Header -->
             <div class="po-header d-flex justify-content-between align-items-center">
                 <div>
-                    <h1><i class="bi bi-file-earmark-text me-2"></i>Purchase Order</h1>
+                    <h1 id="poDocumentTitle"><i class="bi bi-file-earmark-text me-2"></i>Purchase Order</h1>
                     <div class="text-muted small" id="poCustomerName">Customer Name</div>
                 </div>
                 <div class="text-end">
@@ -599,7 +614,7 @@
             <div class="po-footer">
                 <div class="row align-items-center">
                     <div class="col-md-6">
-                        <small class="text-muted">Extracted from uploaded PDF (<span id="extractionMethodLabel">Text layer</span>)</small>
+                        <small class="text-muted">Source: <span id="extractionMethodLabel">uploaded PDF (text layer)</span></small>
                     </div>
                     <div class="col-md-6 text-end">
                         <strong>Total Lines:</strong> <span id="poLineCount">0</span>
@@ -760,7 +775,7 @@
             <div class="card-body">
                 <div class="d-flex justify-content-between align-items-center">
                     <div>
-                        <span class="text-muted">Ready to update parts lists to "Won" status?</span>
+                        <span class="text-muted" id="confirmActionText">Ready to update parts lists to "Won" status?</span>
                     </div>
                     <div>
                         <button class="btn btn-outline-primary me-2" id="retryOcrBtn" title="Retry with OCR (you will be asked to choose a PDF first)">
@@ -783,7 +798,7 @@
         <div class="modal-dialog modal-lg modal-dialog-scrollable">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title">Extracted PDF Text</h5>
+                    <h5 class="modal-title">Source Text</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
@@ -890,6 +905,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const clearFileBtn = document.getElementById('clearFile');
     const useOcrMode = document.getElementById('useOcrMode');
     const extractBtn = document.getElementById('extractBtn');
+    const pastedPartsList = document.getElementById('pastedPartsList');
+    const pasteMatchBtn = document.getElementById('pasteMatchBtn');
+    const pasteValidation = document.getElementById('pasteValidation');
     const resultsSection = document.getElementById('resultsSection');
     const confirmBtn = document.getElementById('confirmBtn');
     const supplierInsightModalEl = document.getElementById('supplierInsightModal');
@@ -1046,6 +1064,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function updateExtractBtn() {
         const customerId = $(customerSelect).val();
         extractBtn.disabled = !selectedFile || !customerId;
+        pasteMatchBtn.disabled = !customerId || !pastedPartsList.value.trim();
         retryOcrBtn.disabled = false;
         retryOcrBtn.title = selectedFile
             ? 'Re-run extraction with OCR on this same PDF'
@@ -1053,6 +1072,95 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     $(customerSelect).on('change', updateExtractBtn);
+    pastedPartsList.addEventListener('input', updateExtractBtn);
+
+    function parsePastedPartsList(value) {
+        const parsed = [];
+        const rejected = [];
+
+        value.split(/\r?\n/).forEach((rawLine, index) => {
+            const line = rawLine.trim();
+            if (!line) return;
+
+            const normalizedHeader = line.toLowerCase().replace(/[^a-z]+/g, ' ').trim();
+            if (/^(pn|part|part number) (qty|quantity)$/.test(normalizedHeader)) return;
+
+            const match = line.match(/^(.+?)(?:\t+|\s*,\s*|\s*;\s*|\s+)([\d,]+(?:\.\d+)?)$/);
+            if (!match) {
+                rejected.push(index + 1);
+                return;
+            }
+
+            const partNumber = match[1].trim();
+            const quantity = Number(match[2].replace(/,/g, ''));
+            if (!partNumber || !Number.isFinite(quantity) || quantity <= 0) {
+                rejected.push(index + 1);
+                return;
+            }
+
+            parsed.push({
+                line_number: parsed.length + 1,
+                part_number: partNumber,
+                description: '',
+                quantity,
+                unit_price: null,
+                total_price: null
+            });
+        });
+
+        return { parsed, rejected };
+    }
+
+    async function matchPastedPartsList() {
+        const customerId = $(customerSelect).val();
+        if (!customerId) {
+            $(customerSelect).select2('open');
+            return;
+        }
+
+        const { parsed, rejected } = parsePastedPartsList(pastedPartsList.value);
+        if (!parsed.length) {
+            pasteValidation.className = 'small mt-2 text-danger';
+            pasteValidation.textContent = 'No valid part number and quantity rows were found.';
+            return;
+        }
+        if (rejected.length) {
+            pasteValidation.className = 'small mt-2 text-warning';
+            pasteValidation.textContent = `Skipped unrecognised row${rejected.length === 1 ? '' : 's'}: ${rejected.join(', ')}.`;
+        } else {
+            pasteValidation.className = 'small mt-2 text-success';
+            pasteValidation.textContent = `Read ${parsed.length} line${parsed.length === 1 ? '' : 's'}.`;
+        }
+
+        extractedData = {
+            po_reference: 'Pasted buying list',
+            customer_name: $('#customerSelect option:selected').text() || 'Customer',
+            lines: parsed
+        };
+        rawText = pastedPartsList.value;
+        extractionModeUsed = 'paste';
+        updatePODisplay(extractedData);
+        showLoading('Matching pasted lines to parts lists...');
+
+        try {
+            const response = await fetch('{{ url_for("parts_list_po_check.match_po") }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ customer_id: customerId, lines: parsed })
+            });
+            const result = await response.json();
+            if (!response.ok || !result.success) throw new Error(result.message || 'Matching failed');
+            matchResults = result;
+            displayResults();
+        } catch (error) {
+            alert('Error: ' + error.message);
+            console.error(error);
+        } finally {
+            hideLoading();
+        }
+    }
+
+    pasteMatchBtn.addEventListener('click', matchPastedPartsList);
 
     async function extractAndMatchPo(extractionMode) {
         const customerId = $(customerSelect).val();
@@ -1136,8 +1244,19 @@ document.addEventListener('DOMContentLoaded', function() {
     function updatePODisplay(data) {
         const methodLabel = document.getElementById('extractionMethodLabel');
         if (methodLabel) {
-            methodLabel.textContent = extractionModeUsed === 'ocr' ? 'OCR (OpenAI Vision)' : 'Text layer';
+            methodLabel.textContent = extractionModeUsed === 'paste'
+                ? 'pasted parts list'
+                : (extractionModeUsed === 'ocr' ? 'uploaded PDF (OCR)' : 'uploaded PDF (text layer)');
         }
+        const isPastedList = extractionModeUsed === 'paste';
+        document.getElementById('poDocumentTitle').innerHTML = isPastedList
+            ? '<i class="bi bi-clipboard-check me-2"></i>Buying List'
+            : '<i class="bi bi-file-earmark-text me-2"></i>Purchase Order';
+        document.getElementById('confirmActionText').textContent = isPastedList
+            ? 'Pasted lists are for advance review only; source parts lists will not be marked Won.'
+            : 'Ready to update parts lists to "Won" status?';
+        confirmBtn.style.display = isPastedList ? 'none' : '';
+        retryOcrBtn.style.display = isPastedList ? 'none' : '';
 
         // Update PO header info
         document.getElementById('poReference').textContent = data.po_reference || '-';
@@ -1649,6 +1768,8 @@ document.addEventListener('DOMContentLoaded', function() {
     resetBtn.addEventListener('click', () => {
         if (confirm('Start over? This will clear all results.')) {
             clearFile();
+            pastedPartsList.value = '';
+            pasteValidation.textContent = '';
             resultsSection.style.display = 'none';
             document.getElementById('uploadCard').style.display = 'block'; // Show upload card again
             extractedData = null;
@@ -1663,6 +1784,9 @@ document.addEventListener('DOMContentLoaded', function() {
             updateFocusControls();
             confirmBtn.disabled = true;
             confirmBtn.innerHTML = '<i class="bi bi-check-circle me-2"></i>Accept Matches & Mark Won';
+            confirmBtn.style.display = '';
+            retryOcrBtn.style.display = '';
+            updateExtractBtn();
         }
     });
 
