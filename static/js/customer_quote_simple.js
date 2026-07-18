@@ -1124,6 +1124,9 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!supplierDisplay) return;
 
             const effectiveQty = parseFloat(elements.chosenQty.value) || lineData.quantity;
+            const requestedQty = parseFloat(lineData.quantity) || 0;
+            const quotedPrice = parseFloat(elements.quotePriceGbp.value) || 0;
+            const quotedLeadDays = elements.leadDays?.value || '';
             const unitCost = parseFloat(lineData.chosen_cost || 0);
             if (unitCost <= 0) return;
 
@@ -1131,6 +1134,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 rowKey: lineData.id,
                 lineData,
                 effectiveQty,
+                requestedQty,
+                quotedPrice,
+                quotedLeadDays,
                 unitCost,
                 supplierDisplay,
                 requestedPartNumber: getRequestedPartNumber(lineData),
@@ -1201,6 +1207,12 @@ document.addEventListener('DOMContentLoaded', function() {
         let html = `
 <table class="table table-sm table-bordered" style="border-collapse:collapse;font-family:Arial, sans-serif;font-size:0.9rem;margin:auto;max-width:1200px;">
   <thead>
+    <tr>
+      <th colspan="7" style="padding:6px 8px;border:1px solid #dee2e6;background:#f8f9fa;"></th>
+      <th colspan="4" align="center" style="padding:6px 8px;border:1px solid #dee2e6;background:#e8f4e8;">Our Quote</th>
+      <th colspan="3" align="center" style="padding:6px 8px;border:1px solid #dee2e6;background:#e8f0f8;">Supplier</th>
+      <th colspan="2" style="padding:6px 8px;border:1px solid #dee2e6;background:#f8f9fa;"></th>
+    </tr>
     <tr style="background:#f8f9fa;">
       <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Line</th>
       <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Requested P/N</th>
@@ -1208,12 +1220,14 @@ document.addEventListener('DOMContentLoaded', function() {
       <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Supplier Quoted P/N</th>
       <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Manufacturer</th>
       <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Revision</th>
-      <th align="right" style="padding:6px 8px;border:1px solid #dee2e6;">Quantity</th>
       <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Supplier</th>
-      <th align="right" style="padding:6px 8px;border:1px solid #dee2e6;">Unit Cost</th>
-      <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Currency</th>
-      <th align="right" style="padding:6px 8px;border:1px solid #dee2e6;">Line Total</th>
-      <th align="right" style="padding:6px 8px;border:1px solid #dee2e6;">Lead Time (days)</th>
+      <th align="right" style="padding:6px 8px;border:1px solid #dee2e6;background:#f0f8f0;">Lead</th>
+      <th align="right" style="padding:6px 8px;border:1px solid #dee2e6;background:#f0f8f0;">Req Qty</th>
+      <th align="right" style="padding:6px 8px;border:1px solid #dee2e6;background:#f0f8f0;">Qty</th>
+      <th align="right" style="padding:6px 8px;border:1px solid #dee2e6;background:#f0f8f0;">Price (GBP)</th>
+      <th align="right" style="padding:6px 8px;border:1px solid #dee2e6;background:#f0f4f8;">Lead</th>
+      <th align="right" style="padding:6px 8px;border:1px solid #dee2e6;background:#f0f4f8;">Qty</th>
+      <th align="right" style="padding:6px 8px;border:1px solid #dee2e6;background:#f0f4f8;">Price</th>
       <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Suggested Buy Qty</th>
       <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Price vs History</th>
     </tr>
@@ -1224,6 +1238,9 @@ document.addEventListener('DOMContentLoaded', function() {
             const {
                 lineData,
                 effectiveQty,
+                requestedQty,
+                quotedPrice,
+                quotedLeadDays,
                 unitCost,
                 supplierDisplay,
                 requestedPartNumber,
@@ -1232,9 +1249,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 manufacturer,
                 revision
             } = row;
-            const lineTotal = unitCost * effectiveQty;
             const currency = lineData.chosen_currency_code || 'GBP';
-            const leadDays = lineData.chosen_lead_days || '';
+            const supplierLeadDays = lineData.chosen_lead_days || '';
             const cellStyle = 'padding:6px 8px;border:1px solid #dee2e6;';
             const lineInsight = purchasingInsightsByLineId.get(row.rowKey);
 
@@ -1245,12 +1261,14 @@ document.addEventListener('DOMContentLoaded', function() {
               <td align="left" style="${cellStyle}">${escapeHtml(supplierQuotedPartNumber || '-')}</td>
               <td align="left" style="${cellStyle}">${escapeHtml(manufacturer || '-')}</td>
               <td align="left" style="${cellStyle}">${escapeHtml(revision || '-')}</td>
-              <td align="right" style="${cellStyle}">${escapeHtml(effectiveQty || '')}</td>
               <td align="left" style="${cellStyle}">${escapeHtml(supplierDisplay)}</td>
-              <td align="right" style="${cellStyle}">${escapeHtml(unitCost.toFixed(2))}</td>
-              <td align="left" style="${cellStyle}">${escapeHtml(currency)}</td>
-              <td align="right" style="${cellStyle}">${escapeHtml(lineTotal.toFixed(2))}</td>
-              <td align="right" style="${cellStyle}">${escapeHtml(leadDays)}</td>
+              <td align="right" style="${cellStyle}background:#f8fcf8;">${escapeHtml(quotedLeadDays || '-')}</td>
+              <td align="right" style="${cellStyle}background:#f8fcf8;">${escapeHtml(requestedQty || '-')}</td>
+              <td align="right" style="${cellStyle}background:#f8fcf8;">${escapeHtml(effectiveQty || '-')}</td>
+              <td align="right" style="${cellStyle}background:#f8fcf8;">${quotedPrice > 0 ? escapeHtml(quotedPrice.toFixed(2)) : '-'}</td>
+              <td align="right" style="${cellStyle}background:#f8fafc;">${escapeHtml(supplierLeadDays || '-')}</td>
+              <td align="right" style="${cellStyle}background:#f8fafc;">${escapeHtml(effectiveQty || '-')}</td>
+              <td align="right" style="${cellStyle}background:#f8fafc;">${escapeHtml(currency)} ${escapeHtml(unitCost.toFixed(2))}</td>
               <td align="left" style="${cellStyle}">${escapeHtml(getSuggestedQtyLabel(row, lineInsight))}</td>
               <td align="left" style="${cellStyle}">${escapeHtml(getPriceInsightLabel(lineInsight))}</td>
             </tr>`;
