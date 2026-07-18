@@ -946,11 +946,15 @@
                         -
                     {% endif %}
                 </span>
-                <button type="button" class="btn btn-sm btn-outline-primary select-supplier-offer-btn"
-                        title="Choose from supplier offers for this part on this parts list">
-                    <i class="bi bi-list-check"></i>
-                    <span class="visually-hidden">Choose supplier offer</span>
+                {% if line.available_offer_count %}
+                <button type="button"
+                        class="btn btn-sm btn-primary rounded-circle select-supplier-offer-btn d-inline-flex align-items-center justify-content-center p-0"
+                        style="width: 1.65rem; height: 1.65rem; font-size: .75rem;"
+                        title="Choose from {{ line.available_offer_count }} available supplier offer{{ '' if line.available_offer_count == 1 else 's' }}"
+                        aria-label="Choose from {{ line.available_offer_count }} available supplier offer{{ '' if line.available_offer_count == 1 else 's' }}">
+                    {{ line.available_offer_count }}
                 </button>
+                {% endif %}
             </div>
         </td>
 

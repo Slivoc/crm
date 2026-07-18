@@ -2056,6 +2056,18 @@ def customer_quote_simple(list_id):
                       parent.customer_part_number as parent_customer_part_number,
                       parent.original_customer_part_number as parent_original_customer_part_number,
                       pll.base_part_number,
+                      (
+                          SELECT COUNT(*)
+                          FROM parts_list_supplier_quote_lines offer_line
+                          JOIN parts_list_supplier_quotes offer_quote
+                            ON offer_quote.id = offer_line.supplier_quote_id
+                          JOIN parts_list_lines offer_parts_line
+                            ON offer_parts_line.id = offer_line.parts_list_line_id
+                          WHERE offer_parts_line.parts_list_id = pll.parts_list_id
+                            AND offer_parts_line.base_part_number = pll.base_part_number
+                            AND offer_line.is_no_bid = FALSE
+                            AND offer_line.unit_price IS NOT NULL
+                      ) AS available_offer_count,
                       pll.quantity,
                       pll.chosen_qty,
                       COALESCE(pll.chosen_qty, pll.quantity) as effective_quantity,
