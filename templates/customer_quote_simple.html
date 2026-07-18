@@ -139,6 +139,63 @@
     white-space: normal;
 }
 
+/* Purchasing instructions is a working grid, so give it the viewport. */
+#purchasingModal .modal-dialog {
+    width: calc(100vw - 2rem);
+    max-width: none;
+    height: calc(100vh - 2rem);
+    margin: 1rem;
+}
+
+#purchasingModal .modal-content {
+    height: 100%;
+}
+
+#purchasingModal .modal-body {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+#purchasingInstructionsBody {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto !important;
+    padding: 0 !important;
+}
+
+#purchasingInstructionsBody table {
+    max-width: none !important;
+    width: 100%;
+    margin: 0 !important;
+    white-space: nowrap;
+}
+
+#purchasingInstructionsBody thead th {
+    position: sticky;
+    z-index: 2;
+}
+
+#purchasingInstructionsBody thead tr:first-child th {
+    top: 0;
+}
+
+#purchasingInstructionsBody thead tr:nth-child(2) th {
+    top: 35px;
+}
+
+#purchasingInstructionsBody tr.purchasing-completed-row td:not(.purchasing-done-cell) {
+    opacity: 0.42;
+    text-decoration: line-through;
+    text-decoration-thickness: 2px;
+}
+
+#purchasingInstructionsBody .purchasing-done-cell {
+    min-width: 52px;
+    text-align: center;
+}
+
 /* --- OPTIMIZED ROW STYLES --- */
 /* 1. Base State: Transparent border reserves the 3px space (Prevents Reflow) */
 .quote-row {

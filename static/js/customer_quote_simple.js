@@ -1172,6 +1172,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     const purchasingInsightsByLineId = new Map();
+    const completedPurchasingLineIds = new Set();
 
     function getPriceInsightLabel(insight) {
         if (!insight || !insight.price_insight) return '-';
@@ -1208,12 +1209,13 @@ document.addEventListener('DOMContentLoaded', function() {
 <table class="table table-sm table-bordered" style="border-collapse:collapse;font-family:Arial, sans-serif;font-size:0.9rem;margin:auto;max-width:1200px;">
   <thead>
     <tr>
-      <th colspan="7" style="padding:6px 8px;border:1px solid #dee2e6;background:#f8f9fa;"></th>
+      <th colspan="8" data-copy-colspan="7" style="padding:6px 8px;border:1px solid #dee2e6;background:#f8f9fa;"></th>
       <th colspan="4" align="center" style="padding:6px 8px;border:1px solid #dee2e6;background:#e8f4e8;">Our Quote</th>
       <th colspan="3" align="center" style="padding:6px 8px;border:1px solid #dee2e6;background:#e8f0f8;">Supplier</th>
       <th colspan="2" style="padding:6px 8px;border:1px solid #dee2e6;background:#f8f9fa;"></th>
     </tr>
     <tr style="background:#f8f9fa;">
+      <th class="purchasing-done-cell" data-copy-exclude>Done</th>
       <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Line</th>
       <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Requested P/N</th>
       <th align="left" style="padding:6px 8px;border:1px solid #dee2e6;">Quoted P/N</th>
@@ -1254,7 +1256,9 @@ document.addEventListener('DOMContentLoaded', function() {
             const cellStyle = 'padding:6px 8px;border:1px solid #dee2e6;';
             const lineInsight = purchasingInsightsByLineId.get(row.rowKey);
 
-            html += `<tr>
+            const isCompleted = completedPurchasingLineIds.has(String(row.rowKey));
+            html += `<tr data-purchasing-line-id="${escapeHtml(row.rowKey)}" class="${isCompleted ? 'purchasing-completed-row' : ''}">
+              <td class="purchasing-done-cell" data-copy-exclude><input type="checkbox" class="form-check-input purchasing-done-checkbox" aria-label="Mark line ${escapeHtml(lineData.line_number || '')} done" ${isCompleted ? 'checked' : ''}></td>
               <td align="left" style="${cellStyle}">${escapeHtml(lineData.line_number || '')}</td>
               <td align="left" style="${cellStyle}">${escapeHtml(requestedPartNumber || '-')}</td>
               <td align="left" style="${cellStyle}">${escapeHtml(quotedPartNumber || '-')}</td>
@@ -1549,6 +1553,21 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    document.getElementById('purchasingInstructionsBody')?.addEventListener('change', function(event) {
+        const checkbox = event.target.closest('.purchasing-done-checkbox');
+        if (!checkbox) return;
+        const row = checkbox.closest('tr[data-purchasing-line-id]');
+        if (!row) return;
+
+        const lineId = row.dataset.purchasingLineId;
+        if (checkbox.checked) {
+            completedPurchasingLineIds.add(lineId);
+        } else {
+            completedPurchasingLineIds.delete(lineId);
+        }
+        row.classList.toggle('purchasing-completed-row', checkbox.checked);
+    });
+
     const loadPurchasingInsightsBtn = document.getElementById('loadPurchasingInsightsBtn');
     if (loadPurchasingInsightsBtn) {
         loadPurchasingInsightsBtn.addEventListener('click', async function() {
@@ -1563,7 +1582,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Copy Purchasing
     document.getElementById('copyPurchasingBtn').addEventListener('click', async function() {
-        const bodyHtml = document.getElementById('purchasingInstructionsBody').innerHTML;
+        const copyBody = document.getElementById('purchasingInstructionsBody').cloneNode(true);
+        copyBody.querySelectorAll('[data-copy-exclude]').forEach(element => element.remove());
+        copyBody.querySelectorAll('[data-copy-colspan]').forEach(element => {
+            element.colSpan = parseInt(element.dataset.copyColspan, 10);
+        });
+        copyBody.querySelectorAll('tr').forEach(row => row.classList.remove('purchasing-completed-row'));
+        const bodyHtml = copyBody.innerHTML;
         const plainText = bodyHtml.replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n\n').replace(/<[^>]+>/g, '').replace(/\n{3,}/g, '\n\n').trim();
         const btn = this;
         const originalHtml = btn.innerHTML;
