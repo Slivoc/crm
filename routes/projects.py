@@ -118,6 +118,20 @@ def _coerce_usage_list(values):
     return usage
 
 
+def _project_parts_total_quantity(total_quantity, usage_by_year):
+    """Return an explicit total, or derive it from the supplied yearly usage."""
+    if total_quantity not in ('', None):
+        try:
+            return int(float(total_quantity))
+        except (TypeError, ValueError):
+            pass
+
+    yearly_values = [value for value in usage_by_year or [] if value is not None]
+    if not yearly_values:
+        return None
+    return int(sum(yearly_values))
+
+
 def _clean_project_parts_lines(raw_lines):
     if isinstance(raw_lines, dict):
         raw_lines = [raw_lines]
@@ -155,14 +169,9 @@ def _insert_project_parts_list_lines(cur, project_id, cleaned_lines):
     next_line = max_row.get('max_line') or 0
 
     for line in cleaned_lines:
-        total_quantity = line['total_quantity']
-        if total_quantity in ('', None):
-            total_quantity = None
-        else:
-            try:
-                total_quantity = int(float(total_quantity))
-            except (TypeError, ValueError):
-                total_quantity = None
+        total_quantity = _project_parts_total_quantity(
+            line['total_quantity'], line['usage_by_year']
+        )
 
         next_line += 1
         _execute_with_cursor(
@@ -1585,14 +1594,9 @@ def project_parts_list_bulk_update(project_id):
             next_line = max_row.get('max_line') or 0
 
             for line in inserts:
-                total_quantity = line['total_quantity']
-                if total_quantity in ('', None):
-                    total_quantity = None
-                else:
-                    try:
-                        total_quantity = int(float(total_quantity))
-                    except (TypeError, ValueError):
-                        total_quantity = None
+                total_quantity = _project_parts_total_quantity(
+                    line['total_quantity'], line['usage_by_year']
+                )
 
                 next_line += 1
                 _execute_with_cursor(
@@ -1618,14 +1622,9 @@ def project_parts_list_bulk_update(project_id):
                 inserted_count += 1
 
         for line in updates:
-            total_quantity = line['total_quantity']
-            if total_quantity in ('', None):
-                total_quantity = None
-            else:
-                try:
-                    total_quantity = int(float(total_quantity))
-                except (TypeError, ValueError):
-                    total_quantity = None
+            total_quantity = _project_parts_total_quantity(
+                line['total_quantity'], line['usage_by_year']
+            )
 
             _execute_with_cursor(
                 cur,
@@ -2763,5 +2762,4 @@ def update_project_status(project_id):
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
-
 
