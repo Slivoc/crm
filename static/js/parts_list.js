@@ -3292,7 +3292,7 @@ function buildProjectImportRowsFromCurrentContext(columns) {
 function initializeProjectPartsListModal() {
     const modalEl = document.getElementById('projectPartsListModal');
     const sheetEl = document.getElementById('project-import-sheet');
-    if (!modalEl || !sheetEl || typeof Handsontable === 'undefined') return;
+    if (!modalEl) return;
 
     const columns = getProjectImportColumns();
     const dropZone = document.getElementById('project-import-drop-zone');
@@ -3306,6 +3306,54 @@ function initializeProjectPartsListModal() {
     const applyMappingBtn = document.getElementById('project-import-apply-mapping-btn');
     const projectNameInput = document.getElementById('project-modal-name-input');
     const projectDescriptionInput = document.getElementById('project-modal-description-input');
+
+    // Party search should remain usable even if the spreadsheet library fails to load.
+    if (partySearchInput && partySearchResults && partyTypeSelect) {
+        let searchTimeout;
+        partySearchInput.addEventListener('input', () => {
+            clearTimeout(searchTimeout);
+            const query = partySearchInput.value.trim();
+            if (query.length < 2) {
+                partySearchResults.innerHTML = '';
+                return;
+            }
+
+            searchTimeout = setTimeout(async () => {
+                try {
+                    if (partyTypeSelect.value === 'supplier') {
+                        const response = await fetch(`/ils/suppliers/search?q=${encodeURIComponent(query)}&limit=15`);
+                        if (!response.ok) throw new Error(`Supplier search returned ${response.status}`);
+                        const data = await response.json();
+                        const suppliers = Array.isArray(data.suppliers) ? data.suppliers : [];
+                        renderProjectPartyResults(suppliers.map(item => ({ id: item.id, name: item.name, type: 'supplier' })));
+                    } else {
+                        const response = await fetch(`/customers/search?q=${encodeURIComponent(query)}&limit=15`);
+                        if (!response.ok) throw new Error(`Customer search returned ${response.status}`);
+                        const customers = await response.json();
+                        renderProjectPartyResults((Array.isArray(customers) ? customers : []).map(item => ({ id: item.id, name: item.name, type: 'customer' })));
+                    }
+                } catch (error) {
+                    console.error('Project party search failed', error);
+                    partySearchResults.innerHTML = '<div style="padding: 0.75rem 1rem; color: #dc3545;">Search failed</div>';
+                }
+            }, 250);
+        });
+
+        partyTypeSelect.addEventListener('change', () => {
+            projectPartsImportSelectedParty = null;
+            partySearchInput.value = '';
+            partySearchResults.innerHTML = '';
+            updateProjectImportSelectedPartyDisplay();
+        });
+
+        document.addEventListener('click', event => {
+            if (!partySearchInput.contains(event.target) && !partySearchResults.contains(event.target)) {
+                partySearchResults.innerHTML = '';
+            }
+        });
+    }
+
+    if (!sheetEl || typeof Handsontable === 'undefined') return;
 
     projectPartsImportHot = new Handsontable(sheetEl, {
         data: createProjectImportEmptyRows(20, columns),
@@ -3442,49 +3490,6 @@ function initializeProjectPartsListModal() {
 
             loadProjectImportRows(rows, columns);
             bootstrap.Modal.getInstance(document.getElementById('projectImportColumnMappingModal')).hide();
-        });
-    }
-
-    if (partySearchInput && partySearchResults && partyTypeSelect) {
-        let searchTimeout;
-        partySearchInput.addEventListener('input', () => {
-            clearTimeout(searchTimeout);
-            const query = partySearchInput.value.trim();
-            if (query.length < 2) {
-                partySearchResults.innerHTML = '';
-                return;
-            }
-
-            searchTimeout = setTimeout(async () => {
-                try {
-                    if (partyTypeSelect.value === 'supplier') {
-                        const response = await fetch(`/ils/suppliers/search?q=${encodeURIComponent(query)}&limit=15`);
-                        const data = await response.json();
-                        const suppliers = Array.isArray(data.suppliers) ? data.suppliers : [];
-                        renderProjectPartyResults(suppliers.map(item => ({ id: item.id, name: item.name, type: 'supplier' })));
-                    } else {
-                        const response = await fetch(`/customers/search?q=${encodeURIComponent(query)}&limit=15`);
-                        const customers = await response.json();
-                        renderProjectPartyResults((Array.isArray(customers) ? customers : []).map(item => ({ id: item.id, name: item.name, type: 'customer' })));
-                    }
-                } catch (error) {
-                    console.error('Project party search failed', error);
-                    partySearchResults.innerHTML = '<div style="padding: 0.75rem 1rem; color: #dc3545;">Search failed</div>';
-                }
-            }, 250);
-        });
-
-        partyTypeSelect.addEventListener('change', () => {
-            projectPartsImportSelectedParty = null;
-            partySearchInput.value = '';
-            partySearchResults.innerHTML = '';
-            updateProjectImportSelectedPartyDisplay();
-        });
-
-        document.addEventListener('click', event => {
-            if (!partySearchInput.contains(event.target) && !partySearchResults.contains(event.target)) {
-                partySearchResults.innerHTML = '';
-            }
         });
     }
 
