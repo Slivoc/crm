@@ -626,6 +626,16 @@ def _fetch_project_qpl_mapped_rows(project_id, limit=None, offset=0, include_sum
 def _fetch_project_parts_list_overview(project_id):
     rows = db_execute(
         """
+        WITH stock AS (
+            SELECT
+                UPPER(TRIM(base_part_number)) AS normalized_base_part_number,
+                SUM(COALESCE(available_quantity, 0)) AS total_available_stock
+            FROM stock_movements
+            WHERE movement_type = 'IN'
+              AND COALESCE(available_quantity, 0) > 0
+              AND TRIM(COALESCE(base_part_number, '')) <> ''
+            GROUP BY UPPER(TRIM(base_part_number))
+        )
         SELECT
             ppl.id AS project_line_id,
             ppl.line_number,
@@ -639,6 +649,7 @@ def _fetch_project_parts_list_overview(project_id):
             ppl.status,
             ppl.parts_list_id,
             ppl.parts_list_line_id,
+            COALESCE(stock.total_available_stock, 0) AS total_available_stock,
             CASE
                 WHEN ppl.parts_list_line_id IS NOT NULL
                      AND EXISTS (
@@ -662,6 +673,10 @@ def _fetch_project_parts_list_overview(project_id):
             pl.name AS parts_list_name
         FROM project_parts_list_lines ppl
         LEFT JOIN parts_lists pl ON pl.id = ppl.parts_list_id
+        LEFT JOIN parts_list_lines pll ON pll.id = ppl.parts_list_line_id
+        LEFT JOIN stock ON stock.normalized_base_part_number = UPPER(TRIM(
+            COALESCE(NULLIF(pll.base_part_number, ''), ppl.customer_part_number)
+        ))
         WHERE ppl.project_id = ?
         ORDER BY ppl.line_number, ppl.id
         """,
@@ -679,6 +694,7 @@ def _fetch_project_parts_list_overview(project_id):
             data['status'] = 'linked' if data.get('parts_list_id') else 'pending'
         data['is_quoted'] = bool(data.get('is_quoted'))
         data['is_costed'] = bool(data.get('is_costed'))
+        data['total_available_stock'] = data.get('total_available_stock') or 0
         formatted.append(data)
     return formatted
 
