@@ -71,7 +71,7 @@
 
 <!-- Email Quote Modal -->
 <div class="modal fade" id="emailQuoteModal" tabindex="-1">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-xl">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title">
@@ -139,15 +139,10 @@
                         I have reviewed these warnings
                     </label>
                 </div>
-                <div class="row mb-3">
-                    <div class="col-md-8">
-                        <div class="mb-3">
-                            <label class="form-label fw-bold">Preview:</label>
-                        </div>
-                    </div>
-                    <div class="col-md-4">
-                        <label class="form-label fw-bold">Include Columns:</label>
-                        <div class="border rounded p-2 bg-light" style="max-height: 200px; overflow-y: auto;">
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Include Columns:</label>
+                    <div class="border rounded p-3 bg-light">
+                        <div class="d-grid gap-2" style="grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));">
                             <div class="form-check">
                                 <input class="form-check-input email-col-check" type="checkbox" id="col-line" value="line" checked>
                                 <label class="form-check-label" for="col-line">Line #</label>
@@ -205,10 +200,10 @@
                                 <label class="form-check-label" for="col-notes">Notes</label>
                             </div>
                         </div>
-                        <button type="button" class="btn btn-sm btn-outline-secondary mt-2 w-100" id="refreshPreviewBtn">
-                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh Preview
-                        </button>
                     </div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary mt-2" id="refreshPreviewBtn">
+                        <i class="bi bi-arrow-clockwise me-1"></i>Refresh Preview
+                    </button>
                 </div>
                 <div class="mb-3">
                     <label class="form-label fw-bold">Body:</label>
