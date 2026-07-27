@@ -232,6 +232,14 @@
                     </select>
                 </div>
                 <div class="col-md-3">
+                    <label for="stockFilter" class="form-label">Stock</label>
+                    <select id="stockFilter" class="form-select form-select-sm">
+                        <option value="all" selected>All</option>
+                        <option value="in_stock">In stock</option>
+                        <option value="out_of_stock">Out of stock</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
                     <label for="prefixLengthFilter" class="form-label">Prefix Group Length</label>
                     <input type="number" id="prefixLengthFilter" class="form-control form-control-sm" min="1" max="25" step="1" value="6">
                 </div>
@@ -316,13 +324,14 @@
                             {% endfor %}
                             <th scope="col">Quoted</th>
                             <th scope="col">Costed</th>
+                            <th scope="col">Stock</th>
                             <th scope="col">Status</th>
                             <th scope="col">Linked List</th>
                         </tr>
                     </thead>
                     <tbody id="projectPartsTableBody">
                         <tr id="projectPartsEmptyState">
-                            <td colspan="{{ 12 + max_usage_years }}" class="text-center text-muted py-4">
+                            <td colspan="{{ 13 + max_usage_years }}" class="text-center text-muted py-4">
                                 {% if line_count == 0 %}
                                     No project parts added yet.
                                 {% else %}
@@ -420,6 +429,7 @@
     const setCategoryCountEl = document.getElementById('setCategoryCount');
     const quotedFilter = document.getElementById('quotedFilter');
     const costedFilter = document.getElementById('costedFilter');
+    const stockFilter = document.getElementById('stockFilter');
     const partNumberIncludeFilter = document.getElementById('partNumberIncludeFilter');
     const partNumberExcludeFilter = document.getElementById('partNumberExcludeFilter');
     const descriptionIncludeFilter = document.getElementById('descriptionIncludeFilter');
@@ -511,6 +521,7 @@
         const rowStatus = rowData.status || 'pending';
         const quoted = !!rowData.is_quoted;
         const costed = !!rowData.is_costed;
+        const availableStock = Number(rowData.total_available_stock) || 0;
         const linkedCell = rowData.parts_list_id
             ? `<a href="/parts-lists/${rowData.parts_list_id}" class="text-decoration-none">${escapeHtml(rowData.parts_list_name || `List #${rowData.parts_list_id}`)}</a>`
             : '<span class="text-muted">-</span>';
@@ -531,6 +542,7 @@
                 data-status="${escapeHtml(rowStatus)}"
                 data-quoted="${quoted ? '1' : '0'}"
                 data-costed="${costed ? '1' : '0'}"
+                data-stock="${availableStock}"
                 class="table-row-${escapeHtml(rowStatus)}"
                 data-search="${escapeHtml(searchValue)}">
                 <td><input class="form-check-input project-line-checkbox" type="checkbox" value="${rowData.project_line_id}"></td>
@@ -544,6 +556,7 @@
                 ${buildUsageCells(rowData.usage_by_year || [])}
                 <td><span class="status-badge status-${quoted ? 'yes' : 'no'}" data-field="quoted_badge">${quoted ? 'Yes' : 'No'}</span></td>
                 <td><span class="status-badge status-${costed ? 'yes' : 'no'}" data-field="costed_badge">${costed ? 'Yes' : 'No'}</span></td>
+                <td data-field="total_available_stock"><span class="${availableStock > 0 ? 'text-success fw-semibold' : 'text-muted'}">${escapeHtml(availableStock.toLocaleString())}</span></td>
                 <td><span class="status-badge status-${escapeHtml(rowStatus)}" data-field="status_badge">${escapeHtml(formatStatusLabel(rowStatus))}</span></td>
                 <td data-field="linked_list">${linkedCell}</td>
             </tr>
@@ -558,7 +571,7 @@
         if (!rowDataList.length) {
             projectPartsTableBody.innerHTML = `
                 <tr>
-                    <td colspan="{{ 12 + max_usage_years }}" class="text-center text-muted py-4">No project parts added yet.</td>
+                    <td colspan="{{ 13 + max_usage_years }}" class="text-center text-muted py-4">No project parts added yet.</td>
                 </tr>
             `;
         } else {
@@ -630,6 +643,7 @@
         const query = (searchInput.value || '').trim().toLowerCase();
         const quotedValue = quotedFilter ? quotedFilter.value : 'all';
         const costedValue = costedFilter ? costedFilter.value : 'all';
+        const stockValue = stockFilter ? stockFilter.value : 'all';
         const pnIncludeTerms = splitFilterTerms(partNumberIncludeFilter ? partNumberIncludeFilter.value : '');
         const pnExcludeTerms = splitFilterTerms(partNumberExcludeFilter ? partNumberExcludeFilter.value : '');
         const descIncludeTerms = splitFilterTerms(descriptionIncludeFilter ? descriptionIncludeFilter.value : '');
@@ -642,15 +656,19 @@
             const matchesStatus = currentStatusFilter === 'all' || row.dataset.status === currentStatusFilter;
             const isQuoted = row.dataset.quoted === '1';
             const isCosted = row.dataset.costed === '1';
+            const hasStock = (Number(row.dataset.stock) || 0) > 0;
             const matchesQuoted = quotedValue === 'all'
                 || (quotedValue === 'yes' && isQuoted)
                 || (quotedValue === 'no' && !isQuoted);
             const matchesCosted = costedValue === 'all'
                 || (costedValue === 'yes' && isCosted)
                 || (costedValue === 'no' && !isCosted);
+            const matchesStock = stockValue === 'all'
+                || (stockValue === 'in_stock' && hasStock)
+                || (stockValue === 'out_of_stock' && !hasStock);
             const matchesPartNumber = matchesIncludeExclude(partNumber, pnIncludeTerms, pnExcludeTerms);
             const matchesDescription = matchesIncludeExclude(description, descIncludeTerms, descExcludeTerms);
-            return matchesQuery && matchesStatus && matchesQuoted && matchesCosted && matchesPartNumber && matchesDescription;
+            return matchesQuery && matchesStatus && matchesQuoted && matchesCosted && matchesStock && matchesPartNumber && matchesDescription;
         });
     }
 
@@ -1043,6 +1061,10 @@
 
     if (costedFilter) {
         costedFilter.addEventListener('change', applyFilters);
+    }
+
+    if (stockFilter) {
+        stockFilter.addEventListener('change', applyFilters);
     }
 
     if (prefixLengthFilter) {
