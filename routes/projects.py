@@ -637,13 +637,23 @@ def _fetch_project_parts_list_overview(project_id):
         """
         WITH stock AS (
             SELECT
-                UPPER(TRIM(base_part_number)) AS normalized_base_part_number,
+                REGEXP_REPLACE(
+                    UPPER(COALESCE(base_part_number, '')),
+                    '[^A-Z0-9]+',
+                    '',
+                    'g'
+                ) AS normalized_base_part_number,
                 SUM(COALESCE(available_quantity, 0)) AS total_available_stock
             FROM stock_movements
             WHERE movement_type = 'IN'
               AND COALESCE(available_quantity, 0) > 0
               AND TRIM(COALESCE(base_part_number, '')) <> ''
-            GROUP BY UPPER(TRIM(base_part_number))
+            GROUP BY REGEXP_REPLACE(
+                UPPER(COALESCE(base_part_number, '')),
+                '[^A-Z0-9]+',
+                '',
+                'g'
+            )
         )
         SELECT
             ppl.id AS project_line_id,
@@ -683,9 +693,12 @@ def _fetch_project_parts_list_overview(project_id):
         FROM project_parts_list_lines ppl
         LEFT JOIN parts_lists pl ON pl.id = ppl.parts_list_id
         LEFT JOIN parts_list_lines pll ON pll.id = ppl.parts_list_line_id
-        LEFT JOIN stock ON stock.normalized_base_part_number = UPPER(TRIM(
-            COALESCE(NULLIF(pll.base_part_number, ''), ppl.customer_part_number)
-        ))
+        LEFT JOIN stock ON stock.normalized_base_part_number = REGEXP_REPLACE(
+            UPPER(COALESCE(NULLIF(pll.base_part_number, ''), ppl.customer_part_number, '')),
+            '[^A-Z0-9]+',
+            '',
+            'g'
+        )
         WHERE ppl.project_id = ?
         ORDER BY ppl.line_number, ppl.id
         """,
@@ -2762,4 +2775,3 @@ def update_project_status(project_id):
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
-
