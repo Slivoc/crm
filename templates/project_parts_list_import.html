@@ -253,9 +253,6 @@
 
     const allColumns = [...baseColumns, ...yearColumns];
 
-    // Find column indices for auto-calculation
-    const totalQtyColIndex = allColumns.findIndex(c => c.key === 'total_quantity');
-    const yearColIndices = yearColumns.map(c => allColumns.findIndex(col => col.key === c.key));
     const lineIdColIndex = allColumns.findIndex(c => c.key === 'line_id');
     const lineNumberColIndex = allColumns.findIndex(c => c.key === 'line_number');
     const partNumberFilterInput = document.getElementById('partNumberFilter');
@@ -270,7 +267,7 @@
     const hot = new Handsontable(container, {
         data: createEmptyRows(minimumRowCount),
         colHeaders: allColumns.map(c => {
-            if (c.key === 'total_quantity') return 'Total Qty (auto)';
+            if (c.key === 'total_quantity') return 'Total Qty (optional)';
             return c.required ? `${c.title} *` : c.title;
         }),
         columns: allColumns.map(col => ({
@@ -305,33 +302,6 @@
                 updateRowCount();
                 updateImportButton();
                 applyPartNumberFilter();
-
-                // Auto-calculate total when year columns change
-                if (changes) {
-                    const rowsToUpdate = new Set();
-                    changes.forEach(([row, prop, oldVal, newVal]) => {
-                        if (prop && prop.startsWith('year_')) {
-                            rowsToUpdate.add(row);
-                        }
-                    });
-
-                    rowsToUpdate.forEach(row => {
-                        const currentTotal = hot.getDataAtCell(row, totalQtyColIndex);
-                        // Only auto-fill if total is empty
-                        if (currentTotal === null || currentTotal === '' || currentTotal === undefined) {
-                            let sum = 0;
-                            yearColIndices.forEach(colIdx => {
-                                const val = hot.getDataAtCell(row, colIdx);
-                                if (val !== null && val !== '' && !isNaN(val)) {
-                                    sum += parseFloat(val);
-                                }
-                            });
-                            if (sum > 0) {
-                                hot.setDataAtCell(row, totalQtyColIndex, sum, 'autoCalc');
-                            }
-                        }
-                    });
-                }
             }
         },
         afterRemoveRow: function() {
@@ -346,31 +316,6 @@
             if (neededRows > currentRows) {
                 hot.alter('insert_row_below', currentRows - 1, neededRows - currentRows);
             }
-        },
-        afterPaste: function(data, coords) {
-            // After paste, auto-calculate totals for affected rows
-            setTimeout(() => {
-                const startRow = coords[0].startRow;
-                const endRow = startRow + data.length;
-                for (let row = startRow; row < endRow; row++) {
-                    const currentTotal = hot.getDataAtCell(row, totalQtyColIndex);
-                    if (currentTotal === null || currentTotal === '' || currentTotal === undefined) {
-                        let sum = 0;
-                        yearColIndices.forEach(colIdx => {
-                            const val = hot.getDataAtCell(row, colIdx);
-                            if (val !== null && val !== '' && !isNaN(val)) {
-                                sum += parseFloat(val);
-                            }
-                        });
-                        if (sum > 0) {
-                            hot.setDataAtCell(row, totalQtyColIndex, sum, 'autoCalc');
-                        }
-                    }
-                }
-                updateRowCount();
-                updateImportButton();
-                applyPartNumberFilter();
-            }, 10);
         }
     });
 
