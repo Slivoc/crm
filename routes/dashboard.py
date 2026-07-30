@@ -1,10 +1,192 @@
-from flask import Blueprint, render_template, jsonify, request, g, current_app
+from flask import Blueprint, render_template, jsonify, request, g, current_app, url_for, send_from_directory
+from flask_login import current_user, login_required
+from werkzeug.utils import secure_filename
 import sqlite3
 from datetime import datetime
 from models import get_db, dict_from_row
 import json
+import os
+import uuid
 
 dashboard_bp = Blueprint('dashboard', __name__)
+
+TV_IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png', 'webp'}
+
+
+def _tv_employee(conn):
+    row = conn.execute('''
+        SELECT name, description, image_path
+        FROM office_dashboard_employee
+        WHERE id = 1
+    ''').fetchone()
+    return dict(row) if row else {'name': '', 'description': '', 'image_path': ''}
+
+
+def _tv_payload(conn):
+    """Build the read-only snapshot used by the office TV presentation."""
+    month_key = datetime.now().strftime('%Y-%m')
+    summary = conn.execute('''
+        SELECT
+            COALESCE(SUM(total_value), 0) AS actual,
+            COUNT(*) AS order_count
+        FROM sales_orders
+        WHERE date_entered >= date_trunc('month', CURRENT_DATE)
+          AND date_entered < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
+    ''').fetchone()
+    target = conn.execute('''
+        SELECT COALESCE(SUM(goal_amount), 0) AS amount
+        FROM salesperson_monthly_goals
+        WHERE target_month = ?
+    ''', (month_key,)).fetchone()
+    biggest_orders = conn.execute('''
+        SELECT so.sales_order_ref, so.total_value, so.date_entered, c.name AS customer_name
+        FROM sales_orders so
+        JOIN customers c ON c.id = so.customer_id
+        WHERE so.date_entered >= date_trunc('month', CURRENT_DATE)
+          AND so.date_entered < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
+        ORDER BY so.total_value DESC NULLS LAST
+        LIMIT 5
+    ''').fetchall()
+    new_customers = conn.execute('''
+        WITH first_orders AS (
+            SELECT customer_id, MIN(date_entered) AS first_order_date
+            FROM sales_orders
+            GROUP BY customer_id
+        )
+        SELECT c.name, fo.first_order_date, COALESCE(SUM(so.total_value), 0) AS month_value
+        FROM first_orders fo
+        JOIN customers c ON c.id = fo.customer_id
+        JOIN sales_orders so ON so.customer_id = fo.customer_id
+        WHERE fo.first_order_date >= date_trunc('month', CURRENT_DATE)
+          AND fo.first_order_date < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
+          AND so.date_entered >= date_trunc('month', CURRENT_DATE)
+          AND so.date_entered < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
+        GROUP BY c.id, c.name, fo.first_order_date
+        ORDER BY fo.first_order_date DESC, c.name
+        LIMIT 5
+    ''').fetchall()
+    news = conn.execute('''
+        SELECT na.title, na.url, na.source_name,
+               COALESCE(na.published_at, na.fetched_at) AS published_at,
+               MAX(acm.relevance_score) AS relevance_score,
+               STRING_AGG(DISTINCT c.name, ', ' ORDER BY c.name) AS customer_names
+        FROM news_articles na
+        LEFT JOIN article_customer_mentions acm ON acm.article_id = na.id
+        LEFT JOIN customers c ON c.id = acm.customer_id
+        WHERE na.duplicate_of_article_id IS NULL
+          AND COALESCE(na.published_at, na.fetched_at) >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+        GROUP BY na.id
+        ORDER BY MAX(COALESCE(acm.relevance_score, 0)) DESC,
+                 COALESCE(na.published_at, na.fetched_at) DESC
+        LIMIT 6
+    ''').fetchall()
+
+    actual = float(summary['actual'] or 0)
+    target_amount = float(target['amount'] or 0)
+    employee = _tv_employee(conn)
+    if employee.get('image_path'):
+        employee['image_url'] = url_for('dashboard.tv_employee_image', filename=os.path.basename(employee['image_path']))
+    else:
+        employee['image_url'] = ''
+    return {
+        'month_label': datetime.now().strftime('%B %Y'),
+        'updated_at': datetime.now().isoformat(timespec='seconds'),
+        'sales': {
+            'actual': actual,
+            'target': target_amount,
+            'remaining': max(target_amount - actual, 0),
+            'percentage': round((actual / target_amount * 100), 1) if target_amount else 0,
+            'order_count': int(summary['order_count'] or 0),
+        },
+        'biggest_orders': [dict(row) for row in biggest_orders],
+        'new_customers': [dict(row) for row in new_customers],
+        'news': [dict(row) for row in news],
+        'employee': employee,
+    }
+
+
+@dashboard_bp.route('/tv')
+@login_required
+def tv_dashboard():
+    conn = get_db()
+    try:
+        payload = _tv_payload(conn)
+    finally:
+        conn.close()
+    return render_template(
+        'dashboard_tv.html',
+        initial_data=payload,
+        can_edit=current_user.is_administrator(),
+    )
+
+
+@dashboard_bp.route('/tv/data')
+@login_required
+def tv_dashboard_data():
+    conn = get_db()
+    try:
+        return jsonify(_tv_payload(conn))
+    finally:
+        conn.close()
+
+
+@dashboard_bp.route('/tv/employee', methods=['POST'])
+@login_required
+def update_tv_employee():
+    if not current_user.is_administrator():
+        return jsonify({'error': 'Administrator access required'}), 403
+
+    name = request.form.get('name', '').strip()
+    description = request.form.get('description', '').strip()
+    if not name or len(name) > 120 or len(description) > 600:
+        return jsonify({'error': 'Enter a name (maximum 120 characters) and a description of up to 600 characters.'}), 400
+
+    image = request.files.get('image')
+    image_path = None
+    if image and image.filename:
+        extension = secure_filename(image.filename).rsplit('.', 1)[-1].lower()
+        if extension not in TV_IMAGE_EXTENSIONS:
+            return jsonify({'error': 'Please upload a JPG, PNG, or WebP image.'}), 400
+        folder = os.path.join(current_app.config['UPLOAD_FOLDER'], 'office-dashboard')
+        os.makedirs(folder, exist_ok=True)
+        filename = f"employee-{uuid.uuid4().hex}.{extension}"
+        image.save(os.path.join(folder, filename))
+        image_path = f'office-dashboard/{filename}'
+
+    conn = get_db()
+    try:
+        existing = conn.execute('SELECT image_path FROM office_dashboard_employee WHERE id = 1').fetchone()
+        if image_path is None:
+            image_path = existing['image_path'] if existing else ''
+        conn.execute('''
+            INSERT INTO office_dashboard_employee (id, name, description, image_path, updated_by, updated_at)
+            VALUES (1, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name,
+                description = EXCLUDED.description,
+                image_path = EXCLUDED.image_path,
+                updated_by = EXCLUDED.updated_by,
+                updated_at = CURRENT_TIMESTAMP
+        ''', (name, description, image_path, current_user.id))
+        conn.commit()
+        employee = _tv_employee(conn)
+        employee['image_url'] = url_for('dashboard.tv_employee_image', filename=os.path.basename(image_path)) if image_path else ''
+        return jsonify({'success': True, 'employee': employee})
+    except Exception:
+        conn.rollback()
+        current_app.logger.exception('Unable to update office dashboard employee')
+        return jsonify({'error': 'Unable to save employee of the month.'}), 500
+    finally:
+        conn.close()
+
+
+@dashboard_bp.route('/tv/employee-image/<path:filename>')
+@login_required
+def tv_employee_image(filename):
+    return send_from_directory(
+        os.path.join(current_app.config['UPLOAD_FOLDER'], 'office-dashboard'),
+        filename,
+    )
 
 
 def close_db(e=None):

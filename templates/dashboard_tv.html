@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sproutt Office Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv.css') }}">
+</head>
+<body>
+<main class="tv-shell" id="tvDashboard">
+    <header class="tv-header">
+        <div class="brand"><span class="brand-mark">S</span><span>SPROUTT</span></div>
+        <div class="month" id="monthLabel"></div>
+        <div class="status"><span class="status-dot"></span><span id="updatedAt">Live</span></div>
+    </header>
+
+    <section class="target-card">
+        <div>
+            <p class="eyebrow">Monthly sales target</p>
+            <div class="target-figures"><strong id="salesActual">€0</strong><span>of <b id="salesTarget">€0</b></span></div>
+        </div>
+        <div class="target-percent" id="salesPercent">0%</div>
+        <div class="progress-track"><div class="progress-fill" id="salesProgress"></div></div>
+        <div class="target-footer"><span id="salesRemaining">No target set</span><span id="orderCount"></span></div>
+    </section>
+
+    <section class="scene-grid">
+        <article class="panel orders-panel">
+            <div class="panel-heading"><span>Biggest orders</span><small>This month</small></div>
+            <ol class="order-list" id="ordersList"></ol>
+        </article>
+        <article class="panel customers-panel">
+            <div class="panel-heading"><span>New customers</span><small>This month</small></div>
+            <div class="customer-total"><strong id="customerCount">0</strong><span>first-time customers</span></div>
+            <div id="customerList" class="customer-list"></div>
+        </article>
+        <article class="panel employee-panel">
+            <div class="panel-heading"><span>Employee of the month</span>
+                {% if can_edit %}<button class="edit-button" id="editEmployee" type="button">Edit</button>{% endif %}
+            </div>
+            <div class="employee-content">
+                <div class="employee-photo-wrap"><img id="employeePhoto" alt=""><span id="employeePlaceholder">★</span></div>
+                <div><h2 id="employeeName">To be announced</h2><p id="employeeDescription">Celebrate a team member here.</p></div>
+            </div>
+        </article>
+    </section>
+
+    <section class="news-ribbon">
+        <div class="news-label">Customer intelligence</div>
+        <div class="news-copy"><strong id="newsTitle">Latest customer and industry news</strong><span id="newsMeta"></span></div>
+        <div class="news-dots" id="newsDots"></div>
+    </section>
+</main>
+
+<div class="wipe" id="sceneWipe"></div>
+{% if can_edit %}
+<dialog id="employeeDialog">
+    <form id="employeeForm" enctype="multipart/form-data">
+        <div class="dialog-heading"><h2>Employee of the month</h2><button type="button" id="closeEmployee" aria-label="Close">×</button></div>
+        <label>Name<input name="name" id="employeeNameInput" maxlength="120" required></label>
+        <label>Description<textarea name="description" id="employeeDescriptionInput" maxlength="600" rows="4"></textarea></label>
+        <label>Picture <small>JPG, PNG or WebP</small><input type="file" name="image" accept="image/jpeg,image/png,image/webp"></label>
+        <p class="form-error" id="employeeError"></p>
+        <button class="save-button" type="submit">Save feature</button>
+    </form>
+</dialog>
+{% endif %}
+<script>window.TV_DASHBOARD_DATA = {{ initial_data|tojson }};</script>
+<script src="{{ url_for('static', filename='js/dashboard-tv.js') }}"></script>
+</body>
+</html>

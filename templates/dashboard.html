@@ -13,9 +13,14 @@
                 <h2 class="fw-bold mb-1">Dashboard</h2>
                 <p class="text-muted">Monitor and analyze your business metrics</p>
             </div>
-            <button type="button" class="btn btn-primary" onclick="addNewPanel()">
-                <i class="bi bi-plus-lg me-1"></i> Add Panel
-            </button>
+            <div class="d-flex gap-2">
+                <a class="btn btn-outline-primary" href="{{ url_for('dashboard.tv_dashboard') }}">
+                    <i class="bi bi-display me-1"></i> TV Mode
+                </a>
+                <button type="button" class="btn btn-primary" onclick="addNewPanel()">
+                    <i class="bi bi-plus-lg me-1"></i> Add Panel
+                </button>
+            </div>
         </div>
     </div>
 </div>
