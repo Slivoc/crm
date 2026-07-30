@@ -52,3 +52,31 @@
     padding-top: .5vh;
     padding-bottom: .5vh;
 }
+
+.orders-panel .order-list li {
+    padding-top: .65vh;
+    padding-bottom: .65vh;
+}
+
+.order-subheading {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: .9vh;
+    padding-top: .85vh;
+    border-top: 1px solid rgba(148, 169, 186, .16);
+    color: var(--gold);
+    text-transform: uppercase;
+    letter-spacing: .11em;
+    font-size: clamp(.62rem, .72vw, .8rem);
+    font-weight: 700;
+}
+
+.order-subheading small {
+    color: var(--muted);
+    letter-spacing: .06em;
+}
+
+.compact-order-list {
+    margin-top: .35vh;
+}

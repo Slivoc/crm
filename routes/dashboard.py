@@ -47,6 +47,16 @@ def _tv_payload(conn):
         ORDER BY so.total_value DESC NULLS LAST
         LIMIT 5
     ''').fetchall()
+    biggest_non_dave_orders = conn.execute('''
+        SELECT so.sales_order_ref, so.total_value, so.date_entered, c.name AS customer_name
+        FROM sales_orders so
+        JOIN customers c ON c.id = so.customer_id
+        WHERE so.date_entered >= date_trunc('month', CURRENT_DATE)
+          AND so.date_entered < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
+          AND so.salesperson_id <> 3
+        ORDER BY so.total_value DESC NULLS LAST
+        LIMIT 3
+    ''').fetchall()
     highest_spending_customers = conn.execute('''
         SELECT c.name, COALESCE(SUM(so.total_value), 0) AS month_value,
                COUNT(*) AS order_count
@@ -110,6 +120,7 @@ def _tv_payload(conn):
             'order_count': int(summary['order_count'] or 0),
         },
         'biggest_orders': [dict(row) for row in biggest_orders],
+        'biggest_non_dave_orders': [dict(row) for row in biggest_non_dave_orders],
         'highest_spending_customers': [dict(row) for row in highest_spending_customers],
         'new_customers': [dict(row) for row in new_customers],
         'news': [dict(row) for row in news],
