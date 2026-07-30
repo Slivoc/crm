@@ -1,0 +1,54 @@
+.top-customer-list {
+    margin-top: 1vh;
+}
+
+.ranked-customer {
+    display: grid;
+    grid-template-columns: 1.4rem minmax(0, 1fr) auto;
+    align-items: center;
+    gap: .45rem;
+    padding-top: .65vh;
+    padding-bottom: .65vh;
+}
+
+.customer-rank {
+    color: var(--cyan);
+    font-size: 1.05rem;
+    font-weight: 800;
+}
+
+.ranked-customer .row-value {
+    font-size: clamp(.72rem, .9vw, 1rem);
+}
+
+.customer-subheading {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 1.25vh 0 .7vh;
+    padding-top: 1vh;
+    border-top: 1px solid rgba(148, 169, 186, .16);
+    color: var(--cyan);
+    text-transform: uppercase;
+    letter-spacing: .11em;
+    font-size: clamp(.62rem, .72vw, .8rem);
+    font-weight: 700;
+}
+
+.customer-subheading small {
+    color: var(--muted);
+    letter-spacing: .06em;
+}
+
+.customer-subheading b {
+    color: var(--mint);
+}
+
+.new-customer-list {
+    gap: .55vh;
+}
+
+.new-customer-list .customer-item {
+    padding-top: .5vh;
+    padding-bottom: .5vh;
+}

@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Sproutt Office Dashboard</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-customers.css') }}">
 </head>
 <body>
 <main class="tv-shell" id="tvDashboard">
@@ -17,7 +18,7 @@
     <section class="target-card">
         <div>
             <p class="eyebrow">Monthly sales target</p>
-            <div class="target-figures"><strong id="salesActual">€0</strong><span>of <b id="salesTarget">€0</b></span></div>
+            <div class="target-figures"><strong id="salesActual">£0</strong><span>of <b id="salesTarget">£0</b></span></div>
         </div>
         <div class="target-percent" id="salesPercent">0%</div>
         <div class="progress-track"><div class="progress-fill" id="salesProgress"></div></div>
@@ -30,9 +31,10 @@
             <ol class="order-list" id="ordersList"></ol>
         </article>
         <article class="panel customers-panel">
-            <div class="panel-heading"><span>New customers</span><small>This month</small></div>
-            <div class="customer-total"><strong id="customerCount">0</strong><span>first-time customers</span></div>
-            <div id="customerList" class="customer-list"></div>
+            <div class="panel-heading"><span>Top customers</span><small>This month</small></div>
+            <div id="topCustomerList" class="customer-list top-customer-list"></div>
+            <div class="customer-subheading"><span>New customers</span><small><b id="customerCount">0</b> this month</small></div>
+            <div id="customerList" class="customer-list new-customer-list"></div>
         </article>
         <article class="panel employee-panel">
             <div class="panel-heading"><span>Employee of the month</span>
