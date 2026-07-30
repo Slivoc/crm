@@ -5,6 +5,11 @@
     const el = id => document.getElementById(id);
     const text = (id, value) => { if (el(id)) el(id).textContent = value; };
 
+    function fitDashboard() {
+        const scale = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+        el('tvDashboard').style.setProperty('--tv-scale', scale);
+    }
+
     function renderNews() {
         const items = data.news || [];
         if (!items.length) {
@@ -70,7 +75,9 @@
         }
     }
 
+    fitDashboard();
     render(data);
+    window.addEventListener('resize', fitDashboard);
     setInterval(() => { newsIndex += 1; renderNews(); }, 9000);
     setInterval(refresh, 60000);
 

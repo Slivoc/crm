@@ -87,3 +87,100 @@
     font-weight: 600;
     white-space: nowrap;
 }
+
+/* Keep the full broadcast layout visible by scaling one 16:9 stage to the viewport. */
+body {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+}
+
+.tv-shell {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 1920px;
+    height: 1080px;
+    min-height: 0;
+    padding: 24px 42px;
+    grid-template-rows: 65px 248px 1fr 119px;
+    gap: 19px;
+    transform: translate(-50%, -50%) scale(var(--tv-scale, .5));
+    transform-origin: center;
+}
+
+.scene-grid {
+    grid-template-columns: 1.45fr 1fr 1.15fr;
+    gap: 25px;
+}
+
+.employee-panel {
+    display: block;
+}
+
+.brand {
+    font-size: 27px;
+}
+
+.month {
+    font-size: 19px;
+}
+
+.status,
+.eyebrow,
+.panel-heading {
+    font-size: 15px;
+}
+
+.target-figures strong {
+    font-size: 78px;
+}
+
+.target-figures span {
+    font-size: 21px;
+}
+
+.target-percent {
+    font-size: 72px;
+}
+
+.target-footer {
+    font-size: 17px;
+}
+
+.row-name {
+    font-size: 21px;
+}
+
+.row-meta {
+    font-size: 14px;
+}
+
+.row-value {
+    font-size: 21px;
+}
+
+.customer-item {
+    font-size: 17px;
+}
+
+.employee-content h2 {
+    font-size: 34px;
+}
+
+.employee-content p {
+    font-size: 17px;
+}
+
+.news-label {
+    font-size: 16px;
+}
+
+.news-copy strong {
+    font-size: 25px;
+}
+
+.news-copy span {
+    font-size: 14px;
+}
