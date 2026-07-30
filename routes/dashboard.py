@@ -63,9 +63,11 @@ def _tv_payload(conn):
     ''').fetchall()
     highest_spending_customers = conn.execute('''
         SELECT c.name, COALESCE(SUM(so.total_value), 0) AS month_value,
-               COUNT(*) AS order_count
+               COUNT(*) AS order_count,
+               STRING_AGG(DISTINCT s.name, ', ' ORDER BY s.name) AS salesperson_names
         FROM sales_orders so
         JOIN customers c ON c.id = so.customer_id
+        LEFT JOIN salespeople s ON s.id = so.salesperson_id
         WHERE so.date_entered >= date_trunc('month', CURRENT_DATE)
           AND so.date_entered < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
         GROUP BY c.id, c.name
@@ -78,10 +80,12 @@ def _tv_payload(conn):
             FROM sales_orders
             GROUP BY customer_id
         )
-        SELECT c.name, fo.first_order_date, COALESCE(SUM(so.total_value), 0) AS month_value
+        SELECT c.name, fo.first_order_date, COALESCE(SUM(so.total_value), 0) AS month_value,
+               STRING_AGG(DISTINCT s.name, ', ' ORDER BY s.name) AS salesperson_names
         FROM first_orders fo
         JOIN customers c ON c.id = fo.customer_id
         JOIN sales_orders so ON so.customer_id = fo.customer_id
+        LEFT JOIN salespeople s ON s.id = so.salesperson_id
         WHERE fo.first_order_date >= date_trunc('month', CURRENT_DATE)
           AND fo.first_order_date < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
           AND so.date_entered >= date_trunc('month', CURRENT_DATE)

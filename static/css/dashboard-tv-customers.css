@@ -80,3 +80,10 @@
 .compact-order-list {
     margin-top: .35vh;
 }
+
+.salesperson-name {
+    color: var(--gold);
+    font-size: .78em;
+    font-weight: 600;
+    white-space: nowrap;
+}
