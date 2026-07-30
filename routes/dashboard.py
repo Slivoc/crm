@@ -39,18 +39,22 @@ def _tv_payload(conn):
         WHERE target_month = ?
     ''', (month_key,)).fetchone()
     biggest_orders = conn.execute('''
-        SELECT so.sales_order_ref, so.total_value, so.date_entered, c.name AS customer_name
+        SELECT so.sales_order_ref, so.total_value, so.date_entered, c.name AS customer_name,
+               s.name AS salesperson_name
         FROM sales_orders so
         JOIN customers c ON c.id = so.customer_id
+        LEFT JOIN salespeople s ON s.id = so.salesperson_id
         WHERE so.date_entered >= date_trunc('month', CURRENT_DATE)
           AND so.date_entered < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
         ORDER BY so.total_value DESC NULLS LAST
         LIMIT 5
     ''').fetchall()
     biggest_non_dave_orders = conn.execute('''
-        SELECT so.sales_order_ref, so.total_value, so.date_entered, c.name AS customer_name
+        SELECT so.sales_order_ref, so.total_value, so.date_entered, c.name AS customer_name,
+               s.name AS salesperson_name
         FROM sales_orders so
         JOIN customers c ON c.id = so.customer_id
+        LEFT JOIN salespeople s ON s.id = so.salesperson_id
         WHERE so.date_entered >= date_trunc('month', CURRENT_DATE)
           AND so.date_entered < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
           AND so.salesperson_id <> 3
