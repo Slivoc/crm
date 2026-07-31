@@ -348,17 +348,21 @@ def get_source(source_id):
     return dict(row) if row else None
 
 
-def list_recent_articles(limit=100):
+def list_recent_articles(limit=100, matched_only=True):
+    match_filter = "HAVING COUNT(acm.id) > 0" if matched_only else ""
     return db_execute(
-        """
+        f"""
         SELECT na.*,
                ns.name AS source_config_name,
-               COUNT(acm.id) AS customer_match_count
+               COUNT(acm.id) AS customer_match_count,
+               STRING_AGG(DISTINCT c.name, ', ' ORDER BY c.name) AS matched_customers
         FROM news_articles na
         LEFT JOIN news_sources ns ON ns.id = na.source_id
         LEFT JOIN article_customer_mentions acm ON acm.article_id = na.id
+        LEFT JOIN customers c ON c.id = acm.customer_id
         WHERE na.duplicate_of_article_id IS NULL
         GROUP BY na.id, ns.name
+        {match_filter}
         ORDER BY COALESCE(na.published_at, na.fetched_at) DESC
         LIMIT ?
         """,
@@ -541,15 +545,34 @@ def discover_webpage_feeds(source):
     for link in soup.find_all("link"):
         link_type = (link.get("type") or "").lower()
         href = link.get("href")
-        if href and ("rss" in link_type or "atom" in link_type or "xml" in link_type):
+        # Do not treat every XML-based asset (notably image/svg+xml favicons)
+        # as a feed. Only HTML alternate links with a feed MIME type qualify.
+        rel = {value.lower() for value in (link.get("rel") or [])}
+        if href and "alternate" in rel and link_type in {
+            "application/rss+xml",
+            "application/atom+xml",
+        }:
             discovered.append((link.get("title") or href, urljoin(source.get("url"), href)))
     for anchor in soup.find_all("a"):
         href = anchor.get("href") or ""
         label = anchor.get_text(" ", strip=True) or href
-        if href and re.search(r"(rss|feed|atom|xml)", href, re.I):
+        # Discovery pages often link to articles whose query string happens to
+        # contain "rss". Require the link text or a feed-looking URL instead.
+        parsed_path = urlparse(href).path.lower()
+        feed_label = re.search(r"\b(rss|atom|feed)\b", label, re.I)
+        feed_path = re.search(r"(?:/feed(?:/|$)|\.(?:rss|atom|xml)$)", parsed_path, re.I)
+        if href and (feed_label or feed_path):
             discovered.append((label, urljoin(source.get("url"), href)))
 
-    for label, url in discovered[:10]:
+    unique_feeds = []
+    seen_urls = set()
+    for label, url in discovered:
+        canonical = normalize_url(url)
+        if canonical and canonical not in seen_urls:
+            seen_urls.add(canonical)
+            unique_feeds.append((label, url))
+
+    for label, url in unique_feeds[:10]:
         _upsert_source(
             f"{source.get('name')} - {label}"[:240],
             "rss",
