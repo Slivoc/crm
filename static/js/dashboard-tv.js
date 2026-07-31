@@ -66,7 +66,13 @@
     }
 
     function markdown(value) {
-        const escaped = escapeHtml(value).replace(/\r\n?/g, '\n');
+        // Models occasionally double-escape JSON newlines or Markdown punctuation.
+        // Normalise those artifacts before escaping HTML and applying our small,
+        // deliberately safe Markdown subset.
+        const normalised = String(value || '')
+            .replace(/\\r\\n|\\n|\\r/g, '\n')
+            .replace(/\\([\\`*_{}\[\]()#+.!|>~•-])/g, '$1');
+        const escaped = escapeHtml(normalised).replace(/\r\n?/g, '\n');
         const inline = line => line
             .replace(/`([^`]+)`/g, '<code>$1</code>')
             .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')

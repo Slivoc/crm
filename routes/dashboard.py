@@ -20,6 +20,13 @@ def _use_mgc_company_name(value):
     return re.sub(r'\bSproutt\b', 'MGC', value or '', flags=re.IGNORECASE)
 
 
+def _normalise_tv_briefing(value):
+    """Clean common JSON/Markdown escaping artifacts from generated briefings."""
+    value = _use_mgc_company_name(value)
+    value = re.sub(r'\\r\\n|\\n|\\r', '\n', value)
+    return re.sub(r'\\([\\`*_{}\[\]()#+.!|>~•-])', r'\1', value)
+
+
 def _tv_employee(conn):
     row = conn.execute('''
         SELECT name, description, image_path
@@ -121,6 +128,7 @@ def _tv_payload(conn):
         )
         SELECT na.id, na.title, na.url, na.source_name, na.summary_raw, na.body_excerpt,
                COALESCE(na.published_at, na.fetched_at) AS published_at,
+               (COALESCE(na.published_at, na.fetched_at)::date = CURRENT_DATE) AS is_today,
                MAX(acm.relevance_score) AS relevance_score,
                STRING_AGG(DISTINCT c.name, ', ' ORDER BY c.name) AS customer_names,
                JSONB_AGG(
@@ -234,6 +242,7 @@ def tv_control():
         }
         for article in payload['news']:
             article['briefing_created_at'] = briefing_dates.get(article['id'])
+        todays_headlines = [article for article in payload['news'] if article.get('is_today')]
     finally:
         conn.close()
 
@@ -241,6 +250,7 @@ def tv_control():
         'dashboard_tv_control.html',
         employee=payload['employee'],
         news=payload['news'],
+        todays_headlines=todays_headlines,
         updated_at=payload['updated_at'],
     )
 
@@ -293,7 +303,7 @@ def tv_extended_news(article_id):
         ''', (article_id,)).fetchone()
         if cached:
             cached_briefing = {
-                key: _use_mgc_company_name(cached[key])
+                key: _normalise_tv_briefing(cached[key])
                 for key in ('summary', 'commercial_angle', 'suggested_action')
             }
             return jsonify({'story': {**dict(article), **cached_briefing}})
@@ -322,7 +332,7 @@ Do not use paragraphs, preambles, headings, citations, or repeated facts. Refer 
             raw = raw.split('\n', 1)[1].rsplit('```', 1)[0]
         briefing = json.loads(raw)
         values = tuple(
-            _use_mgc_company_name(str(briefing.get(field, '')).strip())
+            _normalise_tv_briefing(str(briefing.get(field, '')).strip())
             for field in ('summary', 'commercial_angle', 'suggested_action')
         )
         conn.execute('''
