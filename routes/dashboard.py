@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, jsonify, request, g, current_app, url_for, send_from_directory
+from flask import Blueprint, render_template, jsonify, request, g, current_app, url_for, send_from_directory, flash, redirect
 from flask_login import current_user, login_required
 from werkzeug.utils import secure_filename
 import sqlite3
@@ -208,7 +208,40 @@ def tv_dashboard():
     return render_template(
         'dashboard_tv.html',
         initial_data=payload,
-        can_edit=current_user.is_administrator(),
+    )
+
+
+@dashboard_bp.route('/tv/control')
+@login_required
+def tv_control():
+    """Show administrators exactly what is configured and queued for the office TV."""
+    if not current_user.is_administrator():
+        flash('Administrator access is required to manage the office TV.', 'error')
+        return redirect(url_for('dashboard.tv_dashboard'))
+
+    conn = get_db()
+    try:
+        payload = _tv_payload(conn)
+        cached_briefings = conn.execute('''
+            SELECT article_id, created_at
+            FROM news_ai_summaries
+            WHERE customer_id IS NULL
+              AND model_provider = 'dashboard_perplexity_compact'
+        ''').fetchall()
+        briefing_dates = {
+            row['article_id']: row['created_at']
+            for row in cached_briefings
+        }
+        for article in payload['news']:
+            article['briefing_created_at'] = briefing_dates.get(article['id'])
+    finally:
+        conn.close()
+
+    return render_template(
+        'dashboard_tv_control.html',
+        employee=payload['employee'],
+        news=payload['news'],
+        updated_at=payload['updated_at'],
     )
 
 
@@ -357,6 +390,9 @@ def update_tv_employee():
         conn.commit()
         employee = _tv_employee(conn)
         employee['image_url'] = url_for('dashboard.tv_employee_image', filename=os.path.basename(image_path)) if image_path else ''
+        if request.form.get('next') == 'tv_control':
+            flash('Employee of the month updated.', 'success')
+            return redirect(url_for('dashboard.tv_control'))
         return jsonify({'success': True, 'employee': employee})
     except Exception:
         conn.rollback()

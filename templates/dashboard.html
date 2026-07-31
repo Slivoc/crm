@@ -14,6 +14,11 @@
                 <p class="text-muted">Monitor and analyze your business metrics</p>
             </div>
             <div class="d-flex gap-2">
+                {% if current_user.is_administrator() %}
+                <a class="btn btn-outline-secondary" href="{{ url_for('dashboard.tv_control') }}">
+                    <i class="bi bi-sliders me-1"></i> TV Control
+                </a>
+                {% endif %}
                 <a class="btn btn-outline-primary" href="{{ url_for('dashboard.tv_dashboard') }}">
                     <i class="bi bi-display me-1"></i> TV Mode
                 </a>
