@@ -13,8 +13,10 @@ from models import (
     set_user_permissions,
 )
 from services.customer_news_ingestion import (
+    delete_all_news_sources,
     delete_news_articles,
     delete_news_source,
+    delete_news_sources,
     ingestion_stats,
     list_recent_articles,
     list_sources,
@@ -207,6 +209,38 @@ def delete_news_source_route(source_id):
             flash('News source was not found.', 'warning')
     except Exception as exc:
         flash(f'Unable to delete news source: {exc}', 'error')
+    return redirect(url_for('admin.news_control'))
+
+
+@admin_bp.route('/news/sources/delete', methods=['POST'])
+@admin_required
+def delete_news_sources_route():
+    try:
+        source_ids = [int(value) for value in request.form.getlist('source_ids')]
+    except (TypeError, ValueError):
+        flash('The source selection was invalid.', 'error')
+        return redirect(url_for('admin.news_control'))
+
+    if not source_ids:
+        flash('Select at least one source to delete.', 'warning')
+        return redirect(url_for('admin.news_control'))
+
+    try:
+        deleted_count = delete_news_sources(source_ids)
+        flash(f'Deleted {deleted_count} news source(s). Previously imported articles were retained.', 'success')
+    except Exception as exc:
+        flash(f'Unable to delete news sources: {exc}', 'error')
+    return redirect(url_for('admin.news_control'))
+
+
+@admin_bp.route('/news/sources/delete-all', methods=['POST'])
+@admin_required
+def delete_all_news_sources_route():
+    try:
+        deleted_count = delete_all_news_sources()
+        flash(f'Deleted all {deleted_count} news source(s). Previously imported articles were retained.', 'success')
+    except Exception as exc:
+        flash(f'Unable to delete news sources: {exc}', 'error')
     return redirect(url_for('admin.news_control'))
 
 

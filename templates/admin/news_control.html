@@ -7,7 +7,7 @@
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
     <div>
       <h1 class="h4 mb-1">Customer News Control</h1>
-      <div class="text-muted small">RSS and GDELT ingestion, dedupe, and local customer matching.</div>
+      <div class="text-muted small">RSS ingestion, dedupe, and local customer matching.</div>
     </div>
     <div class="d-flex gap-2">
       <a class="btn btn-outline-dark" href="{{ url_for('admin.export_news_diagnostics') }}">
@@ -15,20 +15,8 @@
       </a>
       <form method="post" action="{{ url_for('admin.run_news_ingestion_route') }}">
         <input type="hidden" name="source_type" value="rss">
-        <button class="btn btn-outline-primary" type="submit">
-          <i class="bi bi-rss me-1"></i> Run RSS
-        </button>
-      </form>
-      <form method="post" action="{{ url_for('admin.run_news_ingestion_route') }}">
-        <input type="hidden" name="source_type" value="gdelt_query">
-        <button class="btn btn-outline-secondary" type="submit">
-          <i class="bi bi-globe2 me-1"></i> Run GDELT
-        </button>
-      </form>
-      <form method="post" action="{{ url_for('admin.run_news_ingestion_route') }}">
-        <input type="hidden" name="source_type" value="all">
         <button class="btn btn-primary" type="submit">
-          <i class="bi bi-arrow-repeat me-1"></i> Run Due Sources
+          <i class="bi bi-arrow-repeat me-1"></i> Run Due RSS Sources
         </button>
       </form>
     </div>
@@ -144,7 +132,6 @@
           <label class="form-label small text-muted" for="news-source-type">Type</label>
           <select class="form-select" id="news-source-type" name="source_type" required>
             <option value="rss">RSS / Atom</option>
-            <option value="gdelt_query">GDELT Query</option>
             <option value="webpage">RSS Discovery Page</option>
             <option value="company_newsroom">Company Newsroom Feed</option>
           </select>
@@ -154,8 +141,13 @@
           <input class="form-control" id="news-source-url" name="url" placeholder="https://example.com/feed.xml">
         </div>
         <div class="col-lg-3">
-          <label class="form-label small text-muted" for="news-source-query">GDELT Query</label>
-          <input class="form-control" id="news-source-query" name="query" placeholder='"offshore helicopter" "contract"'>
+          <label class="form-label small text-muted" for="news-source-query">Search query</label>
+          <div class="input-group">
+            <input class="form-control" id="news-source-query" name="query" placeholder="offshore helicopter contract">
+            <button class="btn btn-outline-secondary" id="populate-google-rss" type="button" title="Build a Google News RSS URL from this query">
+              <i class="bi bi-google me-1"></i> RSS
+            </button>
+          </div>
         </div>
         <div class="col-lg-2">
           <label class="form-label small text-muted" for="news-source-sector">Sector</label>
@@ -193,7 +185,7 @@
           </button>
         </div>
       </div>
-      <div class="small text-muted mt-2">For GDELT sources, enter the search terms in GDELT Query. The URL can be left blank.</div>
+      <div class="small text-muted mt-2">Enter a search query and click Google RSS to populate a ready-to-use Google News RSS feed URL.</div>
     </form>
   </div>
 
@@ -205,7 +197,15 @@
             <h2 class="h6 mb-1">Sources <span class="badge bg-light text-dark">{{ sources|length }}</span></h2>
             <div class="small text-muted">Test a source to preview it without importing anything. Expand a row only when you need to edit it.</div>
           </div>
-          <div class="d-flex gap-2" style="max-width: 460px; width: 100%;">
+          <div class="d-flex gap-2" style="max-width: 620px; width: 100%;">
+            <button class="btn btn-sm btn-outline-danger" type="submit" form="delete-news-sources-form" id="delete-selected-sources" disabled>
+              <i class="bi bi-trash me-1"></i> Delete selected
+            </button>
+            <form method="post" action="{{ url_for('admin.delete_all_news_sources_route') }}" onsubmit="return confirm('NUKE ALL news sources? Imported articles will be kept, but every source configuration will be permanently deleted.');">
+              <button class="btn btn-sm btn-danger text-nowrap" type="submit" title="Delete every source">
+                <i class="bi bi-radioactive me-1"></i> Nuke all
+              </button>
+            </form>
             <input class="form-control form-control-sm" id="news-source-filter" type="search" placeholder="Filter by name, type or sector">
             <select class="form-select form-select-sm" id="news-source-status" style="max-width: 130px;">
               <option value="">All statuses</option>
@@ -215,10 +215,12 @@
             </select>
           </div>
         </div>
+        <form method="post" action="{{ url_for('admin.delete_news_sources_route') }}" id="delete-news-sources-form"></form>
         <div class="table-responsive">
           <table class="table table-sm align-middle mb-0">
             <thead class="table-light">
               <tr>
+                <th class="text-center" style="width: 42px;"><input class="form-check-input" type="checkbox" id="select-all-sources" aria-label="Select all displayed sources"></th>
                 <th>Source</th>
                 <th>Schedule</th>
                 <th>Last Check</th>
@@ -229,6 +231,7 @@
             <tbody>
               {% for source in sources %}
               <tr class="news-source-row {{ '' if source.active else 'table-secondary' }}" data-search="{{ source.name|lower }} {{ source.source_type|lower }} {{ (source.sector_tag or '')|lower }}" data-status="{{ 'error' if source.last_error else ('active' if source.active else 'disabled') }}">
+                <td class="text-center"><input class="form-check-input news-source-checkbox" type="checkbox" name="source_ids" value="{{ source.id }}" form="delete-news-sources-form" aria-label="Select {{ source.name }}"></td>
                 <td>
                     <div class="fw-semibold">{{ source.name }}</div>
                     <div class="small text-muted">{{ source.source_type|replace('_', ' ')|title }}{% if source.sector_tag %} · {{ source.sector_tag }}{% endif %}</div>
@@ -242,7 +245,6 @@
                       <select class="form-select form-select-sm" name="source_type" form="source-form-{{ source.id }}" style="max-width: 150px;">
                         {% for value, label in [
                           ('rss', 'RSS'),
-                          ('gdelt_query', 'GDELT'),
                           ('webpage', 'Discovery'),
                           ('company_newsroom', 'Newsroom')
                         ] %}
@@ -250,7 +252,7 @@
                         {% endfor %}
                       </select>
                     <input class="form-control form-control-sm mb-2" name="url" value="{{ source.url or '' }}" placeholder="URL" form="source-form-{{ source.id }}">
-                    <input class="form-control form-control-sm" name="query" value="{{ source.query or '' }}" placeholder="GDELT query" form="source-form-{{ source.id }}">
+                    <input class="form-control form-control-sm" name="query" value="{{ source.query or '' }}" placeholder="Search query (optional)" form="source-form-{{ source.id }}">
                     <div class="d-flex gap-2 mt-2">
                       <input class="form-control form-control-sm" name="sector_tag" value="{{ source.sector_tag or '' }}" placeholder="Sector" form="source-form-{{ source.id }}">
                       <select class="form-select form-select-sm" name="priority" form="source-form-{{ source.id }}">
@@ -277,29 +279,29 @@
                 <td class="text-end">{{ source.article_count or 0 }}</td>
                 <td class="text-end">
                   <form method="post" action="{{ url_for('admin.update_news_source_route', source_id=source.id) }}" id="source-form-{{ source.id }}"></form>
-                  <button class="btn btn-sm btn-outline-primary mb-2" type="submit" form="source-form-{{ source.id }}">
-                    Save
+                  <button class="btn btn-sm border-0 text-primary p-1" type="submit" form="source-form-{{ source.id }}" title="Save source" aria-label="Save {{ source.name }}">
+                    <i class="bi bi-floppy"></i>
                   </button>
-                  <form method="post" action="{{ url_for('admin.test_news_source_route', source_id=source.id) }}">
-                    <button class="btn btn-sm btn-outline-success mb-2" type="submit" title="Fetch a preview without importing">
-                      <i class="bi bi-play-fill"></i> Test
+                  <form class="d-inline" method="post" action="{{ url_for('admin.test_news_source_route', source_id=source.id) }}">
+                    <button class="btn btn-sm border-0 text-success p-1" type="submit" title="Test source without importing" aria-label="Test {{ source.name }}">
+                      <i class="bi bi-play-fill"></i>
                     </button>
                   </form>
-                  <form method="post" action="{{ url_for('admin.toggle_news_source', source_id=source.id) }}">
+                  <form class="d-inline" method="post" action="{{ url_for('admin.toggle_news_source', source_id=source.id) }}">
                     <input type="hidden" name="active" value="{{ '0' if source.active else '1' }}">
-                    <button class="btn btn-sm btn-outline-secondary" type="submit">
-                      {{ 'Disable' if source.active else 'Enable' }}
+                    <button class="btn btn-sm border-0 text-secondary p-1" type="submit" title="{{ 'Disable' if source.active else 'Enable' }} source" aria-label="{{ 'Disable' if source.active else 'Enable' }} {{ source.name }}">
+                      <i class="bi {{ 'bi-pause-circle' if source.active else 'bi-play-circle' }}"></i>
                     </button>
                   </form>
-                  <form method="post" action="{{ url_for('admin.delete_news_source_route', source_id=source.id) }}" class="mt-2" onsubmit="return confirm('Delete this news source? Previously imported articles will be kept.');">
-                    <button class="btn btn-sm btn-outline-danger" type="submit">
-                      <i class="bi bi-trash me-1"></i> Delete
+                  <form class="d-inline" method="post" action="{{ url_for('admin.delete_news_source_route', source_id=source.id) }}" onsubmit="return confirm('Delete this news source? Previously imported articles will be kept.');">
+                    <button class="btn btn-sm border-0 text-danger p-1" type="submit" title="Delete source" aria-label="Delete {{ source.name }}">
+                      <i class="bi bi-trash"></i>
                     </button>
                   </form>
                 </td>
               </tr>
               {% else %}
-              <tr><td colspan="5" class="text-muted p-3">No sources configured.</td></tr>
+              <tr><td colspan="6" class="text-muted p-3">No sources configured.</td></tr>
               {% endfor %}
             </tbody>
           </table>
@@ -393,6 +395,38 @@
     }
     filter.addEventListener('input', applySourceFilters);
     status.addEventListener('change', applySourceFilters);
+    const selectAllSources = document.getElementById('select-all-sources');
+    const sourceCheckboxes = [...document.querySelectorAll('.news-source-checkbox')];
+    const deleteSelectedSources = document.getElementById('delete-selected-sources');
+    function updateSourceSelection() {
+      const selectedCount = sourceCheckboxes.filter((checkbox) => checkbox.checked).length;
+      deleteSelectedSources.disabled = selectedCount === 0;
+      selectAllSources.checked = sourceCheckboxes.length > 0 && selectedCount === sourceCheckboxes.length;
+      selectAllSources.indeterminate = selectedCount > 0 && selectedCount < sourceCheckboxes.length;
+    }
+    selectAllSources.addEventListener('change', () => {
+      sourceCheckboxes.filter((checkbox) => !checkbox.closest('tr').classList.contains('d-none')).forEach((checkbox) => {
+        checkbox.checked = selectAllSources.checked;
+      });
+      updateSourceSelection();
+    });
+    sourceCheckboxes.forEach((checkbox) => checkbox.addEventListener('change', updateSourceSelection));
+    document.getElementById('delete-news-sources-form').addEventListener('submit', (event) => {
+      const selectedCount = sourceCheckboxes.filter((checkbox) => checkbox.checked).length;
+      if (!selectedCount || !confirm(`Permanently delete ${selectedCount} selected news source(s)? Imported articles will be kept.`)) event.preventDefault();
+    });
+    document.getElementById('populate-google-rss').addEventListener('click', () => {
+      const queryInput = document.getElementById('news-source-query');
+      const query = queryInput.value.trim();
+      if (!query) {
+        queryInput.focus();
+        return;
+      }
+      document.getElementById('news-source-url').value = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-GB&gl=GB&ceid=GB:en`;
+      const nameInput = document.getElementById('news-source-name');
+      if (!nameInput.value.trim()) nameInput.value = `Google News - ${query}`;
+      document.getElementById('news-source-type').value = 'rss';
+    });
     const selectAllArticles = document.getElementById('select-all-articles');
     const articleCheckboxes = [...document.querySelectorAll('.news-article-checkbox')];
     const deleteSelectedArticles = document.getElementById('delete-selected-articles');
