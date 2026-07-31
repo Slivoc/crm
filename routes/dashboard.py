@@ -9,6 +9,7 @@ import os
 import re
 import uuid
 from openai import OpenAI
+from services.customer_news_ingestion import list_recent_articles
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
@@ -193,6 +194,31 @@ def tv_dashboard_data():
         return response
     finally:
         conn.close()
+
+
+@dashboard_bp.route('/tv/headlines')
+@login_required
+def tv_headlines():
+    """Show the latest collected headlines, including their customer matches."""
+    article_rows = list_recent_articles(limit=200, matched_only=False)
+    articles = []
+    matched_count = 0
+    for row in article_rows:
+        article = dict(row)
+        article['customers'] = [
+            name.strip()
+            for name in (article.get('matched_customers') or '').split(',')
+            if name.strip()
+        ]
+        if article['customers']:
+            matched_count += 1
+        articles.append(article)
+
+    return render_template(
+        'dashboard_tv_headlines.html',
+        articles=articles,
+        matched_count=matched_count,
+    )
 
 
 def _perplexity_api_key(conn):

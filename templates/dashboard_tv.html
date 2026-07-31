@@ -12,7 +12,7 @@
     <header class="tv-header">
         <div class="brand"><span class="brand-mark">S</span><span>SPROUTT</span></div>
         <div class="month" id="monthLabel"></div>
-        <div class="status"><span class="status-dot"></span><span id="updatedAt">Live</span></div>
+        <div class="status"><a class="headlines-link" href="{{ url_for('dashboard.tv_headlines') }}">All headlines</a><span class="status-dot"></span><span id="updatedAt">Live</span></div>
     </header>
 
     <section class="target-card">
@@ -50,7 +50,7 @@
     </section>
 
     <section class="news-ribbon">
-        <div class="news-label">Customer intelligence</div>
+        <a class="news-label" href="{{ url_for('dashboard.tv_headlines') }}">Customer intelligence</a>
         <div class="news-copy"><strong id="newsTitle">Latest customer and industry news</strong><span id="newsMeta"></span></div>
         <div class="news-dots" id="newsDots"></div>
     </section>
