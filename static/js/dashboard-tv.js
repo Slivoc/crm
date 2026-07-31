@@ -3,6 +3,7 @@
     let data = window.TV_DASHBOARD_DATA;
     let newsIndex = 0;
     let extendedTimer;
+    let storyScrollTimer;
     const el = id => document.getElementById(id);
     const text = (id, value) => { if (el(id)) el(id).textContent = value; };
 
@@ -61,6 +62,56 @@
         return escapeHtml(value).replace(/`/g, '&#96;');
     }
 
+    function markdown(value) {
+        const escaped = escapeHtml(value).replace(/\r\n?/g, '\n');
+        const inline = line => line
+            .replace(/`([^`]+)`/g, '<code>$1</code>')
+            .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+            .replace(/__([^_]+)__/g, '<strong>$1</strong>')
+            .replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>');
+        const blocks = [];
+        let listType = '';
+        escaped.split('\n').forEach(rawLine => {
+            const line = rawLine.trim();
+            const listMatch = line.match(/^([-*•]|\d+\.)\s+(.+)$/);
+            if (listMatch) {
+                const type = /\d+\./.test(listMatch[1]) ? 'ol' : 'ul';
+                if (listType !== type) {
+                    if (listType) blocks.push(`</${listType}>`);
+                    blocks.push(`<${type}>`);
+                    listType = type;
+                }
+                blocks.push(`<li>${inline(listMatch[2])}</li>`);
+                return;
+            }
+            if (listType) {
+                blocks.push(`</${listType}>`);
+                listType = '';
+            }
+            if (!line) return;
+            const heading = line.match(/^(#{1,3})\s+(.+)$/);
+            blocks.push(heading ? `<h${heading[1].length + 2}>${inline(heading[2])}</h${heading[1].length + 2}>` : `<p>${inline(line)}</p>`);
+        });
+        if (listType) blocks.push(`</${listType}>`);
+        return blocks.join('');
+    }
+
+    function renderMarkdown(id, value) {
+        if (el(id)) el(id).innerHTML = markdown(value || '');
+    }
+
+    function startStoryScroll() {
+        clearInterval(storyScrollTimer);
+        const body = el('storyBody');
+        body.scrollTop = 0;
+        const overflow = body.scrollHeight - body.clientHeight;
+        if (overflow <= 0) return 20000;
+        storyScrollTimer = setInterval(() => {
+            if (body.scrollTop < overflow) body.scrollTop += 1;
+        }, 60);
+        return Math.max(20000, 3000 + overflow * 60 + 3000);
+    }
+
     async function showExtendedStory() {
         const item = (data.news || [])[newsIndex % Math.max((data.news || []).length, 1)];
         if (!item?.id || el('storyScreen').classList.contains('active')) return;
@@ -69,16 +120,17 @@
             if (!response.ok) return;
             const story = (await response.json()).story;
             text('storyTitle', story.title); text('storySource', [story.customer_names, story.source_name].filter(Boolean).join(' · '));
-            text('storySummary', story.summary); text('storyRelevance', story.commercial_angle); text('storyActions', story.suggested_action);
+            renderMarkdown('storySummary', story.summary); renderMarkdown('storyRelevance', story.commercial_angle); renderMarkdown('storyActions', story.suggested_action);
             el('sceneWipe').classList.add('active');
             setTimeout(() => el('storyScreen').classList.add('active'), 450);
             setTimeout(() => el('sceneWipe').classList.remove('active'), 1050);
-            extendedTimer = setTimeout(hideExtendedStory, 20000);
+            setTimeout(() => { extendedTimer = setTimeout(hideExtendedStory, startStoryScroll()); }, 1200);
         } catch (_) { /* Keep the live dashboard running if research is unavailable. */ }
     }
 
     function hideExtendedStory() {
         clearTimeout(extendedTimer);
+        clearInterval(storyScrollTimer);
         el('sceneWipe').classList.add('active');
         setTimeout(() => el('storyScreen').classList.remove('active'), 450);
         setTimeout(() => el('sceneWipe').classList.remove('active'), 1050);

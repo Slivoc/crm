@@ -1021,6 +1021,10 @@ def edit_customer(customer_id):
                 if website.startswith(('http://www.', 'https://www.')):
                     website = website.replace('www.', '', 1)
 
+            logo_url = request.form.get('logo_url', '').strip()
+            if logo_url and not logo_url.startswith(('http://', 'https://')):
+                logo_url = 'https://' + logo_url
+
             # Debug print before update
             print("About to update customer with:", flush=True)
             print(f"customer_id: {customer_id}", flush=True)
@@ -1040,8 +1044,8 @@ def edit_customer(customer_id):
             update_customer(customer_id, name, primary_contact_id, salesperson_id,
                             payment_terms, incoterms, watch, website, notes, country, system_code, currency_id)
             db_execute(
-                'UPDATE customers SET status_id = ? WHERE id = ?',
-                (status_id, customer_id),
+                'UPDATE customers SET status_id = ?, logo_url = ? WHERE id = ?',
+                (status_id, logo_url or None, customer_id),
                 commit=True,
             )
 
