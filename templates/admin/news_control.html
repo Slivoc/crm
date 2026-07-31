@@ -341,7 +341,7 @@
                 </th>
                 <th>Article</th>
                 <th>Source</th>
-                <th>Published</th>
+                <th>{{ 'Matched / published' if article_view == 'matched' else 'Published' }}</th>
                 <th class="text-end">Matches</th>
               </tr>
             </thead>
@@ -366,7 +366,14 @@
                   {% endif %}
                 </td>
                 <td class="small">{{ article.source_name or article.source_domain or article.source_config_name }}</td>
-                <td class="small text-muted">{{ article.published_at or article.fetched_at }}</td>
+                <td class="small text-muted">
+                  {% if article_view == 'matched' and article.last_matched_at %}
+                    <div><span class="text-success">Matched</span> {{ article.last_matched_at }}</div>
+                    <div>Published {{ article.published_at or article.fetched_at }}</div>
+                  {% else %}
+                    {{ article.published_at or article.fetched_at }}
+                  {% endif %}
+                </td>
                 <td class="text-end">{{ article.customer_match_count or 0 }}</td>
               </tr>
               {% else %}

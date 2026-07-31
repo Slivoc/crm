@@ -350,11 +350,21 @@ def get_source(source_id):
 
 def list_recent_articles(limit=100, matched_only=True):
     match_filter = "HAVING COUNT(acm.id) > 0" if matched_only else ""
+    # A due-source run can import older feed entries.  For the customer-match
+    # view those articles need to be ordered by when the match was made, not by
+    # the article's (possibly months-old) publication date, otherwise a
+    # successful run appears to have added nothing to the first 100 rows.
+    order_by = (
+        "MAX(acm.created_at) DESC, COALESCE(na.published_at, na.fetched_at) DESC"
+        if matched_only
+        else "COALESCE(na.published_at, na.fetched_at) DESC"
+    )
     return db_execute(
         f"""
         SELECT na.*,
                ns.name AS source_config_name,
                COUNT(acm.id) AS customer_match_count,
+               MAX(acm.created_at) AS last_matched_at,
                STRING_AGG(DISTINCT c.name, ', ' ORDER BY c.name) AS matched_customers
         FROM news_articles na
         LEFT JOIN news_sources ns ON ns.id = na.source_id
@@ -363,7 +373,7 @@ def list_recent_articles(limit=100, matched_only=True):
         WHERE na.duplicate_of_article_id IS NULL
         GROUP BY na.id, ns.name
         {match_filter}
-        ORDER BY COALESCE(na.published_at, na.fetched_at) DESC
+        ORDER BY {order_by}
         LIMIT ?
         """,
         (limit,),
