@@ -13,6 +13,7 @@ from models import (
     set_user_permissions,
 )
 from services.customer_news_ingestion import (
+    delete_news_articles,
     delete_news_source,
     ingestion_stats,
     list_recent_articles,
@@ -207,6 +208,28 @@ def delete_news_source_route(source_id):
     except Exception as exc:
         flash(f'Unable to delete news source: {exc}', 'error')
     return redirect(url_for('admin.news_control'))
+
+
+@admin_bp.route('/news/articles/delete', methods=['POST'])
+@admin_required
+def delete_news_articles_route():
+    article_view = 'all' if request.form.get('article_view') == 'all' else 'matched'
+    try:
+        article_ids = [int(value) for value in request.form.getlist('article_ids')]
+    except (TypeError, ValueError):
+        flash('The article selection was invalid.', 'error')
+        return redirect(url_for('admin.news_control', articles=article_view))
+
+    if not article_ids:
+        flash('Select at least one article to delete.', 'warning')
+        return redirect(url_for('admin.news_control', articles=article_view))
+
+    try:
+        deleted_count = delete_news_articles(article_ids)
+        flash(f'Deleted {deleted_count} news article(s).', 'success')
+    except Exception as exc:
+        flash(f'Unable to delete news articles: {exc}', 'error')
+    return redirect(url_for('admin.news_control', articles=article_view))
 
 
 @admin_bp.route('/news/export')

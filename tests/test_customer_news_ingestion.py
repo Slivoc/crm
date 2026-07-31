@@ -5,6 +5,7 @@ from services.customer_news_ingestion import (
     SourceRateLimitedError,
     _repair_common_xml_errors,
     delete_news_source,
+    delete_news_articles,
     fetch_gdelt_source,
     fetch_rss_source,
     discover_webpage_feeds,
@@ -74,6 +75,23 @@ class NewsSourceFetchingTests(unittest.TestCase):
         mock_execute.return_value = None
 
         self.assertFalse(delete_news_source(404))
+
+    @patch("services.customer_news_ingestion.db_execute")
+    def test_delete_selected_articles_deduplicates_ids(self, mock_execute):
+        mock_execute.return_value = [{"id": 2}, {"id": 7}]
+
+        self.assertEqual(delete_news_articles([7, 2, 7]), 2)
+        mock_execute.assert_called_once_with(
+            "DELETE FROM news_articles WHERE id IN (?, ?) RETURNING id",
+            (2, 7),
+            fetch="all",
+            commit=True,
+        )
+
+    @patch("services.customer_news_ingestion.db_execute")
+    def test_delete_selected_articles_ignores_empty_selection(self, mock_execute):
+        self.assertEqual(delete_news_articles([]), 0)
+        mock_execute.assert_not_called()
 
     def test_repairs_bare_ampersand_and_xml_control_character(self):
         repaired = _repair_common_xml_errors("Fish & Chips\x0b &amp; More")

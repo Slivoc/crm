@@ -405,6 +405,22 @@ def delete_news_source(source_id):
     return bool(deleted)
 
 
+def delete_news_articles(article_ids):
+    """Delete selected articles and their dependent matches and summaries."""
+    article_ids = sorted({int(article_id) for article_id in article_ids if int(article_id) > 0})
+    if not article_ids:
+        return 0
+
+    placeholders = ", ".join("?" for _ in article_ids)
+    deleted = db_execute(
+        f"DELETE FROM news_articles WHERE id IN ({placeholders}) RETURNING id",
+        tuple(article_ids),
+        fetch="all",
+        commit=True,
+    ) or []
+    return len(deleted)
+
+
 def run_ingestion(source_type=None, limit=50):
     sources = due_sources(limit=limit, source_type=source_type)
     customer_aliases = get_customer_aliases()

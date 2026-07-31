@@ -322,10 +322,21 @@
             <span class="badge bg-light text-dark">{{ articles|length }}</span>
           </div>
         </div>
+        <form method="post" action="{{ url_for('admin.delete_news_articles_route') }}" id="delete-news-articles-form">
+          <input type="hidden" name="article_view" value="{{ article_view }}">
+          <div class="d-flex align-items-center gap-2 px-3 py-2 border-bottom bg-light">
+            <button class="btn btn-sm btn-outline-danger" type="submit" id="delete-selected-articles" disabled>
+              <i class="bi bi-trash me-1"></i> Delete selected
+            </button>
+            <span class="small text-muted" id="selected-article-count">0 selected</span>
+          </div>
         <div class="table-responsive">
           <table class="table table-sm align-middle mb-0">
             <thead class="table-light">
               <tr>
+                <th class="text-center" style="width: 42px;">
+                  <input class="form-check-input" type="checkbox" id="select-all-articles" aria-label="Select all displayed articles">
+                </th>
                 <th>Article</th>
                 <th>Source</th>
                 <th>Published</th>
@@ -335,6 +346,9 @@
             <tbody>
               {% for article in articles %}
               <tr>
+                <td class="text-center">
+                  <input class="form-check-input news-article-checkbox" type="checkbox" name="article_ids" value="{{ article.id }}" aria-label="Select {{ article.title }}">
+                </td>
                 <td>
                   <a class="fw-semibold text-decoration-none" href="{{ article.url }}" target="_blank" rel="noopener">
                     {{ article.title }}
@@ -354,11 +368,12 @@
                 <td class="text-end">{{ article.customer_match_count or 0 }}</td>
               </tr>
               {% else %}
-              <tr><td colspan="4" class="text-muted p-3">{{ 'No customer-matched articles yet. Use All collected to inspect ingestion.' if article_view == 'matched' else 'No articles fetched yet.' }}</td></tr>
+              <tr><td colspan="5" class="text-muted p-3">{{ 'No customer-matched articles yet. Use All collected to inspect ingestion.' if article_view == 'matched' else 'No articles fetched yet.' }}</td></tr>
               {% endfor %}
             </tbody>
           </table>
         </div>
+        </form>
       </div>
     </div>
   </div>
@@ -378,6 +393,28 @@
     }
     filter.addEventListener('input', applySourceFilters);
     status.addEventListener('change', applySourceFilters);
+    const selectAllArticles = document.getElementById('select-all-articles');
+    const articleCheckboxes = [...document.querySelectorAll('.news-article-checkbox')];
+    const deleteSelectedArticles = document.getElementById('delete-selected-articles');
+    const selectedArticleCount = document.getElementById('selected-article-count');
+    function updateArticleSelection() {
+      const selectedCount = articleCheckboxes.filter((checkbox) => checkbox.checked).length;
+      selectedArticleCount.textContent = `${selectedCount} selected`;
+      deleteSelectedArticles.disabled = selectedCount === 0;
+      selectAllArticles.checked = articleCheckboxes.length > 0 && selectedCount === articleCheckboxes.length;
+      selectAllArticles.indeterminate = selectedCount > 0 && selectedCount < articleCheckboxes.length;
+    }
+    selectAllArticles.addEventListener('change', () => {
+      articleCheckboxes.forEach((checkbox) => { checkbox.checked = selectAllArticles.checked; });
+      updateArticleSelection();
+    });
+    articleCheckboxes.forEach((checkbox) => checkbox.addEventListener('change', updateArticleSelection));
+    document.getElementById('delete-news-articles-form').addEventListener('submit', (event) => {
+      const selectedCount = articleCheckboxes.filter((checkbox) => checkbox.checked).length;
+      if (!selectedCount || !confirm(`Permanently delete ${selectedCount} selected news article(s)?`)) {
+        event.preventDefault();
+      }
+    });
     if (document.getElementById('source-test-results')) {
       document.getElementById('source-test-results').scrollIntoView({behavior: 'smooth', block: 'start'});
     }
