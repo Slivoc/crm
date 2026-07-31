@@ -3,7 +3,8 @@
     let data = window.TV_DASHBOARD_DATA;
     let newsIndex = 0;
     let headlineIndex = 0;
-    let extendedTimer;
+    let extendedStoryIndex = 0;
+    let extendedBatchActive = false;
     let storyScrollTimer;
     let portalTimer;
     let headlineTimer;
@@ -122,31 +123,59 @@
         return Math.max(20000, 3000 + overflow * 60 + 3000);
     }
 
-    async function showExtendedStory() {
-        const item = (data.news || [])[newsIndex % Math.max((data.news || []).length, 1)];
-        if (!item?.id || sceneIsActive()) return;
+    const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+
+    async function showExtendedStory(item) {
+        if (!item?.id) return;
         try {
             const response = await fetch(`/dashboard/tv/news/${item.id}/extended`, {headers: {'Accept': 'application/json'}, cache: 'no-store'});
-            if (!response.ok) return;
+            if (!response.ok) return false;
             const story = (await response.json()).story;
             text('storyTitle', story.title); text('storySource', [story.customer_names, story.source_name].filter(Boolean).join(' · '));
             renderMarkdown('storySummary', story.summary); renderMarkdown('storyRelevance', story.commercial_angle); renderMarkdown('storyActions', story.suggested_action);
             el('newsIntroScreen').classList.add('active');
-            setTimeout(() => {
-                el('sceneWipe').classList.add('active');
-                setTimeout(() => { el('newsIntroScreen').classList.remove('active'); el('storyScreen').classList.add('active'); }, 450);
-                setTimeout(() => el('sceneWipe').classList.remove('active'), 1050);
-                setTimeout(() => { extendedTimer = setTimeout(hideExtendedStory, startStoryScroll()); }, 1200);
-            }, 3000);
-        } catch (_) { /* Keep the live dashboard running if research is unavailable. */ }
+            await wait(3000);
+            el('sceneWipe').classList.add('active');
+            await wait(450);
+            el('newsIntroScreen').classList.remove('active');
+            el('storyScreen').classList.add('active');
+            await wait(600);
+            el('sceneWipe').classList.remove('active');
+            await wait(startStoryScroll());
+            clearInterval(storyScrollTimer);
+            el('sceneWipe').classList.add('active');
+            await wait(450);
+            el('storyScreen').classList.remove('active');
+            await wait(600);
+            el('sceneWipe').classList.remove('active');
+            return true;
+        } catch (_) {
+            // Keep the live dashboard running if research is unavailable.
+            el('newsIntroScreen').classList.remove('active');
+            el('storyScreen').classList.remove('active');
+            el('sceneWipe').classList.remove('active');
+            clearInterval(storyScrollTimer);
+            return false;
+        }
     }
 
-    function hideExtendedStory() {
-        clearTimeout(extendedTimer);
-        clearInterval(storyScrollTimer);
-        el('sceneWipe').classList.add('active');
-        setTimeout(() => el('storyScreen').classList.remove('active'), 450);
-        setTimeout(() => el('sceneWipe').classList.remove('active'), 1050);
+    async function showExtendedStoryBatch() {
+        const items = data.news || [];
+        if (!items.length || sceneIsActive()) return;
+
+        extendedBatchActive = true;
+        try {
+            // Use a dedicated cursor so every queued article gets a turn. The
+            // ribbon's faster rotation no longer determines extended stories.
+            const batchSize = Math.min(3, items.length);
+            for (let offset = 0; offset < batchSize; offset += 1) {
+                const item = items[extendedStoryIndex % items.length];
+                extendedStoryIndex = (extendedStoryIndex + 1) % items.length;
+                await showExtendedStory(item);
+            }
+        } finally {
+            extendedBatchActive = false;
+        }
     }
 
     function formatActivityDate(value) {
@@ -169,6 +198,7 @@
     }
 
     function sceneIsActive() {
+        if (extendedBatchActive) return true;
         return ['storyScreen', 'newsIntroScreen', 'portalScreen', 'headlineScreen', 'todayHeadlinesScreen']
             .some(id => el(id).classList.contains('active'));
     }
@@ -256,7 +286,8 @@
     setInterval(showTodayHeadlines, 180000);
     setTimeout(showHeadline, 15000);
     setInterval(showHeadline, 45000);
-    setInterval(showExtendedStory, 90000);
+    setTimeout(showExtendedStoryBatch, 110000);
+    setInterval(showExtendedStoryBatch, 300000);
     setTimeout(showPortalActivity, 30000);
     setInterval(showPortalActivity, 120000);
 
