@@ -2,9 +2,11 @@
     const money = new Intl.NumberFormat('en-GB', {style: 'currency', currency: 'GBP', maximumFractionDigits: 0});
     let data = window.TV_DASHBOARD_DATA;
     let newsIndex = 0;
+    let headlineIndex = 0;
     let extendedTimer;
     let storyScrollTimer;
     let portalTimer;
+    let headlineTimer;
     const el = id => document.getElementById(id);
     const text = (id, value) => { if (el(id)) el(id).textContent = value; };
 
@@ -115,7 +117,7 @@
 
     async function showExtendedStory() {
         const item = (data.news || [])[newsIndex % Math.max((data.news || []).length, 1)];
-        if (!item?.id || el('storyScreen').classList.contains('active')) return;
+        if (!item?.id || sceneIsActive()) return;
         try {
             const response = await fetch(`/dashboard/tv/news/${item.id}/extended`, {headers: {'Accept': 'application/json'}, cache: 'no-store'});
             if (!response.ok) return;
@@ -145,7 +147,7 @@
     }
 
     function showPortalActivity() {
-        if (el('storyScreen').classList.contains('active') || el('newsIntroScreen').classList.contains('active')) return;
+        if (sceneIsActive()) return;
         const activity = data.portal_activity || {};
         const searches = activity.searches || [];
         const quotes = activity.quote_requests || [];
@@ -157,6 +159,35 @@
         setTimeout(() => el('portalScreen').classList.add('active'), 450);
         setTimeout(() => el('sceneWipe').classList.remove('active'), 1050);
         portalTimer = setTimeout(hidePortalActivity, 16000);
+    }
+
+    function sceneIsActive() {
+        return ['storyScreen', 'newsIntroScreen', 'portalScreen', 'headlineScreen']
+            .some(id => el(id).classList.contains('active'));
+    }
+
+    function showHeadline() {
+        const items = data.news || [];
+        if (!items.length || sceneIsActive()) return;
+        const item = items[headlineIndex % items.length];
+        const customers = (item.customers || []).map(customer => customer.name).filter(Boolean);
+        text('headlineTitle', item.title || 'Customer intelligence update');
+        text('headlineCustomers', customers.join(' · ') || item.customer_names || 'Customer match pending');
+        text('headlineSource', item.source_name || 'News feed');
+        text('headlinePublished', item.published_at ? new Date(item.published_at).toLocaleDateString([], {day: '2-digit', month: 'long', year: 'numeric'}) : 'Recently collected');
+        text('headlinePosition', `${(headlineIndex % items.length) + 1} of ${items.length}`);
+        el('sceneWipe').classList.add('active');
+        setTimeout(() => el('headlineScreen').classList.add('active'), 450);
+        setTimeout(() => el('sceneWipe').classList.remove('active'), 1050);
+        headlineTimer = setTimeout(hideHeadline, 14000);
+    }
+
+    function hideHeadline() {
+        clearTimeout(headlineTimer);
+        el('sceneWipe').classList.add('active');
+        setTimeout(() => el('headlineScreen').classList.remove('active'), 450);
+        setTimeout(() => el('sceneWipe').classList.remove('active'), 1050);
+        headlineIndex += 1;
     }
 
     function hidePortalActivity() {
@@ -190,7 +221,9 @@
     window.addEventListener('resize', fitDashboard);
     setInterval(() => { newsIndex += 1; renderNews(); }, 9000);
     setInterval(refresh, 15000);
-    setInterval(showExtendedStory, 60000);
+    setTimeout(showHeadline, 15000);
+    setInterval(showHeadline, 45000);
+    setInterval(showExtendedStory, 90000);
     setTimeout(showPortalActivity, 30000);
     setInterval(showPortalActivity, 120000);
 

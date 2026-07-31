@@ -9,7 +9,6 @@ import os
 import re
 import uuid
 from openai import OpenAI
-from services.customer_news_ingestion import list_recent_articles
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
@@ -103,18 +102,37 @@ def _tv_payload(conn):
         LIMIT 5
     ''').fetchall()
     news = conn.execute('''
+        WITH ranked_customer_articles AS (
+            SELECT acm.article_id, acm.customer_id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY acm.customer_id
+                       ORDER BY COALESCE(na.published_at, na.fetched_at) DESC,
+                                acm.relevance_score DESC,
+                                na.id DESC
+                   ) AS customer_article_rank
+            FROM article_customer_mentions acm
+            JOIN news_articles na ON na.id = acm.article_id
+            WHERE na.duplicate_of_article_id IS NULL
+              AND COALESCE(na.published_at, na.fetched_at) >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+        ), selected_articles AS (
+            SELECT DISTINCT article_id
+            FROM ranked_customer_articles
+            WHERE customer_article_rank <= 3
+        )
         SELECT na.id, na.title, na.url, na.source_name, na.summary_raw, na.body_excerpt,
                COALESCE(na.published_at, na.fetched_at) AS published_at,
                MAX(acm.relevance_score) AS relevance_score,
-               STRING_AGG(DISTINCT c.name, ', ' ORDER BY c.name) AS customer_names
-        FROM news_articles na
-        LEFT JOIN article_customer_mentions acm ON acm.article_id = na.id
-        LEFT JOIN customers c ON c.id = acm.customer_id
-        WHERE na.duplicate_of_article_id IS NULL
-          AND COALESCE(na.published_at, na.fetched_at) >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+               STRING_AGG(DISTINCT c.name, ', ' ORDER BY c.name) AS customer_names,
+               JSONB_AGG(
+                   DISTINCT JSONB_BUILD_OBJECT('id', c.id, 'name', c.name)
+               ) AS customers
+        FROM selected_articles selected
+        JOIN news_articles na ON na.id = selected.article_id
+        JOIN article_customer_mentions acm ON acm.article_id = na.id
+        JOIN customers c ON c.id = acm.customer_id
         GROUP BY na.id
-        ORDER BY MAX(COALESCE(acm.relevance_score, 0)) DESC,
-                 COALESCE(na.published_at, na.fetched_at) DESC
+        ORDER BY COALESCE(na.published_at, na.fetched_at) DESC,
+                 MAX(acm.relevance_score) DESC
         LIMIT 15
     ''').fetchall()
 
@@ -146,6 +164,16 @@ def _tv_payload(conn):
         employee['image_url'] = url_for('dashboard.tv_employee_image', filename=os.path.basename(employee['image_path']))
     else:
         employee['image_url'] = ''
+    news_items = [dict(row) for row in news]
+    for article in news_items:
+        article['customers'] = [
+            {
+                **customer,
+                'url': url_for('customers.get_customer_details', customer_id=customer['id']),
+            }
+            for customer in (article.get('customers') or [])
+        ]
+
     return {
         'month_label': datetime.now().strftime('%B %Y'),
         'updated_at': datetime.now().isoformat(timespec='seconds'),
@@ -160,7 +188,7 @@ def _tv_payload(conn):
         'biggest_non_dave_orders': [dict(row) for row in biggest_non_dave_orders],
         'highest_spending_customers': [dict(row) for row in highest_spending_customers],
         'new_customers': [dict(row) for row in new_customers],
-        'news': [dict(row) for row in news],
+        'news': news_items,
         'portal_activity': {
             'searches': [dict(row) for row in portal_searches],
             'quote_requests': [dict(row) for row in portal_quote_requests],
@@ -194,31 +222,6 @@ def tv_dashboard_data():
         return response
     finally:
         conn.close()
-
-
-@dashboard_bp.route('/tv/headlines')
-@login_required
-def tv_headlines():
-    """Show the latest collected headlines, including their customer matches."""
-    article_rows = list_recent_articles(limit=200, matched_only=False)
-    articles = []
-    matched_count = 0
-    for row in article_rows:
-        article = dict(row)
-        article['customers'] = [
-            name.strip()
-            for name in (article.get('matched_customers') or '').split(',')
-            if name.strip()
-        ]
-        if article['customers']:
-            matched_count += 1
-        articles.append(article)
-
-    return render_template(
-        'dashboard_tv_headlines.html',
-        articles=articles,
-        matched_count=matched_count,
-    )
 
 
 def _perplexity_api_key(conn):
