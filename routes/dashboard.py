@@ -6,12 +6,18 @@ from datetime import datetime
 from models import get_db, dict_from_row
 import json
 import os
+import re
 import uuid
 from openai import OpenAI
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
 TV_IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png', 'webp'}
+
+
+def _use_mgc_company_name(value):
+    """Correct legacy briefings that used the CRM product name as the company name."""
+    return re.sub(r'\bSproutt\b', 'MGC', value or '', flags=re.IGNORECASE)
 
 
 def _tv_employee(conn):
@@ -199,12 +205,16 @@ def tv_extended_news(article_id):
             WHERE article_id = ? AND customer_id IS NULL AND model_provider = 'dashboard_perplexity'
         ''', (article_id,)).fetchone()
         if cached:
-            return jsonify({'story': {**dict(article), **dict(cached)}})
+            cached_briefing = {
+                key: _use_mgc_company_name(cached[key])
+                for key in ('summary', 'commercial_angle', 'suggested_action')
+            }
+            return jsonify({'story': {**dict(article), **cached_briefing}})
 
         api_key = _perplexity_api_key(conn)
         if not api_key:
             return jsonify({'error': 'Perplexity API key is not configured'}), 503
-        prompt = f'''Research and expand this aviation news story for Sproutt, a helicopter parts supplier.
+        prompt = f'''Research and expand this aviation news story for MGC, a helicopter parts supplier. Sproutt is the name of MGC's CRM software, not the company.
 Title: {article['title']}
 Source URL: {article['url']}
 Known customers mentioned: {article['customer_names'] or 'None'}
@@ -212,9 +222,9 @@ Existing excerpt: {article['summary_raw'] or article['body_excerpt'] or 'None'}
 
 Return ONLY valid JSON with these string fields:
 "summary": a concise factual 2-3 paragraph briefing,
-"commercial_angle": specifically how this is relevant to Sproutt and its helicopter-parts customers,
+"commercial_angle": specifically how this is relevant to MGC and its helicopter-parts customers,
 "suggested_action": 3 concrete next steps as short bullet lines beginning with •.
-Use current web research, do not invent facts, and keep the whole response suitable for a TV screen.'''
+Refer to the company only as MGC, never Sproutt. Use current web research, do not invent facts, and keep the whole response suitable for a TV screen.'''
         completion = OpenAI(api_key=api_key, base_url='https://api.perplexity.ai').chat.completions.create(
             model='sonar-pro',
             messages=[{'role': 'system', 'content': 'You are a precise commercial aviation intelligence analyst.'},
@@ -224,7 +234,10 @@ Use current web research, do not invent facts, and keep the whole response suita
         if raw.startswith('```'):
             raw = raw.split('\n', 1)[1].rsplit('```', 1)[0]
         briefing = json.loads(raw)
-        values = tuple(str(briefing.get(field, '')).strip() for field in ('summary', 'commercial_angle', 'suggested_action'))
+        values = tuple(
+            _use_mgc_company_name(str(briefing.get(field, '')).strip())
+            for field in ('summary', 'commercial_angle', 'suggested_action')
+        )
         conn.execute('''
             INSERT INTO news_ai_summaries
                 (article_id, customer_id, model_provider, summary, commercial_angle, suggested_action)

@@ -178,6 +178,17 @@
                 </div>
 
                 <div class="mb-3">
+                  <label for="logo_url" class="form-label">Customer Logo URL:</label>
+                  <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-image" aria-hidden="true"></i></span>
+                    <input type="url" id="logo_url" name="logo_url" class="form-control"
+                           value="{{ customer.get('logo_url', '') or '' }}"
+                           placeholder="https://example.com/logo.png">
+                  </div>
+                  <small class="form-text text-muted">Paste a direct link to the customer's logo. This field is available even when no logo has been set yet.</small>
+                </div>
+
+                <div class="mb-3">
                   <label for="currency_id" class="form-label">Default Currency:</label>
                   <select id="currency_id" name="currency_id" class="form-select" {{ 'disabled' if not can_edit }}>
                     <option value="">Use default currency</option>
