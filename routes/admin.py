@@ -19,6 +19,7 @@ from services.customer_news_ingestion import (
     run_ingestion,
     save_news_source,
     set_source_active,
+    test_source,
     update_news_source,
 )
 admin_bp = Blueprint('admin', __name__, url_prefix='/admin')
@@ -110,12 +111,17 @@ def create_user_route():
 @admin_required
 def news_control():
     ensure_seed_news_sources()
+    return _render_news_control()
+
+
+def _render_news_control(**context):
     return render_template(
         'admin/news_control.html',
         stats=ingestion_stats(),
         sources=list_sources(),
         articles=list_recent_articles(limit=100),
         ingestion_job=NEWS_INGESTION_JOB,
+        **context,
     )
 
 
@@ -186,6 +192,17 @@ def toggle_news_source(source_id):
     return redirect(url_for('admin.news_control'))
 
 
+@admin_bp.route('/news/sources/<int:source_id>/test', methods=['POST'])
+@admin_required
+def test_news_source_route(source_id):
+    """Preview one source without importing its articles or changing last_checked_at."""
+    try:
+        result = test_source(source_id)
+        return _render_news_control(source_test=result)
+    except Exception as exc:
+        return _render_news_control(source_test={'error': str(exc), 'source_id': source_id})
+
+
 def _start_news_ingestion_background(source_type=None):
     with NEWS_INGESTION_LOCK:
         if NEWS_INGESTION_JOB.get('running'):
@@ -223,5 +240,4 @@ def _start_news_ingestion_background(source_type=None):
 
     threading.Thread(target=worker, name='news-ingestion-admin', daemon=True).start()
     return True
-
 
