@@ -41,6 +41,18 @@ class NewsSourceFetchingTests(unittest.TestCase):
         query = mock_execute.call_args.args[0]
         self.assertIn("HAVING COUNT(acm.id) > 0", query)
         self.assertIn("STRING_AGG(DISTINCT c.name", query)
+        self.assertIn("MAX(acm.created_at) AS last_matched_at", query)
+        self.assertIn("ORDER BY MAX(acm.created_at) DESC", query)
+
+    @patch("services.customer_news_ingestion.db_execute")
+    def test_all_articles_remain_ordered_by_publication_date(self, mock_execute):
+        mock_execute.return_value = []
+
+        list_recent_articles(matched_only=False)
+
+        query = mock_execute.call_args.args[0]
+        self.assertNotIn("HAVING COUNT(acm.id) > 0", query)
+        self.assertIn("ORDER BY COALESCE(na.published_at, na.fetched_at) DESC", query)
 
     @patch("services.customer_news_ingestion._upsert_source")
     @patch("services.customer_news_ingestion._http_get")
