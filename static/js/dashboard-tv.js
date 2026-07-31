@@ -7,6 +7,7 @@
     let storyScrollTimer;
     let portalTimer;
     let headlineTimer;
+    let todayHeadlinesTimer;
     const el = id => document.getElementById(id);
     const text = (id, value) => { if (el(id)) el(id).textContent = value; };
 
@@ -168,8 +169,32 @@
     }
 
     function sceneIsActive() {
-        return ['storyScreen', 'newsIntroScreen', 'portalScreen', 'headlineScreen']
+        return ['storyScreen', 'newsIntroScreen', 'portalScreen', 'headlineScreen', 'todayHeadlinesScreen']
             .some(id => el(id).classList.contains('active'));
+    }
+
+    function showTodayHeadlines() {
+        if (sceneIsActive()) return;
+        const items = (data.news || []).filter(item => item.is_today).slice(0, 8);
+        if (!items.length) return;
+        el('todayHeadlinesList').innerHTML = items.map((item, index) => `
+            <li>
+                <span>${String(index + 1).padStart(2, '0')}</span>
+                <div><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml([item.customer_names, item.source_name].filter(Boolean).join(' · '))}</small></div>
+            </li>`).join('');
+        text('todayHeadlinesDate', new Date().toLocaleDateString([], {weekday: 'long', day: 'numeric', month: 'long'}));
+        text('todayHeadlinesCount', `${items.length} headline${items.length === 1 ? '' : 's'} today`);
+        el('sceneWipe').classList.add('active');
+        setTimeout(() => el('todayHeadlinesScreen').classList.add('active'), 450);
+        setTimeout(() => el('sceneWipe').classList.remove('active'), 1050);
+        todayHeadlinesTimer = setTimeout(hideTodayHeadlines, 18000);
+    }
+
+    function hideTodayHeadlines() {
+        clearTimeout(todayHeadlinesTimer);
+        el('sceneWipe').classList.add('active');
+        setTimeout(() => el('todayHeadlinesScreen').classList.remove('active'), 450);
+        setTimeout(() => el('sceneWipe').classList.remove('active'), 1050);
     }
 
     function showHeadline() {
@@ -227,6 +252,8 @@
     window.addEventListener('resize', fitDashboard);
     setInterval(() => { newsIndex += 1; renderNews(); }, 9000);
     setInterval(refresh, 15000);
+    setTimeout(showTodayHeadlines, 8000);
+    setInterval(showTodayHeadlines, 180000);
     setTimeout(showHeadline, 15000);
     setInterval(showHeadline, 45000);
     setInterval(showExtendedStory, 90000);
