@@ -9,11 +9,15 @@ from xml.etree import ElementTree
 import requests
 from bs4 import BeautifulSoup
 
-from db import execute as db_execute, db_cursor
+from db import execute as db_execute
 
 
 GDELT_ENDPOINT = "https://api.gdeltproject.org/api/v2/doc/doc"
 REQUEST_TIMEOUT = 10
+
+
+class SourceRateLimitedError(RuntimeError):
+    """Raised when an upstream news service asks ingestion to slow down."""
 
 TRACKING_PARAMS = {
     "utm_source",
@@ -335,6 +339,15 @@ def list_sources():
     ) or []
 
 
+def get_source(source_id):
+    row = db_execute(
+        "SELECT * FROM news_sources WHERE id = ?",
+        (source_id,),
+        fetch="one",
+    )
+    return dict(row) if row else None
+
+
 def list_recent_articles(limit=100):
     return db_execute(
         """
@@ -413,7 +426,25 @@ def run_ingestion(source_type=None, limit=50):
         except Exception as exc:
             result["errors"].append({"source": source.get("name"), "error": str(exc)})
             _mark_source_error(source["id"], str(exc))
+            # Continuing through a list of GDELT queries after a 429 only makes
+            # the upstream throttle last longer. Leave the remaining sources
+            # due so that the next scheduled run can pick them up.
+            if isinstance(exc, SourceRateLimitedError):
+                break
     return result
+
+
+def test_source(source_id, article_limit=20):
+    """Fetch one configured source without inserting articles or changing its schedule."""
+    source = get_source(source_id)
+    if not source:
+        raise ValueError("News source not found.")
+    articles = fetch_source(source)
+    return {
+        "source": source,
+        "articles": articles[:article_limit],
+        "article_count": len(articles),
+    }
 
 
 def fetch_source(source):
@@ -442,7 +473,19 @@ def fetch_rss_source(source):
     if not text.startswith("<"):
         raise ValueError("Source did not return XML/HTML content")
 
-    root = ElementTree.fromstring(response.content)
+    try:
+        root = ElementTree.fromstring(response.content)
+    except ElementTree.ParseError as original_error:
+        # A surprising number of otherwise useful feeds contain a bare '&' or
+        # an illegal control character in an old article. Recover those common
+        # publisher mistakes while still rejecting content that is not XML.
+        cleaned = _repair_common_xml_errors(response.text)
+        try:
+            root = ElementTree.fromstring(cleaned)
+        except ElementTree.ParseError as repaired_error:
+            raise ValueError(
+                f"Invalid RSS XML ({repaired_error}). The publisher's feed could not be repaired."
+            ) from original_error
     items = []
     channel = root.find("channel")
     if channel is not None:
@@ -519,6 +562,12 @@ def fetch_gdelt_source(source):
             "maxrecords": 100,
         },
     )
+    if response.status_code == 429:
+        retry_after = response.headers.get("Retry-After")
+        retry_message = f" Try again in {retry_after} seconds." if retry_after else " Try again later."
+        raise SourceRateLimitedError(
+            "GDELT rate limit reached; remaining GDELT sources were skipped." + retry_message
+        )
     response.raise_for_status()
     data = response.json()
     articles = []
@@ -536,6 +585,11 @@ def fetch_gdelt_source(source):
             )
         )
     return [item for item in articles if item.get("title") and item.get("url")]
+
+
+def _repair_common_xml_errors(text):
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text or "")
+    return re.sub(r"&(?!#\d+;|#x[0-9a-fA-F]+;|[A-Za-z][A-Za-z0-9]+;)", "&amp;", text)
 
 
 def _child_text(node, path, ns=None):

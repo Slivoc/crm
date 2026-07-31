@@ -4,7 +4,7 @@
 
 {% block content %}
 <div class="container-fluid py-3">
-  <div class="d-flex justify-content-between align-items-center mb-3">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
     <div>
       <h1 class="h4 mb-1">Customer News Control</h1>
       <div class="text-muted small">RSS and GDELT ingestion, dedupe, and local customer matching.</div>
@@ -92,11 +92,46 @@
   </div>
   {% endif %}
 
-  <div class="border rounded bg-white mb-3">
-    <div class="p-3 border-bottom">
-      <h2 class="h6 mb-0">Add Source</h2>
+  {% if source_test %}
+  <div class="alert {{ 'alert-danger' if source_test.error else 'alert-success' }} mb-3" id="source-test-results">
+    <div class="d-flex justify-content-between align-items-start gap-3">
+      <div class="w-100">
+        <h2 class="h6 mb-2">
+          <i class="bi bi-beaker me-1"></i> Source test
+          {% if source_test.source %}— {{ source_test.source.name }}{% endif %}
+        </h2>
+        {% if source_test.error %}
+          <div>{{ source_test.error }}</div>
+        {% else %}
+          <div class="small mb-2">Found {{ source_test.article_count }} article(s). This was a preview only; nothing was imported.</div>
+          <div class="list-group list-group-flush border rounded bg-white">
+            {% for article in source_test.articles %}
+              <a class="list-group-item list-group-item-action py-2" href="{{ article.url }}" target="_blank" rel="noopener">
+                <div class="fw-semibold">{{ article.title }}</div>
+                <div class="small text-muted">{{ article.published_at or 'No publication date' }}{% if article.source_name %} · {{ article.source_name }}{% endif %}</div>
+              </a>
+            {% else %}
+              <div class="list-group-item text-muted">The source responded successfully but returned no usable articles.</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      </div>
+      <a class="btn-close" href="{{ url_for('admin.news_control') }}" aria-label="Close"></a>
     </div>
-    <form method="post" action="{{ url_for('admin.add_news_source') }}" class="p-3">
+  </div>
+  {% endif %}
+
+  <div class="border rounded bg-white mb-3">
+    <div class="p-3 d-flex justify-content-between align-items-center">
+      <div>
+        <h2 class="h6 mb-1">Add a source</h2>
+        <div class="small text-muted">Keep this closed when you are reviewing existing sources.</div>
+      </div>
+      <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#add-news-source" aria-expanded="false">
+        <i class="bi bi-plus-lg me-1"></i> Add source
+      </button>
+    </div>
+    <form method="post" action="{{ url_for('admin.add_news_source') }}" class="p-3 border-top collapse" id="add-news-source">
       <div class="row g-2 align-items-end">
         <div class="col-lg-3">
           <label class="form-label small text-muted" for="news-source-name">Name</label>
@@ -163,8 +198,19 @@
     <div class="col-12">
       <div class="border rounded bg-white mb-3">
         <div class="d-flex justify-content-between align-items-center p-3 border-bottom">
-          <h2 class="h6 mb-0">Sources</h2>
-          <span class="badge bg-light text-dark">{{ sources|length }}</span>
+          <div>
+            <h2 class="h6 mb-1">Sources <span class="badge bg-light text-dark">{{ sources|length }}</span></h2>
+            <div class="small text-muted">Test a source to preview it without importing anything. Expand a row only when you need to edit it.</div>
+          </div>
+          <div class="d-flex gap-2" style="max-width: 460px; width: 100%;">
+            <input class="form-control form-control-sm" id="news-source-filter" type="search" placeholder="Filter by name, type or sector">
+            <select class="form-select form-select-sm" id="news-source-status" style="max-width: 130px;">
+              <option value="">All statuses</option>
+              <option value="active">Active</option>
+              <option value="disabled">Disabled</option>
+              <option value="error">With errors</option>
+            </select>
+          </div>
         </div>
         <div class="table-responsive">
           <table class="table table-sm align-middle mb-0">
@@ -179,10 +225,17 @@
             </thead>
             <tbody>
               {% for source in sources %}
-              <tr class="{{ '' if source.active else 'table-secondary' }}">
+              <tr class="news-source-row {{ '' if source.active else 'table-secondary' }}" data-search="{{ source.name|lower }} {{ source.source_type|lower }} {{ (source.sector_tag or '')|lower }}" data-status="{{ 'error' if source.last_error else ('active' if source.active else 'disabled') }}">
                 <td>
-                    <div class="d-flex gap-2 mb-2">
-                      <input class="form-control form-control-sm fw-semibold" name="name" value="{{ source.name }}" form="source-form-{{ source.id }}" required>
+                    <div class="fw-semibold">{{ source.name }}</div>
+                    <div class="small text-muted">{{ source.source_type|replace('_', ' ')|title }}{% if source.sector_tag %} · {{ source.sector_tag }}{% endif %}</div>
+                    {% if source.last_error %}
+                      <div class="small text-danger mt-1"><i class="bi bi-exclamation-triangle me-1"></i>{{ source.last_error[:180] }}</div>
+                    {% endif %}
+                    <details class="mt-2">
+                      <summary class="small text-primary" style="cursor: pointer;">Edit configuration</summary>
+                      <div class="pt-2">
+                      <input class="form-control form-control-sm fw-semibold mb-2" name="name" value="{{ source.name }}" form="source-form-{{ source.id }}" required>
                       <select class="form-select form-select-sm" name="source_type" form="source-form-{{ source.id }}" style="max-width: 150px;">
                         {% for value, label in [
                           ('rss', 'RSS'),
@@ -193,15 +246,9 @@
                           <option value="{{ value }}" {% if source.source_type == value %}selected{% endif %}>{{ label }}</option>
                         {% endfor %}
                       </select>
-                    </div>
                     <input class="form-control form-control-sm mb-2" name="url" value="{{ source.url or '' }}" placeholder="URL" form="source-form-{{ source.id }}">
                     <input class="form-control form-control-sm" name="query" value="{{ source.query or '' }}" placeholder="GDELT query" form="source-form-{{ source.id }}">
-                    {% if source.last_error %}
-                      <div class="small text-danger mt-1">{{ source.last_error[:140] }}</div>
-                    {% endif %}
-                </td>
-                <td>
-                    <div class="d-flex gap-2 mb-2">
+                    <div class="d-flex gap-2 mt-2">
                       <input class="form-control form-control-sm" name="sector_tag" value="{{ source.sector_tag or '' }}" placeholder="Sector" form="source-form-{{ source.id }}">
                       <select class="form-select form-select-sm" name="priority" form="source-form-{{ source.id }}">
                         {% for priority in [5, 4, 3, 2, 1] %}
@@ -209,13 +256,19 @@
                         {% endfor %}
                       </select>
                     </div>
-                    <div class="d-flex gap-2">
+                    <div class="d-flex gap-2 mt-2">
                       <input class="form-control form-control-sm" type="number" min="15" step="15" name="check_frequency_minutes" value="{{ source.check_frequency_minutes or 1440 }}" title="Check frequency in minutes" form="source-form-{{ source.id }}">
                       <select class="form-select form-select-sm" name="active" form="source-form-{{ source.id }}">
                         <option value="1" {% if source.active %}selected{% endif %}>Active</option>
                         <option value="0" {% if not source.active %}selected{% endif %}>Disabled</option>
                       </select>
                     </div>
+                      </div>
+                    </details>
+                </td>
+                <td>
+                    <span class="badge {{ 'bg-success' if source.active else 'bg-secondary' }}">{{ 'Active' if source.active else 'Disabled' }}</span>
+                    <div class="small text-muted mt-1">P{{ source.priority }} · every {{ source.check_frequency_minutes or 1440 }} min</div>
                 </td>
                 <td class="small text-muted">{{ source.last_checked_at or 'Never' }}</td>
                 <td class="text-end">{{ source.article_count or 0 }}</td>
@@ -224,6 +277,11 @@
                   <button class="btn btn-sm btn-outline-primary mb-2" type="submit" form="source-form-{{ source.id }}">
                     Save
                   </button>
+                  <form method="post" action="{{ url_for('admin.test_news_source_route', source_id=source.id) }}">
+                    <button class="btn btn-sm btn-outline-success mb-2" type="submit" title="Fetch a preview without importing">
+                      <i class="bi bi-play-fill"></i> Test
+                    </button>
+                  </form>
                   <form method="post" action="{{ url_for('admin.toggle_news_source', source_id=source.id) }}">
                     <input type="hidden" name="active" value="{{ '0' if source.active else '1' }}">
                     <button class="btn btn-sm btn-outline-secondary" type="submit">
@@ -285,4 +343,24 @@
     </div>
   </div>
 </div>
+<script>
+  (() => {
+    const filter = document.getElementById('news-source-filter');
+    const status = document.getElementById('news-source-status');
+    const rows = [...document.querySelectorAll('.news-source-row')];
+    function applySourceFilters() {
+      const term = filter.value.trim().toLowerCase();
+      rows.forEach((row) => {
+        const matchesText = !term || row.dataset.search.includes(term);
+        const matchesStatus = !status.value || row.dataset.status === status.value;
+        row.classList.toggle('d-none', !(matchesText && matchesStatus));
+      });
+    }
+    filter.addEventListener('input', applySourceFilters);
+    status.addEventListener('change', applySourceFilters);
+    if (document.getElementById('source-test-results')) {
+      document.getElementById('source-test-results').scrollIntoView({behavior: 'smooth', block: 'start'});
+    }
+  })();
+</script>
 {% endblock %}
