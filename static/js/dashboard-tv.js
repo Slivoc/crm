@@ -6,9 +6,13 @@
     let extendedStoryIndex = 0;
     let extendedBatchActive = false;
     let storyScrollTimer;
-    let portalTimer;
+    // Retained by the dormant legacy scene helpers below; those scenes are no
+    // longer scheduled now that the presentation has one deterministic loop.
     let headlineTimer;
     let todayHeadlinesTimer;
+    const MAIN_DASHBOARD_DURATION = 45000;
+    const PORTAL_ACTIVITY_DURATION = 16000;
+    const EXTENDED_STORIES_PER_CYCLE = 5;
     const el = id => document.getElementById(id);
     const text = (id, value) => { if (el(id)) el(id).textContent = value; };
 
@@ -126,11 +130,22 @@
     const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
     async function showExtendedStory(item) {
-        if (!item?.id) return;
+        if (!item?.id) return false;
+        let story = {
+            ...item,
+            summary: item.summary_raw || item.body_excerpt || 'No additional article summary is available yet.',
+            commercial_angle: item.customer_names
+                ? `Linked customer intelligence: ${item.customer_names}`
+                : 'Relevant aviation intelligence for the commercial team.',
+            suggested_action: 'Review the source article and discuss any customer opportunities.'
+        };
         try {
             const response = await fetch(`/dashboard/tv/news/${item.id}/extended`, {headers: {'Accept': 'application/json'}, cache: 'no-store'});
-            if (!response.ok) return false;
-            const story = (await response.json()).story;
+            if (response.ok) story = (await response.json()).story;
+        } catch (_) {
+            // Use the snapshot detail below when live research is unavailable.
+        }
+        try {
             text('storyTitle', story.title); text('storySource', [story.customer_names, story.source_name].filter(Boolean).join(' · '));
             renderMarkdown('storySummary', story.summary); renderMarkdown('storyRelevance', story.commercial_angle); renderMarkdown('storyActions', story.suggested_action);
             el('newsIntroScreen').classList.add('active');
@@ -150,7 +165,7 @@
             el('sceneWipe').classList.remove('active');
             return true;
         } catch (_) {
-            // Keep the live dashboard running if research is unavailable.
+            // Keep the live dashboard running if a scene transition is interrupted.
             el('newsIntroScreen').classList.remove('active');
             el('storyScreen').classList.remove('active');
             el('sceneWipe').classList.remove('active');
@@ -167,7 +182,7 @@
         try {
             // Use a dedicated cursor so every queued article gets a turn. The
             // ribbon's faster rotation no longer determines extended stories.
-            const batchSize = Math.min(3, items.length);
+            const batchSize = Math.min(EXTENDED_STORIES_PER_CYCLE, items.length);
             for (let offset = 0; offset < batchSize; offset += 1) {
                 const item = items[extendedStoryIndex % items.length];
                 extendedStoryIndex = (extendedStoryIndex + 1) % items.length;
@@ -182,19 +197,23 @@
         return value ? new Date(value).toLocaleString([], {day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'}) : '';
     }
 
-    function showPortalActivity() {
-        if (sceneIsActive()) return;
+    async function showPortalActivity() {
+        if (sceneIsActive()) return false;
         const activity = data.portal_activity || {};
         const searches = activity.searches || [];
         const quotes = activity.quote_requests || [];
-        if (!searches.length && !quotes.length) return;
+        if (!searches.length && !quotes.length) return false;
         const labels = {quote_analysis: 'Quote search', manual_quote_search: 'Quote search', common_parts: 'Common parts', pricing_agreements: 'Pricing agreement', suggested_parts: 'Suggested parts'};
         el('portalSearches').innerHTML = searches.slice(0, 6).map(row => `<div class="portal-row"><div><strong>${escapeHtml(row.customer_name)}</strong><span>${escapeHtml(row.user_name || labels[row.search_type] || row.search_type)}</span></div><div><b>${Number(row.parts_count || 0)} parts</b><span>${formatActivityDate(row.date_searched)}</span></div></div>`).join('') || '<div class="portal-empty">No recent searches</div>';
         el('portalQuotes').innerHTML = quotes.slice(0, 6).map(row => `<div class="portal-row"><div><strong>${escapeHtml(row.customer_name)}</strong><span>${escapeHtml(row.reference_number || 'Quote request')}</span></div><div><b>${Number(row.line_count || 0)} lines · ${escapeHtml(row.status || 'New')}</b><span>${formatActivityDate(row.date_submitted)}</span></div></div>`).join('') || '<div class="portal-empty">No quote requests</div>';
         el('sceneWipe').classList.add('active');
-        setTimeout(() => el('portalScreen').classList.add('active'), 450);
-        setTimeout(() => el('sceneWipe').classList.remove('active'), 1050);
-        portalTimer = setTimeout(hidePortalActivity, 16000);
+        await wait(450);
+        el('portalScreen').classList.add('active');
+        await wait(600);
+        el('sceneWipe').classList.remove('active');
+        await wait(PORTAL_ACTIVITY_DURATION);
+        await hidePortalActivity();
+        return true;
     }
 
     function sceneIsActive() {
@@ -251,11 +270,12 @@
         headlineIndex += 1;
     }
 
-    function hidePortalActivity() {
-        clearTimeout(portalTimer);
+    async function hidePortalActivity() {
         el('sceneWipe').classList.add('active');
-        setTimeout(() => el('portalScreen').classList.remove('active'), 450);
-        setTimeout(() => el('sceneWipe').classList.remove('active'), 1050);
+        await wait(450);
+        el('portalScreen').classList.remove('active');
+        await wait(600);
+        el('sceneWipe').classList.remove('active');
     }
 
     function customerWithSalesperson(customerName, salespersonName) {
@@ -277,18 +297,21 @@
         }
     }
 
+    async function runPresentation() {
+        // One loop owns every full-screen scene, so timer collisions cannot
+        // randomly skip content. Each return to metrics follows a full batch.
+        while (true) {
+            await wait(MAIN_DASHBOARD_DURATION);
+            await showPortalActivity();
+            await showExtendedStoryBatch();
+        }
+    }
+
     fitDashboard();
     render(data);
     window.addEventListener('resize', fitDashboard);
     setInterval(() => { newsIndex += 1; renderNews(); }, 9000);
     setInterval(refresh, 15000);
-    setTimeout(showTodayHeadlines, 8000);
-    setInterval(showTodayHeadlines, 180000);
-    setTimeout(showHeadline, 15000);
-    setInterval(showHeadline, 45000);
-    setTimeout(showExtendedStoryBatch, 110000);
-    setInterval(showExtendedStoryBatch, 300000);
-    setTimeout(showPortalActivity, 30000);
-    setInterval(showPortalActivity, 120000);
+    runPresentation();
 
 })();

@@ -317,6 +317,13 @@
             <div class="small text-muted">{{ 'Only articles matched to a CRM customer are shown.' if article_view == 'matched' else 'Includes unmatched industry news for diagnostics.' }}</div>
           </div>
           <div class="d-flex align-items-center gap-2">
+            <select class="form-select form-select-sm" id="news-selection-filter" style="max-width: 190px;" aria-label="Filter articles by selection">
+              <option value="">All selection states</option>
+              <option value="chosen">Chosen anywhere</option>
+              <option value="nightly">Nightly email preview</option>
+              <option value="tv">Dashboard / TV</option>
+              <option value="neither">Not currently chosen</option>
+            </select>
             <div class="btn-group btn-group-sm" role="group" aria-label="Article view">
               <a class="btn {{ 'btn-primary' if article_view == 'matched' else 'btn-outline-primary' }}" href="{{ url_for('admin.news_control', articles='matched') }}">Customer matches</a>
               <a class="btn {{ 'btn-primary' if article_view == 'all' else 'btn-outline-primary' }}" href="{{ url_for('admin.news_control', articles='all') }}">All collected</a>
@@ -335,7 +342,7 @@
         <div class="table-responsive">
           <table class="table table-sm align-middle mb-0">
             <thead class="table-light">
-              <tr>
+              <tr class="news-article-row" data-nightly="{{ '1' if article.selected_for_nightly_precheck else '0' }}" data-tv="{{ '1' if article.selected_for_tv else '0' }}">
                 <th class="text-center" style="width: 42px;">
                   <input class="form-check-input" type="checkbox" id="select-all-articles" aria-label="Select all displayed articles">
                 </th>
@@ -364,6 +371,12 @@
                   {% if article.matched_customers %}
                     <div class="small text-success mt-1"><i class="bi bi-building me-1"></i>{{ article.matched_customers }}</div>
                   {% endif %}
+                  <div class="mt-1 d-flex flex-wrap gap-1">
+                    {% if article.selected_for_nightly_precheck %}<span class="badge bg-primary" title="The final semantic duplicate check runs immediately before sending and can still remove this item.">Nightly preview{% if article.nightly_salespeople %}: {{ article.nightly_salespeople }}{% endif %}</span>{% endif %}
+                    {% if article.selected_for_tv %}<span class="badge bg-info text-dark">Dashboard / TV</span>{% endif %}
+                    {% if not article.selected_for_nightly_precheck and not article.selected_for_tv %}<span class="badge bg-light text-muted border">Not selected</span>{% endif %}
+                    {% if article.max_relevance_score is not none %}<span class="badge bg-light text-dark border">Score {{ article.max_relevance_score }}</span>{% endif %}
+                  </div>
                 </td>
                 <td class="small">{{ article.source_name or article.source_domain or article.source_config_name }}</td>
                 <td class="small text-muted">
@@ -389,6 +402,21 @@
 </div>
 <script>
   (() => {
+    const selectionFilter = document.getElementById('news-selection-filter');
+    const articleRows = [...document.querySelectorAll('.news-article-row')];
+    function applyArticleFilter() {
+      const value = selectionFilter.value;
+      articleRows.forEach((row) => {
+        const nightly = row.dataset.nightly === '1';
+        const tv = row.dataset.tv === '1';
+        const visible = !value || (value === 'chosen' && (nightly || tv)) ||
+          (value === 'nightly' && nightly) || (value === 'tv' && tv) ||
+          (value === 'neither' && !nightly && !tv);
+        row.classList.toggle('d-none', !visible);
+      });
+    }
+    selectionFilter.addEventListener('change', applyArticleFilter);
+
     const filter = document.getElementById('news-source-filter');
     const status = document.getElementById('news-source-status');
     const rows = [...document.querySelectorAll('.news-source-row')];

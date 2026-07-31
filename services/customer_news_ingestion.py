@@ -361,11 +361,39 @@ def list_recent_articles(limit=100, matched_only=True):
     )
     return db_execute(
         f"""
+        WITH tv_ranked AS (
+            SELECT acm.article_id,
+                   ROW_NUMBER() OVER (PARTITION BY acm.customer_id ORDER BY COALESCE(na.published_at, na.fetched_at) DESC, acm.relevance_score DESC, na.id DESC) AS item_rank
+            FROM article_customer_mentions acm
+            JOIN news_articles na ON na.id = acm.article_id
+            WHERE na.duplicate_of_article_id IS NULL
+              AND COALESCE(na.published_at, na.fetched_at) >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+        ), nightly_ranked AS (
+            SELECT acm.article_id, c.salesperson_id,
+                   ROW_NUMBER() OVER (PARTITION BY c.salesperson_id ORDER BY COALESCE(c.watch, FALSE) DESC, acm.relevance_score DESC, COALESCE(na.published_at, na.fetched_at) DESC, na.id DESC) AS item_rank
+            FROM article_customer_mentions acm
+            JOIN news_articles na ON na.id = acm.article_id
+            JOIN customers c ON c.id = acm.customer_id
+            WHERE c.salesperson_id IS NOT NULL
+              AND na.duplicate_of_article_id IS NULL
+              AND COALESCE(na.published_at, na.fetched_at) >= CURRENT_TIMESTAMP - INTERVAL '45 days'
+              AND acm.relevance_score >= 40
+              AND NOT EXISTS (
+                  SELECT 1 FROM sent_customer_news scn
+                  WHERE scn.salesperson_id = c.salesperson_id AND scn.customer_id = c.id
+                    AND scn.sent_at >= CURRENT_TIMESTAMP - INTERVAL '90 days'
+                    AND LOWER(REGEXP_REPLACE(scn.headline, '[^[:alnum:]_]+', '', 'g')) = LOWER(REGEXP_REPLACE(na.title, '[^[:alnum:]_]+', '', 'g'))
+              )
+        )
         SELECT na.*,
                ns.name AS source_config_name,
                COUNT(acm.id) AS customer_match_count,
+               MAX(acm.relevance_score) AS max_relevance_score,
                MAX(acm.created_at) AS last_matched_at,
-               STRING_AGG(DISTINCT c.name, ', ' ORDER BY c.name) AS matched_customers
+               STRING_AGG(DISTINCT c.name, ', ' ORDER BY c.name) AS matched_customers,
+               EXISTS (SELECT 1 FROM tv_ranked x WHERE x.article_id = na.id AND x.item_rank <= 3) AS selected_for_tv,
+               EXISTS (SELECT 1 FROM nightly_ranked x WHERE x.article_id = na.id AND x.item_rank <= 20) AS selected_for_nightly_precheck,
+               (SELECT STRING_AGG(DISTINCT s.name, ', ' ORDER BY s.name) FROM nightly_ranked x JOIN salespeople s ON s.id = x.salesperson_id WHERE x.article_id = na.id AND x.item_rank <= 20) AS nightly_salespeople
         FROM news_articles na
         LEFT JOIN news_sources ns ON ns.id = na.source_id
         LEFT JOIN article_customer_mentions acm ON acm.article_id = na.id
