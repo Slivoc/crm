@@ -141,7 +141,6 @@ def _tv_payload(conn):
         GROUP BY na.id
         ORDER BY COALESCE(na.published_at, na.fetched_at) DESC,
                  MAX(acm.relevance_score) DESC
-        LIMIT 15
     ''').fetchall()
 
     portal_searches = conn.execute('''
@@ -242,7 +241,6 @@ def tv_control():
         }
         for article in payload['news']:
             article['briefing_created_at'] = briefing_dates.get(article['id'])
-        todays_headlines = [article for article in payload['news'] if article.get('is_today')]
     finally:
         conn.close()
 
@@ -250,7 +248,6 @@ def tv_control():
         'dashboard_tv_control.html',
         employee=payload['employee'],
         news=payload['news'],
-        todays_headlines=todays_headlines,
         updated_at=payload['updated_at'],
     )
 
