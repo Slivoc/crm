@@ -128,7 +128,7 @@
 
     const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
-    async function showExtendedStory(item) {
+    async function showExtendedStory(item, {firstStory = false, lastStory = false} = {}) {
         if (!item?.id) return false;
         let story = {
             ...item,
@@ -145,23 +145,32 @@
             // Use the snapshot detail below when live research is unavailable.
         }
         try {
+            // Keep the previous story visible until the wipe covers it.
+            if (!firstStory) {
+                el('sceneWipe').classList.add('active');
+                await wait(450);
+            }
             text('storyTitle', story.title); text('storySource', [story.customer_names, story.source_name].filter(Boolean).join(' · '));
             renderMarkdown('storySummary', story.summary); renderMarkdown('storyRelevance', story.commercial_angle); renderMarkdown('storyActions', story.suggested_action);
-            el('newsIntroScreen').classList.add('active');
-            await wait(3000);
-            el('sceneWipe').classList.add('active');
-            await wait(450);
-            el('newsIntroScreen').classList.remove('active');
+            if (firstStory) {
+                el('newsIntroScreen').classList.add('active');
+                await wait(3000);
+                el('sceneWipe').classList.add('active');
+                await wait(450);
+                el('newsIntroScreen').classList.remove('active');
+            }
             el('storyScreen').classList.add('active');
             await wait(600);
             el('sceneWipe').classList.remove('active');
             await wait(startStoryScroll());
             clearInterval(storyScrollTimer);
-            el('sceneWipe').classList.add('active');
-            await wait(450);
-            el('storyScreen').classList.remove('active');
-            await wait(600);
-            el('sceneWipe').classList.remove('active');
+            if (lastStory) {
+                el('sceneWipe').classList.add('active');
+                await wait(450);
+                el('storyScreen').classList.remove('active');
+                await wait(600);
+                el('sceneWipe').classList.remove('active');
+            }
             return true;
         } catch (_) {
             // Keep the live dashboard running if a scene transition is interrupted.
@@ -186,7 +195,10 @@
             for (let offset = 0; offset < EXTENDED_STORIES_PER_CYCLE; offset += 1) {
                 const item = items[extendedStoryIndex % items.length];
                 extendedStoryIndex = (extendedStoryIndex + 1) % items.length;
-                await showExtendedStory(item);
+                await showExtendedStory(item, {
+                    firstStory: offset === 0,
+                    lastStory: offset === EXTENDED_STORIES_PER_CYCLE - 1
+                });
             }
         } finally {
             extendedBatchActive = false;
