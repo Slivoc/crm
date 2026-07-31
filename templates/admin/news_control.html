@@ -310,8 +310,17 @@
     <div class="col-12">
       <div class="border rounded bg-white">
         <div class="d-flex justify-content-between align-items-center p-3 border-bottom">
-          <h2 class="h6 mb-0">Recent Articles</h2>
-          <span class="badge bg-light text-dark">{{ articles|length }}</span>
+          <div>
+            <h2 class="h6 mb-0">{{ 'Customer News' if article_view == 'matched' else 'All Collected Articles' }}</h2>
+            <div class="small text-muted">{{ 'Only articles matched to a CRM customer are shown.' if article_view == 'matched' else 'Includes unmatched industry news for diagnostics.' }}</div>
+          </div>
+          <div class="d-flex align-items-center gap-2">
+            <div class="btn-group btn-group-sm" role="group" aria-label="Article view">
+              <a class="btn {{ 'btn-primary' if article_view == 'matched' else 'btn-outline-primary' }}" href="{{ url_for('admin.news_control', articles='matched') }}">Customer matches</a>
+              <a class="btn {{ 'btn-primary' if article_view == 'all' else 'btn-outline-primary' }}" href="{{ url_for('admin.news_control', articles='all') }}">All collected</a>
+            </div>
+            <span class="badge bg-light text-dark">{{ articles|length }}</span>
+          </div>
         </div>
         <div class="table-responsive">
           <table class="table table-sm align-middle mb-0">
@@ -336,13 +345,16 @@
                   {% if article.body_excerpt %}
                     <div class="small text-muted">{{ article.body_excerpt[:180] }}</div>
                   {% endif %}
+                  {% if article.matched_customers %}
+                    <div class="small text-success mt-1"><i class="bi bi-building me-1"></i>{{ article.matched_customers }}</div>
+                  {% endif %}
                 </td>
                 <td class="small">{{ article.source_name or article.source_domain or article.source_config_name }}</td>
                 <td class="small text-muted">{{ article.published_at or article.fetched_at }}</td>
                 <td class="text-end">{{ article.customer_match_count or 0 }}</td>
               </tr>
               {% else %}
-              <tr><td colspan="4" class="text-muted p-3">No articles fetched yet.</td></tr>
+              <tr><td colspan="4" class="text-muted p-3">{{ 'No customer-matched articles yet. Use All collected to inspect ingestion.' if article_view == 'matched' else 'No articles fetched yet.' }}</td></tr>
               {% endfor %}
             </tbody>
           </table>

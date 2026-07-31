@@ -111,15 +111,19 @@ def create_user_route():
 @admin_bp.route('/news')
 @admin_required
 def news_control():
-    return _render_news_control()
+    article_view = request.args.get('articles', 'matched')
+    return _render_news_control(article_view=article_view)
 
 
 def _render_news_control(**context):
+    article_view = context.pop('article_view', request.args.get('articles', 'matched'))
+    article_view = 'all' if article_view == 'all' else 'matched'
     return render_template(
         'admin/news_control.html',
         stats=ingestion_stats(),
         sources=list_sources(),
-        articles=list_recent_articles(limit=100),
+        articles=list_recent_articles(limit=100, matched_only=article_view == 'matched'),
+        article_view=article_view,
         ingestion_job=NEWS_INGESTION_JOB,
         **context,
     )

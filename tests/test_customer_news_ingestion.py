@@ -7,6 +7,8 @@ from services.customer_news_ingestion import (
     delete_news_source,
     fetch_gdelt_source,
     fetch_rss_source,
+    discover_webpage_feeds,
+    list_recent_articles,
 )
 
 
@@ -27,6 +29,34 @@ class FakeResponse:
 
 
 class NewsSourceFetchingTests(unittest.TestCase):
+    @patch("services.customer_news_ingestion.db_execute")
+    def test_recent_articles_default_to_customer_matches(self, mock_execute):
+        mock_execute.return_value = []
+
+        list_recent_articles()
+
+        query = mock_execute.call_args.args[0]
+        self.assertIn("HAVING COUNT(acm.id) > 0", query)
+        self.assertIn("STRING_AGG(DISTINCT c.name", query)
+
+    @patch("services.customer_news_ingestion._upsert_source")
+    @patch("services.customer_news_ingestion._http_get")
+    def test_discovery_ignores_svg_and_article_links_with_rss_query(self, mock_get, mock_upsert):
+        mock_get.return_value = FakeResponse(
+            '<html><head>'
+            '<link rel="icon" type="image/svg+xml" href="/favicon.svg">'
+            '<link rel="alternate" type="application/rss+xml" href="/news.xml" title="News">'
+            '</head><body>'
+            '<a href="/article?f=/rss">Press release</a>'
+            '<a href="/feeds/contracts">RSS contracts</a>'
+            '</body></html>'
+        )
+
+        discover_webpage_feeds({"name": "Publisher", "url": "https://example.com/rss"})
+
+        urls = [call.kwargs["url"] for call in mock_upsert.call_args_list]
+        self.assertEqual(urls, ["https://example.com/news.xml", "https://example.com/feeds/contracts"])
+
     @patch("services.customer_news_ingestion.db_execute")
     def test_delete_source_retains_articles_via_foreign_key_behavior(self, mock_execute):
         mock_execute.return_value = {"id": 17}
