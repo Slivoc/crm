@@ -54,6 +54,17 @@ class NewsSourceFetchingTests(unittest.TestCase):
         self.assertNotIn("HAVING COUNT(acm.id) > 0", query)
         self.assertIn("ORDER BY COALESCE(na.published_at, na.fetched_at) DESC", query)
 
+    @patch("services.customer_news_ingestion.db_execute")
+    def test_selected_articles_can_be_prioritized_before_limit(self, mock_execute):
+        mock_execute.return_value = []
+
+        list_recent_articles(prioritize_selected=True)
+
+        query = mock_execute.call_args.args[0]
+        order_by = query.split("ORDER BY", 1)[1]
+        self.assertIn("EXISTS (SELECT 1 FROM tv_ranked", order_by)
+        self.assertIn("EXISTS (SELECT 1 FROM nightly_ranked", order_by)
+
     @patch("services.customer_news_ingestion._upsert_source")
     @patch("services.customer_news_ingestion._http_get")
     def test_discovery_ignores_svg_and_article_links_with_rss_query(self, mock_get, mock_upsert):

@@ -125,7 +125,11 @@ def _render_news_control(**context):
         'admin/news_control.html',
         stats=ingestion_stats(),
         sources=list_sources(),
-        articles=list_recent_articles(limit=100, matched_only=article_view == 'matched'),
+        articles=list_recent_articles(
+            limit=100,
+            matched_only=article_view == 'matched',
+            prioritize_selected=True,
+        ),
         article_view=article_view,
         ingestion_job=NEWS_INGESTION_JOB,
         **context,

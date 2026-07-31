@@ -27,6 +27,36 @@ def _normalise_tv_briefing(value):
     return re.sub(r'\\([\\`*_{}\[\]()#+.!|>~•-])', r'\1', value)
 
 
+def _normalise_tv_briefing_fields(briefing):
+    """Return the three TV sections, recovering JSON leaked into one field."""
+    fields = ('summary', 'commercial_angle', 'suggested_action')
+    values = {
+        field: _normalise_tv_briefing(str(briefing.get(field) or '').strip())
+        for field in fields
+    }
+
+    # Some model responses (and therefore cached rows) put the remainder of
+    # the JSON object inside ``summary``. Split those labelled sections back
+    # out instead of displaying JSON syntax on the TV.
+    marker = re.compile(
+        r'\s*,?\s*["\']?(commercial_angle|suggested_action)["\']?\s*:\s*["\']?',
+        re.IGNORECASE,
+    )
+    parts = marker.split(values['summary'])
+    if len(parts) > 1:
+        values['summary'] = parts[0]
+        for index in range(1, len(parts), 2):
+            field = parts[index].lower()
+            if index + 1 < len(parts) and not values[field]:
+                values[field] = parts[index + 1]
+
+    for field in fields:
+        values[field] = values[field].strip().strip('{}').strip()
+        values[field] = re.sub(r'["\']\s*,?\s*$', '', values[field]).strip()
+        values[field] = re.sub(r'^["\']', '', values[field]).strip()
+    return values
+
+
 def _tv_employee(conn):
     row = conn.execute('''
         SELECT name, description, image_path
@@ -299,10 +329,7 @@ def tv_extended_news(article_id):
             WHERE article_id = ? AND customer_id IS NULL AND model_provider = 'dashboard_perplexity_compact'
         ''', (article_id,)).fetchone()
         if cached:
-            cached_briefing = {
-                key: _normalise_tv_briefing(cached[key])
-                for key in ('summary', 'commercial_angle', 'suggested_action')
-            }
+            cached_briefing = _normalise_tv_briefing_fields(cached)
             return jsonify({'story': {**dict(article), **cached_briefing}})
 
         api_key = _perplexity_api_key(conn)
@@ -328,10 +355,8 @@ Do not use paragraphs, preambles, headings, citations, or repeated facts. Refer 
         if raw.startswith('```'):
             raw = raw.split('\n', 1)[1].rsplit('```', 1)[0]
         briefing = json.loads(raw)
-        values = tuple(
-            _normalise_tv_briefing(str(briefing.get(field, '')).strip())
-            for field in ('summary', 'commercial_angle', 'suggested_action')
-        )
+        normalised = _normalise_tv_briefing_fields(briefing)
+        values = tuple(normalised[field] for field in ('summary', 'commercial_angle', 'suggested_action'))
         conn.execute('''
             INSERT INTO news_ai_summaries
                 (article_id, customer_id, model_provider, summary, commercial_angle, suggested_action)

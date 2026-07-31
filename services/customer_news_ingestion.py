@@ -348,17 +348,25 @@ def get_source(source_id):
     return dict(row) if row else None
 
 
-def list_recent_articles(limit=100, matched_only=True):
+def list_recent_articles(limit=100, matched_only=True, prioritize_selected=False):
     match_filter = "HAVING COUNT(acm.id) > 0" if matched_only else ""
     # A due-source run can import older feed entries.  For the customer-match
     # view those articles need to be ordered by when the match was made, not by
     # the article's (possibly months-old) publication date, otherwise a
     # successful run appears to have added nothing to the first 100 rows.
-    order_by = (
+    recent_order = (
         "MAX(acm.created_at) DESC, COALESCE(na.published_at, na.fetched_at) DESC"
         if matched_only
         else "COALESCE(na.published_at, na.fetched_at) DESC"
     )
+    # The admin selection filter operates on the limited rows returned here.
+    # Keep anything currently used by the TV or nightly email inside that slice,
+    # even when a large ingestion run has pushed it below the newest 100 rows.
+    selected_order = """
+        (EXISTS (SELECT 1 FROM tv_ranked x WHERE x.article_id = na.id AND x.item_rank <= 3)
+         OR EXISTS (SELECT 1 FROM nightly_ranked x WHERE x.article_id = na.id AND x.item_rank <= 20)) DESC,
+    """ if prioritize_selected else ""
+    order_by = f"{selected_order}{recent_order}"
     return db_execute(
         f"""
         WITH tv_ranked AS (
