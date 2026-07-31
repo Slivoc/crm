@@ -405,6 +405,32 @@ def delete_news_source(source_id):
     return bool(deleted)
 
 
+def delete_news_sources(source_ids):
+    """Delete selected source configurations while retaining imported articles."""
+    source_ids = sorted({int(source_id) for source_id in source_ids if int(source_id) > 0})
+    if not source_ids:
+        return 0
+
+    placeholders = ", ".join("?" for _ in source_ids)
+    deleted = db_execute(
+        f"DELETE FROM news_sources WHERE id IN ({placeholders}) RETURNING id",
+        tuple(source_ids),
+        fetch="all",
+        commit=True,
+    ) or []
+    return len(deleted)
+
+
+def delete_all_news_sources():
+    """Delete every source configuration while retaining imported articles."""
+    deleted = db_execute(
+        "DELETE FROM news_sources RETURNING id",
+        fetch="all",
+        commit=True,
+    ) or []
+    return len(deleted)
+
+
 def delete_news_articles(article_ids):
     """Delete selected articles and their dependent matches and summaries."""
     article_ids = sorted({int(article_id) for article_id in article_ids if int(article_id) > 0})
