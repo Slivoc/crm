@@ -114,7 +114,28 @@ def _tv_payload(conn):
         GROUP BY na.id
         ORDER BY MAX(COALESCE(acm.relevance_score, 0)) DESC,
                  COALESCE(na.published_at, na.fetched_at) DESC
-        LIMIT 6
+        LIMIT 15
+    ''').fetchall()
+
+    portal_searches = conn.execute('''
+        SELECT psh.id, psh.search_type, psh.parts_count, psh.date_searched,
+               c.name AS customer_name,
+               NULLIF(TRIM(CONCAT_WS(' ', pu.first_name, pu.last_name)), '') AS user_name
+        FROM portal_search_history psh
+        JOIN portal_users pu ON pu.id = psh.portal_user_id
+        JOIN customers c ON c.id = psh.customer_id
+        ORDER BY psh.date_searched DESC
+        LIMIT 8
+    ''').fetchall()
+    portal_quote_requests = conn.execute('''
+        SELECT pqr.id, pqr.reference_number, pqr.status, pqr.date_submitted,
+               c.name AS customer_name, COUNT(pqrl.id) AS line_count
+        FROM portal_quote_requests pqr
+        JOIN customers c ON c.id = pqr.customer_id
+        LEFT JOIN portal_quote_request_lines pqrl ON pqrl.portal_quote_request_id = pqr.id
+        GROUP BY pqr.id, c.name
+        ORDER BY pqr.date_submitted DESC
+        LIMIT 8
     ''').fetchall()
 
     actual = float(summary['actual'] or 0)
@@ -139,6 +160,10 @@ def _tv_payload(conn):
         'highest_spending_customers': [dict(row) for row in highest_spending_customers],
         'new_customers': [dict(row) for row in new_customers],
         'news': [dict(row) for row in news],
+        'portal_activity': {
+            'searches': [dict(row) for row in portal_searches],
+            'quote_requests': [dict(row) for row in portal_quote_requests],
+        },
         'employee': employee,
     }
 
@@ -202,7 +227,7 @@ def tv_extended_news(article_id):
         cached = conn.execute('''
             SELECT summary, commercial_angle, suggested_action
             FROM news_ai_summaries
-            WHERE article_id = ? AND customer_id IS NULL AND model_provider = 'dashboard_perplexity'
+            WHERE article_id = ? AND customer_id IS NULL AND model_provider = 'dashboard_perplexity_compact'
         ''', (article_id,)).fetchone()
         if cached:
             cached_briefing = {
@@ -221,10 +246,10 @@ Known customers mentioned: {article['customer_names'] or 'None'}
 Existing excerpt: {article['summary_raw'] or article['body_excerpt'] or 'None'}
 
 Return ONLY valid JSON with these string fields:
-"summary": a concise factual 2-3 paragraph briefing,
-"commercial_angle": specifically how this is relevant to MGC and its helicopter-parts customers,
-"suggested_action": 3 concrete next steps as short bullet lines beginning with •.
-Refer to the company only as MGC, never Sproutt. Use current web research, do not invent facts, and keep the whole response suitable for a TV screen.'''
+"summary": exactly 3 short bullet lines beginning with •, maximum 12 words per bullet,
+"commercial_angle": exactly 2 short bullet lines beginning with •, maximum 12 words per bullet, explaining relevance to MGC and its helicopter-parts customers,
+"suggested_action": exactly 2 concrete bullet lines beginning with •, maximum 10 words per bullet.
+Do not use paragraphs, preambles, headings, citations, or repeated facts. Refer to the company only as MGC, never Sproutt. Use current web research, do not invent facts, and make every line quickly readable on a TV.'''
         completion = OpenAI(api_key=api_key, base_url='https://api.perplexity.ai').chat.completions.create(
             model='sonar-pro',
             messages=[{'role': 'system', 'content': 'You are a precise commercial aviation intelligence analyst.'},
@@ -241,7 +266,7 @@ Refer to the company only as MGC, never Sproutt. Use current web research, do no
         conn.execute('''
             INSERT INTO news_ai_summaries
                 (article_id, customer_id, model_provider, summary, commercial_angle, suggested_action)
-            VALUES (?, NULL, 'dashboard_perplexity', ?, ?, ?)
+            VALUES (?, NULL, 'dashboard_perplexity_compact', ?, ?, ?)
             ON CONFLICT (article_id, customer_id, model_provider) DO UPDATE SET
                 summary = EXCLUDED.summary,
                 commercial_angle = EXCLUDED.commercial_angle,

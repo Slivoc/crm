@@ -4,6 +4,7 @@
     let newsIndex = 0;
     let extendedTimer;
     let storyScrollTimer;
+    let portalTimer;
     const el = id => document.getElementById(id);
     const text = (id, value) => { if (el(id)) el(id).textContent = value; };
 
@@ -121,10 +122,13 @@
             const story = (await response.json()).story;
             text('storyTitle', story.title); text('storySource', [story.customer_names, story.source_name].filter(Boolean).join(' · '));
             renderMarkdown('storySummary', story.summary); renderMarkdown('storyRelevance', story.commercial_angle); renderMarkdown('storyActions', story.suggested_action);
-            el('sceneWipe').classList.add('active');
-            setTimeout(() => el('storyScreen').classList.add('active'), 450);
-            setTimeout(() => el('sceneWipe').classList.remove('active'), 1050);
-            setTimeout(() => { extendedTimer = setTimeout(hideExtendedStory, startStoryScroll()); }, 1200);
+            el('newsIntroScreen').classList.add('active');
+            setTimeout(() => {
+                el('sceneWipe').classList.add('active');
+                setTimeout(() => { el('newsIntroScreen').classList.remove('active'); el('storyScreen').classList.add('active'); }, 450);
+                setTimeout(() => el('sceneWipe').classList.remove('active'), 1050);
+                setTimeout(() => { extendedTimer = setTimeout(hideExtendedStory, startStoryScroll()); }, 1200);
+            }, 3000);
         } catch (_) { /* Keep the live dashboard running if research is unavailable. */ }
     }
 
@@ -133,6 +137,32 @@
         clearInterval(storyScrollTimer);
         el('sceneWipe').classList.add('active');
         setTimeout(() => el('storyScreen').classList.remove('active'), 450);
+        setTimeout(() => el('sceneWipe').classList.remove('active'), 1050);
+    }
+
+    function formatActivityDate(value) {
+        return value ? new Date(value).toLocaleString([], {day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'}) : '';
+    }
+
+    function showPortalActivity() {
+        if (el('storyScreen').classList.contains('active') || el('newsIntroScreen').classList.contains('active')) return;
+        const activity = data.portal_activity || {};
+        const searches = activity.searches || [];
+        const quotes = activity.quote_requests || [];
+        if (!searches.length && !quotes.length) return;
+        const labels = {quote_analysis: 'Quote search', manual_quote_search: 'Quote search', common_parts: 'Common parts', pricing_agreements: 'Pricing agreement', suggested_parts: 'Suggested parts'};
+        el('portalSearches').innerHTML = searches.slice(0, 6).map(row => `<div class="portal-row"><div><strong>${escapeHtml(row.customer_name)}</strong><span>${escapeHtml(row.user_name || labels[row.search_type] || row.search_type)}</span></div><div><b>${Number(row.parts_count || 0)} parts</b><span>${formatActivityDate(row.date_searched)}</span></div></div>`).join('') || '<div class="portal-empty">No recent searches</div>';
+        el('portalQuotes').innerHTML = quotes.slice(0, 6).map(row => `<div class="portal-row"><div><strong>${escapeHtml(row.customer_name)}</strong><span>${escapeHtml(row.reference_number || 'Quote request')}</span></div><div><b>${Number(row.line_count || 0)} lines · ${escapeHtml(row.status || 'New')}</b><span>${formatActivityDate(row.date_submitted)}</span></div></div>`).join('') || '<div class="portal-empty">No quote requests</div>';
+        el('sceneWipe').classList.add('active');
+        setTimeout(() => el('portalScreen').classList.add('active'), 450);
+        setTimeout(() => el('sceneWipe').classList.remove('active'), 1050);
+        portalTimer = setTimeout(hidePortalActivity, 16000);
+    }
+
+    function hidePortalActivity() {
+        clearTimeout(portalTimer);
+        el('sceneWipe').classList.add('active');
+        setTimeout(() => el('portalScreen').classList.remove('active'), 450);
         setTimeout(() => el('sceneWipe').classList.remove('active'), 1050);
     }
 
@@ -161,6 +191,8 @@
     setInterval(() => { newsIndex += 1; renderNews(); }, 9000);
     setInterval(refresh, 15000);
     setInterval(showExtendedStory, 60000);
+    setTimeout(showPortalActivity, 30000);
+    setInterval(showPortalActivity, 120000);
 
     const dialog = el('employeeDialog');
     if (dialog) {
