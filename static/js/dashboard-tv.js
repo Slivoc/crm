@@ -227,23 +227,4 @@
     setTimeout(showPortalActivity, 30000);
     setInterval(showPortalActivity, 120000);
 
-    const dialog = el('employeeDialog');
-    if (dialog) {
-        el('editEmployee').addEventListener('click', () => {
-            el('employeeNameInput').value = data.employee.name || '';
-            el('employeeDescriptionInput').value = data.employee.description || '';
-            dialog.showModal();
-        });
-        el('closeEmployee').addEventListener('click', () => dialog.close());
-        el('employeeForm').addEventListener('submit', async event => {
-            event.preventDefault();
-            text('employeeError', '');
-            const response = await fetch('/dashboard/tv/employee', {method: 'POST', body: new FormData(event.target)});
-            const result = await response.json();
-            if (!response.ok) return text('employeeError', result.error || 'Unable to save.');
-            data.employee = result.employee;
-            render(data);
-            dialog.close();
-        });
-    }
 })();

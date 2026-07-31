@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+        <div>
+            <h2 class="fw-bold mb-1">TV Dashboard Control</h2>
+            <p class="text-muted mb-0">Manage the featured employee and preview the exact news queue shown on the office TV.</p>
+        </div>
+        <a class="btn btn-outline-primary" href="{{ url_for('dashboard.tv_dashboard') }}" target="_blank" rel="noopener">
+            <i class="bi bi-display me-1"></i> Open TV mode
+        </a>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-xl-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-white py-3">
+                    <h5 class="mb-1">Employee of the month</h5>
+                    <small class="text-muted">Changes appear on the TV during its next 15-second refresh.</small>
+                </div>
+                <div class="card-body">
+                    {% if employee.image_url %}
+                    <img src="{{ employee.image_url }}" class="rounded-circle d-block mx-auto mb-3 border" alt="Current employee of the month" style="width: 160px; height: 160px; object-fit: cover;">
+                    {% endif %}
+                    <form method="post" action="{{ url_for('dashboard.update_tv_employee') }}" enctype="multipart/form-data">
+                        <input type="hidden" name="next" value="tv_control">
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold" for="employeeNameInput">Name</label>
+                            <input class="form-control" name="name" id="employeeNameInput" maxlength="120" value="{{ employee.name }}" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold" for="employeeDescriptionInput">Description</label>
+                            <textarea class="form-control" name="description" id="employeeDescriptionInput" maxlength="600" rows="5">{{ employee.description }}</textarea>
+                            <div class="form-text">Up to 600 characters.</div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold" for="employeeImageInput">Picture</label>
+                            <input class="form-control" type="file" name="image" id="employeeImageInput" accept="image/jpeg,image/png,image/webp">
+                            <div class="form-text">JPG, PNG or WebP. Leave blank to keep the current picture.</div>
+                        </div>
+                        <button class="btn btn-primary w-100" type="submit">
+                            <i class="bi bi-check-lg me-1"></i> Save employee
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-xl-8">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-white py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+                    <div>
+                        <h5 class="mb-1">News display queue</h5>
+                        <small class="text-muted">These {{ news|length }} matched articles drive the ribbon, headline cards and extended stories, in this order.</small>
+                    </div>
+                    <span class="badge bg-light text-dark">Preview refreshed {{ updated_at|replace('T', ' ') }}</span>
+                </div>
+                <div class="card-body p-0">
+                    {% if news %}
+                    <div class="list-group list-group-flush">
+                        {% for article in news %}
+                        <article class="list-group-item p-3 p-lg-4">
+                            <div class="d-flex gap-3">
+                                <span class="badge rounded-pill bg-primary align-self-start">{{ loop.index }}</span>
+                                <div class="flex-grow-1 min-width-0">
+                                    <div class="d-flex flex-wrap justify-content-between gap-2">
+                                        <h6 class="mb-1">{{ article.title }}</h6>
+                                        {% if article.briefing_created_at %}
+                                        <span class="badge bg-success-subtle text-success">Extended briefing ready</span>
+                                        {% else %}
+                                        <span class="badge bg-warning-subtle text-warning-emphasis">Briefing generated when shown</span>
+                                        {% endif %}
+                                    </div>
+                                    <div class="small text-muted mb-2">
+                                        {{ article.source_name or 'Unknown source' }}
+                                        {% if article.published_at %} · {{ article.published_at }}{% endif %}
+                                        {% if article.relevance_score is not none %} · Relevance {{ '%.2f'|format(article.relevance_score) }}{% endif %}
+                                    </div>
+                                    <div class="mb-2">
+                                        <span class="small fw-semibold me-1">Linked customers:</span>
+                                        {% for customer in article.customers %}
+                                        <a class="badge bg-light text-dark text-decoration-none" href="{{ customer.url }}">{{ customer.name }}</a>
+                                        {% endfor %}
+                                    </div>
+                                    {% if article.summary_raw or article.body_excerpt %}
+                                    <p class="small mb-2 text-secondary">{{ (article.summary_raw or article.body_excerpt)|truncate(320) }}</p>
+                                    {% endif %}
+                                    <a href="{{ article.url }}" target="_blank" rel="noopener noreferrer" class="small">
+                                        Read source article <i class="bi bi-box-arrow-up-right ms-1"></i>
+                                    </a>
+                                </div>
+                            </div>
+                        </article>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <div class="p-5 text-center text-muted">
+                        <i class="bi bi-newspaper fs-2 d-block mb-2"></i>
+                        No customer-matched articles from the last 30 days are currently queued.
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="card-footer bg-light small text-muted">
+                    The queue includes up to three recent articles per linked customer, removes duplicates, covers the last 30 days and displays up to 15 stories. Extended briefings are prepared by Perplexity as stories rotate onto the TV.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
