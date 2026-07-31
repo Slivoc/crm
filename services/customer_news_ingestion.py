@@ -390,8 +390,18 @@ def set_source_active(source_id, active):
     )
 
 
+def delete_news_source(source_id):
+    """Delete a source while retaining any articles it previously imported."""
+    deleted = db_execute(
+        "DELETE FROM news_sources WHERE id = ? RETURNING id",
+        (source_id,),
+        fetch="one",
+        commit=True,
+    )
+    return bool(deleted)
+
+
 def run_ingestion(source_type=None, limit=50):
-    ensure_seed_news_sources()
     sources = due_sources(limit=limit, source_type=source_type)
     customer_aliases = get_customer_aliases()
     result = {

@@ -1,7 +1,8 @@
-from datetime import datetime
+from datetime import datetime, timezone
+import json
 import threading
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, current_app
+from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, current_app, Response
 from db import execute as db_execute
 from models import (
     Permission,
@@ -12,7 +13,7 @@ from models import (
     set_user_permissions,
 )
 from services.customer_news_ingestion import (
-    ensure_seed_news_sources,
+    delete_news_source,
     ingestion_stats,
     list_recent_articles,
     list_sources,
@@ -110,7 +111,6 @@ def create_user_route():
 @admin_bp.route('/news')
 @admin_required
 def news_control():
-    ensure_seed_news_sources()
     return _render_news_control()
 
 
@@ -192,6 +192,44 @@ def toggle_news_source(source_id):
     return redirect(url_for('admin.news_control'))
 
 
+@admin_bp.route('/news/sources/<int:source_id>/delete', methods=['POST'])
+@admin_required
+def delete_news_source_route(source_id):
+    try:
+        if delete_news_source(source_id):
+            flash('News source deleted. Previously imported articles were retained.', 'success')
+        else:
+            flash('News source was not found.', 'warning')
+    except Exception as exc:
+        flash(f'Unable to delete news source: {exc}', 'error')
+    return redirect(url_for('admin.news_control'))
+
+
+@admin_bp.route('/news/export')
+@admin_required
+def export_news_diagnostics():
+    """Download an AI-friendly snapshot of source configuration and errors."""
+    sources = [dict(source) for source in list_sources()]
+    stats = ingestion_stats()
+    payload = {
+        'exported_at': datetime.now(timezone.utc).isoformat(),
+        'purpose': 'Customer news source cleanup diagnostics',
+        'summary': {
+            **dict(stats),
+            'configured_sources': len(sources),
+            'sources_with_errors': sum(bool(source.get('last_error')) for source in sources),
+        },
+        'last_ingestion_job': dict(NEWS_INGESTION_JOB),
+        'sources': sources,
+    }
+    filename = f"news-source-diagnostics-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}.json"
+    return Response(
+        json.dumps(payload, indent=2, default=str),
+        mimetype='application/json',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )
+
+
 @admin_bp.route('/news/sources/<int:source_id>/test', methods=['POST'])
 @admin_required
 def test_news_source_route(source_id):
@@ -240,4 +278,3 @@ def _start_news_ingestion_background(source_type=None):
 
     threading.Thread(target=worker, name='news-ingestion-admin', daemon=True).start()
     return True
-

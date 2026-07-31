@@ -10,6 +10,9 @@
       <div class="text-muted small">RSS and GDELT ingestion, dedupe, and local customer matching.</div>
     </div>
     <div class="d-flex gap-2">
+      <a class="btn btn-outline-dark" href="{{ url_for('admin.export_news_diagnostics') }}">
+        <i class="bi bi-download me-1"></i> Export diagnostics
+      </a>
       <form method="post" action="{{ url_for('admin.run_news_ingestion_route') }}">
         <input type="hidden" name="source_type" value="rss">
         <button class="btn btn-outline-primary" type="submit">
@@ -286,6 +289,11 @@
                     <input type="hidden" name="active" value="{{ '0' if source.active else '1' }}">
                     <button class="btn btn-sm btn-outline-secondary" type="submit">
                       {{ 'Disable' if source.active else 'Enable' }}
+                    </button>
+                  </form>
+                  <form method="post" action="{{ url_for('admin.delete_news_source_route', source_id=source.id) }}" class="mt-2" onsubmit="return confirm('Delete this news source? Previously imported articles will be kept.');">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">
+                      <i class="bi bi-trash me-1"></i> Delete
                     </button>
                   </form>
                 </td>

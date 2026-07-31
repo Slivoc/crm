@@ -4,6 +4,7 @@ from unittest.mock import patch
 from services.customer_news_ingestion import (
     SourceRateLimitedError,
     _repair_common_xml_errors,
+    delete_news_source,
     fetch_gdelt_source,
     fetch_rss_source,
 )
@@ -26,6 +27,24 @@ class FakeResponse:
 
 
 class NewsSourceFetchingTests(unittest.TestCase):
+    @patch("services.customer_news_ingestion.db_execute")
+    def test_delete_source_retains_articles_via_foreign_key_behavior(self, mock_execute):
+        mock_execute.return_value = {"id": 17}
+
+        self.assertTrue(delete_news_source(17))
+        mock_execute.assert_called_once_with(
+            "DELETE FROM news_sources WHERE id = ? RETURNING id",
+            (17,),
+            fetch="one",
+            commit=True,
+        )
+
+    @patch("services.customer_news_ingestion.db_execute")
+    def test_delete_source_reports_missing_source(self, mock_execute):
+        mock_execute.return_value = None
+
+        self.assertFalse(delete_news_source(404))
+
     def test_repairs_bare_ampersand_and_xml_control_character(self):
         repaired = _repair_common_xml_errors("Fish & Chips\x0b &amp; More")
         self.assertEqual(repaired, "Fish &amp; Chips &amp; More")
