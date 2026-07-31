@@ -11,7 +11,6 @@
     let headlineTimer;
     let todayHeadlinesTimer;
     const MAIN_DASHBOARD_DURATION = 45000;
-    const PORTAL_ACTIVITY_DURATION = 16000;
     const EXTENDED_STORIES_PER_CYCLE = 5;
     const el = id => document.getElementById(id);
     const text = (id, value) => { if (el(id)) el(id).textContent = value; };
@@ -175,15 +174,16 @@
     }
 
     async function showExtendedStoryBatch() {
-        const items = data.news || [];
+        // Freeze this batch so the background refresh cannot reorder it midway.
+        const items = [...(data.news || [])];
         if (!items.length || sceneIsActive()) return;
 
         extendedBatchActive = true;
         try {
             // Use a dedicated cursor so every queued article gets a turn. The
             // ribbon's faster rotation no longer determines extended stories.
-            const batchSize = Math.min(EXTENDED_STORIES_PER_CYCLE, items.length);
-            for (let offset = 0; offset < batchSize; offset += 1) {
+            // Keep the cycle at exactly five, wrapping when fewer are available.
+            for (let offset = 0; offset < EXTENDED_STORIES_PER_CYCLE; offset += 1) {
                 const item = items[extendedStoryIndex % items.length];
                 extendedStoryIndex = (extendedStoryIndex + 1) % items.length;
                 await showExtendedStory(item);
@@ -302,7 +302,6 @@
         // randomly skip content. Each return to metrics follows a full batch.
         while (true) {
             await wait(MAIN_DASHBOARD_DURATION);
-            await showPortalActivity();
             await showExtendedStoryBatch();
         }
     }
