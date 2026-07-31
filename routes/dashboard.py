@@ -7,6 +7,7 @@ from models import get_db, dict_from_row
 import json
 import os
 import uuid
+from openai import OpenAI
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
@@ -40,10 +41,10 @@ def _tv_payload(conn):
     ''', (month_key,)).fetchone()
     biggest_orders = conn.execute('''
         SELECT so.sales_order_ref, so.total_value, so.date_entered, c.name AS customer_name,
-               s.name AS salesperson_name
+               c.logo_url, s.name AS salesperson_name
         FROM sales_orders so
         JOIN customers c ON c.id = so.customer_id
-        LEFT JOIN salespeople s ON s.id = so.salesperson_id
+        LEFT JOIN salespeople s ON s.id = c.salesperson_id
         WHERE so.date_entered >= date_trunc('month', CURRENT_DATE)
           AND so.date_entered < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
         ORDER BY so.total_value DESC NULLS LAST
@@ -51,10 +52,10 @@ def _tv_payload(conn):
     ''').fetchall()
     biggest_non_dave_orders = conn.execute('''
         SELECT so.sales_order_ref, so.total_value, so.date_entered, c.name AS customer_name,
-               s.name AS salesperson_name
+               c.logo_url, s.name AS salesperson_name
         FROM sales_orders so
         JOIN customers c ON c.id = so.customer_id
-        LEFT JOIN salespeople s ON s.id = so.salesperson_id
+        LEFT JOIN salespeople s ON s.id = c.salesperson_id
         WHERE so.date_entered >= date_trunc('month', CURRENT_DATE)
           AND so.date_entered < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
           AND so.salesperson_id <> 3
@@ -67,7 +68,7 @@ def _tv_payload(conn):
                STRING_AGG(DISTINCT s.name, ', ' ORDER BY s.name) AS salesperson_names
         FROM sales_orders so
         JOIN customers c ON c.id = so.customer_id
-        LEFT JOIN salespeople s ON s.id = so.salesperson_id
+        LEFT JOIN salespeople s ON s.id = c.salesperson_id
         WHERE so.date_entered >= date_trunc('month', CURRENT_DATE)
           AND so.date_entered < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
         GROUP BY c.id, c.name
@@ -85,7 +86,7 @@ def _tv_payload(conn):
         FROM first_orders fo
         JOIN customers c ON c.id = fo.customer_id
         JOIN sales_orders so ON so.customer_id = fo.customer_id
-        LEFT JOIN salespeople s ON s.id = so.salesperson_id
+        LEFT JOIN salespeople s ON s.id = c.salesperson_id
         WHERE fo.first_order_date >= date_trunc('month', CURRENT_DATE)
           AND fo.first_order_date < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
           AND so.date_entered >= date_trunc('month', CURRENT_DATE)
@@ -95,7 +96,7 @@ def _tv_payload(conn):
         LIMIT 5
     ''').fetchall()
     news = conn.execute('''
-        SELECT na.title, na.url, na.source_name,
+        SELECT na.id, na.title, na.url, na.source_name, na.summary_raw, na.body_excerpt,
                COALESCE(na.published_at, na.fetched_at) AS published_at,
                MAX(acm.relevance_score) AS relevance_score,
                STRING_AGG(DISTINCT c.name, ', ' ORDER BY c.name) AS customer_names
@@ -156,7 +157,94 @@ def tv_dashboard():
 def tv_dashboard_data():
     conn = get_db()
     try:
-        return jsonify(_tv_payload(conn))
+        response = jsonify(_tv_payload(conn))
+        response.headers['Cache-Control'] = 'no-store, max-age=0'
+        return response
+    finally:
+        conn.close()
+
+
+def _perplexity_api_key(conn):
+    key = os.getenv('PERPLEXITY_API_KEY') or current_app.config.get('PERPLEXITY_API_KEY')
+    if key:
+        return key
+    row = conn.execute(
+        "SELECT value FROM app_settings WHERE key IN (?, ?) ORDER BY CASE key WHEN ? THEN 0 ELSE 1 END LIMIT 1",
+        ('PERPLEXITY_API_KEY', 'perplexity_api_key', 'PERPLEXITY_API_KEY'),
+    ).fetchone()
+    return row['value'] if row and row['value'] else None
+
+
+@dashboard_bp.route('/tv/news/<int:article_id>/extended')
+@login_required
+def tv_extended_news(article_id):
+    """Return a cached, commercially focused Perplexity briefing for a TV story."""
+    conn = get_db()
+    try:
+        article = conn.execute('''
+            SELECT na.id, na.title, na.url, na.source_name, na.summary_raw, na.body_excerpt,
+                   STRING_AGG(DISTINCT c.name, ', ' ORDER BY c.name) AS customer_names
+            FROM news_articles na
+            LEFT JOIN article_customer_mentions acm ON acm.article_id = na.id
+            LEFT JOIN customers c ON c.id = acm.customer_id
+            WHERE na.id = ? AND na.duplicate_of_article_id IS NULL
+            GROUP BY na.id
+        ''', (article_id,)).fetchone()
+        if not article:
+            return jsonify({'error': 'News story not found'}), 404
+
+        cached = conn.execute('''
+            SELECT summary, commercial_angle, suggested_action
+            FROM news_ai_summaries
+            WHERE article_id = ? AND customer_id IS NULL AND model_provider = 'dashboard_perplexity'
+        ''', (article_id,)).fetchone()
+        if cached:
+            return jsonify({'story': {**dict(article), **dict(cached)}})
+
+        api_key = _perplexity_api_key(conn)
+        if not api_key:
+            return jsonify({'error': 'Perplexity API key is not configured'}), 503
+        prompt = f'''Research and expand this aviation news story for Sproutt, a helicopter parts supplier.
+Title: {article['title']}
+Source URL: {article['url']}
+Known customers mentioned: {article['customer_names'] or 'None'}
+Existing excerpt: {article['summary_raw'] or article['body_excerpt'] or 'None'}
+
+Return ONLY valid JSON with these string fields:
+"summary": a concise factual 2-3 paragraph briefing,
+"commercial_angle": specifically how this is relevant to Sproutt and its helicopter-parts customers,
+"suggested_action": 3 concrete next steps as short bullet lines beginning with •.
+Use current web research, do not invent facts, and keep the whole response suitable for a TV screen.'''
+        completion = OpenAI(api_key=api_key, base_url='https://api.perplexity.ai').chat.completions.create(
+            model='sonar-pro',
+            messages=[{'role': 'system', 'content': 'You are a precise commercial aviation intelligence analyst.'},
+                      {'role': 'user', 'content': prompt}],
+        )
+        raw = completion.choices[0].message.content.strip()
+        if raw.startswith('```'):
+            raw = raw.split('\n', 1)[1].rsplit('```', 1)[0]
+        briefing = json.loads(raw)
+        values = tuple(str(briefing.get(field, '')).strip() for field in ('summary', 'commercial_angle', 'suggested_action'))
+        conn.execute('''
+            INSERT INTO news_ai_summaries
+                (article_id, customer_id, model_provider, summary, commercial_angle, suggested_action)
+            VALUES (?, NULL, 'dashboard_perplexity', ?, ?, ?)
+            ON CONFLICT (article_id, customer_id, model_provider) DO UPDATE SET
+                summary = EXCLUDED.summary,
+                commercial_angle = EXCLUDED.commercial_angle,
+                suggested_action = EXCLUDED.suggested_action,
+                created_at = CURRENT_TIMESTAMP
+        ''', (article_id, *values))
+        conn.commit()
+        return jsonify({'story': {**dict(article), 'summary': values[0], 'commercial_angle': values[1], 'suggested_action': values[2]}})
+    except (json.JSONDecodeError, IndexError, KeyError, TypeError):
+        conn.rollback()
+        current_app.logger.exception('Perplexity returned an invalid TV news briefing for article %s', article_id)
+        return jsonify({'error': 'The extended briefing could not be prepared'}), 502
+    except Exception:
+        conn.rollback()
+        current_app.logger.exception('Unable to build TV news briefing for article %s', article_id)
+        return jsonify({'error': 'The extended briefing is temporarily unavailable'}), 502
     finally:
         conn.close()
 
