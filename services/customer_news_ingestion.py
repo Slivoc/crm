@@ -665,6 +665,16 @@ def delete_news_articles(article_ids):
     return len(deleted)
 
 
+def delete_all_news_articles():
+    """Delete every collected article; dependent article data cascades away."""
+    deleted = db_execute(
+        "DELETE FROM news_articles RETURNING id",
+        fetch="all",
+        commit=True,
+    ) or []
+    return len(deleted)
+
+
 def run_ingestion(source_type=None, limit=50, force=False):
     sources = due_sources(limit=limit, source_type=source_type, force=force)
     customer_aliases = get_customer_aliases()

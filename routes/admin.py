@@ -14,6 +14,7 @@ from models import (
 )
 from services.customer_news_ingestion import (
     delete_all_news_sources,
+    delete_all_news_articles,
     delete_news_articles,
     delete_news_source,
     delete_news_sources,
@@ -272,6 +273,20 @@ def delete_news_articles_route():
     except Exception as exc:
         flash(f'Unable to delete news articles: {exc}', 'error')
     return redirect(url_for('admin.news_control', articles=article_view))
+
+
+@admin_bp.route('/news/articles/delete-all', methods=['POST'])
+@admin_required
+def delete_all_news_articles_route():
+    try:
+        deleted_count = delete_all_news_articles()
+        flash(
+            f'Deleted all {deleted_count} collected news article(s). Sources and sent-email history were retained.',
+            'success',
+        )
+    except Exception as exc:
+        flash(f'Unable to delete all news articles: {exc}', 'error')
+    return redirect(url_for('admin.news_control', articles='all'))
 
 
 @admin_bp.route('/news/export')

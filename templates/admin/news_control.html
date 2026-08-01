@@ -13,6 +13,11 @@
       <a class="btn btn-outline-dark" href="{{ url_for('admin.export_news_diagnostics') }}">
         <i class="bi bi-download me-1"></i> Export diagnostics
       </a>
+      <form method="post" action="{{ url_for('admin.delete_all_news_articles_route') }}" onsubmit="return confirm('Permanently delete EVERY collected news story and its matches, feedback, and AI summaries? Sources and sent-email history will be retained. This cannot be undone.');">
+        <button class="btn btn-outline-danger" type="submit">
+          <i class="bi bi-trash3 me-1"></i> Nuke All Stories
+        </button>
+      </form>
       <form method="post" action="{{ url_for('admin.run_news_ingestion_route') }}">
         <input type="hidden" name="source_type" value="rss">
         <button class="btn btn-primary" type="submit">

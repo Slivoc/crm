@@ -5,6 +5,7 @@ from services.customer_news_ingestion import (
     SourceRateLimitedError,
     _repair_common_xml_errors,
     delete_all_news_sources,
+    delete_all_news_articles,
     delete_news_articles,
     delete_news_source,
     delete_news_sources,
@@ -158,6 +159,17 @@ class NewsSourceFetchingTests(unittest.TestCase):
         self.assertEqual(delete_all_news_sources(), 2)
         mock_execute.assert_called_once_with(
             "DELETE FROM news_sources RETURNING id",
+            fetch="all",
+            commit=True,
+        )
+
+    @patch("services.customer_news_ingestion.db_execute")
+    def test_delete_all_articles_reports_deleted_count(self, mock_execute):
+        mock_execute.return_value = [{"id": 2}, {"id": 7}, {"id": 9}]
+
+        self.assertEqual(delete_all_news_articles(), 3)
+        mock_execute.assert_called_once_with(
+            "DELETE FROM news_articles RETURNING id",
             fetch="all",
             commit=True,
         )
