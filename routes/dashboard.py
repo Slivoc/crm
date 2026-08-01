@@ -150,16 +150,18 @@ def _tv_payload(conn):
             FROM article_customer_mentions acm
             JOIN news_articles na ON na.id = acm.article_id
             WHERE na.duplicate_of_article_id IS NULL
-              AND COALESCE(na.published_at, na.fetched_at) >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+              AND na.published_at >= CURRENT_TIMESTAMP - INTERVAL '45 days'
+              AND COALESCE((SELECT ner.tv_recommended FROM news_editorial_reviews ner WHERE ner.article_id = na.id), TRUE)
         ), selected_articles AS (
             SELECT DISTINCT article_id
             FROM ranked_customer_articles
             WHERE customer_article_rank <= 3
         )
         SELECT na.id, na.title, na.url, na.source_name, na.summary_raw, na.body_excerpt,
-               COALESCE(na.published_at, na.fetched_at) AS published_at,
-               (COALESCE(na.published_at, na.fetched_at)::date = CURRENT_DATE) AS is_today,
+               na.published_at,
+               (na.published_at::date = CURRENT_DATE) AS is_today,
                MAX(acm.relevance_score) AS relevance_score,
+               (SELECT ner.editorial_score FROM news_editorial_reviews ner WHERE ner.article_id = na.id) AS editorial_score,
                STRING_AGG(DISTINCT c.name, ', ' ORDER BY c.name) AS customer_names,
                JSONB_AGG(
                    DISTINCT JSONB_BUILD_OBJECT('id', c.id, 'name', c.name)

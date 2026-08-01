@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import re
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -8,12 +9,14 @@ from xml.etree import ElementTree
 
 import requests
 from bs4 import BeautifulSoup
+from openai import OpenAI
 
 from db import execute as db_execute
 
 
 GDELT_ENDPOINT = "https://api.gdeltproject.org/api/v2/doc/doc"
 REQUEST_TIMEOUT = 10
+NEWS_EDITORIAL_MODEL = os.getenv("NEWS_EDITORIAL_MODEL", "gpt-4o-mini")
 
 
 class SourceRateLimitedError(RuntimeError):
@@ -378,7 +381,8 @@ def list_recent_articles(limit=100, matched_only=True, prioritize_selected=False
             FROM article_customer_mentions acm
             JOIN news_articles na ON na.id = acm.article_id
             WHERE na.duplicate_of_article_id IS NULL
-              AND COALESCE(na.published_at, na.fetched_at) >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+              AND na.published_at >= CURRENT_TIMESTAMP - INTERVAL '45 days'
+              AND COALESCE((SELECT ner.tv_recommended FROM news_editorial_reviews ner WHERE ner.article_id = na.id), TRUE)
         ), nightly_ranked AS (
             SELECT acm.article_id, c.salesperson_id,
                    ROW_NUMBER() OVER (PARTITION BY c.salesperson_id ORDER BY COALESCE(c.watch, FALSE) DESC, acm.relevance_score DESC, COALESCE(na.published_at, na.fetched_at) DESC, na.id DESC) AS item_rank
@@ -387,7 +391,8 @@ def list_recent_articles(limit=100, matched_only=True, prioritize_selected=False
             JOIN customers c ON c.id = acm.customer_id
             WHERE c.salesperson_id IS NOT NULL
               AND na.duplicate_of_article_id IS NULL
-              AND COALESCE(na.published_at, na.fetched_at) >= CURRENT_TIMESTAMP - INTERVAL '45 days'
+              AND na.published_at >= CURRENT_TIMESTAMP - INTERVAL '45 days'
+              AND COALESCE((SELECT ner.email_recommended FROM news_editorial_reviews ner WHERE ner.article_id = na.id), TRUE)
               AND acm.relevance_score >= 40
               AND NOT EXISTS (
                   SELECT 1 FROM sent_customer_news scn
@@ -405,6 +410,15 @@ def list_recent_articles(limit=100, matched_only=True, prioritize_selected=False
                EXISTS (SELECT 1 FROM tv_ranked x WHERE x.article_id = na.id AND x.item_rank <= 3) AS selected_for_tv,
                EXISTS (SELECT 1 FROM nightly_ranked x WHERE x.article_id = na.id AND x.item_rank <= 20) AS selected_for_nightly_precheck,
                (SELECT STRING_AGG(DISTINCT s.name, ', ' ORDER BY s.name) FROM nightly_ranked x JOIN salespeople s ON s.id = x.salesperson_id WHERE x.article_id = na.id AND x.item_rank <= 20) AS nightly_salespeople
+               ,(SELECT ner.tv_recommended FROM news_editorial_reviews ner WHERE ner.article_id = na.id) AS ai_tv_recommended
+               ,(SELECT ner.email_recommended FROM news_editorial_reviews ner WHERE ner.article_id = na.id) AS ai_email_recommended
+               ,(SELECT ner.editorial_score FROM news_editorial_reviews ner WHERE ner.article_id = na.id) AS ai_editorial_score
+               ,(SELECT ner.event_key FROM news_editorial_reviews ner WHERE ner.article_id = na.id) AS ai_event_key
+               ,(SELECT ner.reasoning FROM news_editorial_reviews ner WHERE ner.article_id = na.id) AS ai_editorial_reasoning
+               ,(SELECT ner.model_name FROM news_editorial_reviews ner WHERE ner.article_id = na.id) AS ai_editorial_model
+               ,(SELECT ner.reviewed_at FROM news_editorial_reviews ner WHERE ner.article_id = na.id) AS ai_reviewed_at
+               ,(na.published_at >= CURRENT_TIMESTAMP - INTERVAL '45 days') AS tv_age_eligible
+               ,(na.published_at >= CURRENT_TIMESTAMP - INTERVAL '45 days') AS email_age_eligible
         FROM news_articles na
         LEFT JOIN news_sources ns ON ns.id = na.source_id
         LEFT JOIN article_customer_mentions acm ON acm.article_id = na.id
@@ -449,7 +463,8 @@ def selection_diagnostics():
             FROM article_customer_mentions acm
             JOIN news_articles na ON na.id = acm.article_id
             WHERE na.duplicate_of_article_id IS NULL
-              AND COALESCE(na.published_at, na.fetched_at) >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+              AND na.published_at >= CURRENT_TIMESTAMP - INTERVAL '45 days'
+              AND COALESCE((SELECT ner.tv_recommended FROM news_editorial_reviews ner WHERE ner.article_id = na.id), TRUE)
         )
         SELECT COUNT(*) AS eligible_customer_article_matches,
                COUNT(DISTINCT article_id) AS eligible_distinct_articles,
@@ -472,7 +487,8 @@ def selection_diagnostics():
             FROM article_customer_mentions acm
             JOIN news_articles na ON na.id = acm.article_id
             WHERE na.duplicate_of_article_id IS NULL
-              AND COALESCE(na.published_at, na.fetched_at) >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+              AND na.published_at >= CURRENT_TIMESTAMP - INTERVAL '45 days'
+              AND COALESCE((SELECT ner.tv_recommended FROM news_editorial_reviews ner WHERE ner.article_id = na.id), TRUE)
         )
         SELECT na.id AS article_id, na.title, na.source_name,
                COALESCE(na.published_at, na.fetched_at) AS article_date,
@@ -505,7 +521,8 @@ def selection_diagnostics():
             JOIN customers c ON c.id = acm.customer_id
             WHERE c.salesperson_id IS NOT NULL
               AND na.duplicate_of_article_id IS NULL
-              AND COALESCE(na.published_at, na.fetched_at) >= CURRENT_TIMESTAMP - INTERVAL '45 days'
+              AND na.published_at >= CURRENT_TIMESTAMP - INTERVAL '45 days'
+              AND COALESCE((SELECT ner.email_recommended FROM news_editorial_reviews ner WHERE ner.article_id = na.id), TRUE)
               AND acm.relevance_score >= 40
               AND NOT EXISTS (
                   SELECT 1 FROM sent_customer_news scn
@@ -545,7 +562,8 @@ def selection_diagnostics():
             JOIN customers c ON c.id = acm.customer_id
             WHERE c.salesperson_id IS NOT NULL
               AND na.duplicate_of_article_id IS NULL
-              AND COALESCE(na.published_at, na.fetched_at) >= CURRENT_TIMESTAMP - INTERVAL '45 days'
+              AND na.published_at >= CURRENT_TIMESTAMP - INTERVAL '45 days'
+              AND COALESCE((SELECT ner.email_recommended FROM news_editorial_reviews ner WHERE ner.article_id = na.id), TRUE)
               AND acm.relevance_score >= 40
               AND NOT EXISTS (
                   SELECT 1 FROM sent_customer_news scn
@@ -572,12 +590,24 @@ def selection_diagnostics():
         """,
         fetch="all",
     ) or []
+    editorial_reviews = db_execute(
+        """
+        SELECT ner.article_id, na.title, na.published_at, na.source_name,
+               ner.tv_recommended, ner.email_recommended, ner.editorial_score,
+               ner.event_key, ner.reasoning, ner.model_name, ner.reviewed_at
+        FROM news_editorial_reviews ner
+        JOIN news_articles na ON na.id = ner.article_id
+        WHERE na.published_at >= CURRENT_TIMESTAMP - INTERVAL '45 days'
+        ORDER BY ner.tv_recommended DESC, ner.editorial_score DESC, na.published_at DESC
+        """,
+        fetch="all",
+    ) or []
 
     return {
         "dashboard": {
             "consumer": "Office TV dashboard (/dashboard/tv)",
             "selection_rules": {
-                "lookback_days": 30,
+                "lookback_days": 45,
                 "per_customer_limit": 3,
                 "minimum_relevance_score": None,
                 "exclude_duplicate_articles": True,
@@ -601,6 +631,7 @@ def selection_diagnostics():
             "salespeople": [dict(row) for row in nightly_salespeople],
             "selected_articles_precheck": [dict(row) for row in nightly_articles],
         },
+        "editorial_reviews": [dict(row) for row in editorial_reviews],
     }
 
 
@@ -675,6 +706,99 @@ def delete_all_news_articles():
     return len(deleted)
 
 
+def run_news_editorial_review(limit=120):
+    """Review recent matched stories once and persist explainable recommendations."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return {"reviewed": 0, "skipped": "OPENAI_API_KEY is not configured"}
+
+    rows = db_execute(
+        """
+        SELECT na.id AS article_id, na.title, na.published_at, na.source_name,
+               LEFT(COALESCE(NULLIF(na.body_excerpt, ''), NULLIF(na.summary_raw, ''), ''), 700) AS excerpt,
+               MAX(acm.relevance_score) AS max_relevance_score,
+               STRING_AGG(DISTINCT c.name, ', ' ORDER BY c.name) AS matched_customers
+        FROM news_articles na
+        JOIN article_customer_mentions acm ON acm.article_id = na.id
+        JOIN customers c ON c.id = acm.customer_id
+        LEFT JOIN news_editorial_reviews ner ON ner.article_id = na.id
+        WHERE na.duplicate_of_article_id IS NULL
+          AND na.published_at >= CURRENT_TIMESTAMP - INTERVAL '45 days'
+          AND ner.article_id IS NULL
+        GROUP BY na.id
+        ORDER BY MAX(acm.relevance_score) DESC, na.published_at DESC
+        LIMIT ?
+        """,
+        (limit,),
+        fetch="all",
+    ) or []
+    if not rows:
+        return {"reviewed": 0, "skipped": "No unreviewed eligible stories"}
+
+    candidates = [dict(row) for row in rows]
+    for candidate in candidates:
+        candidate["published_at"] = str(candidate.get("published_at") or "")
+    prompt = """Act as the news editor for MGC, a helicopter-parts supplier. Review the candidate stories as one batch.
+Recommend stories for an office TV and salesperson email when they contain commercially useful customer or rotorcraft intelligence: orders, contracts, deliveries, fleet changes, MRO, operational expansion, partnerships, regulation, or strong sales triggers. Reject generic corporate publicity, weak name collisions, stale follow-ups, and noise. Group reports of the same underlying event with the same short event_key and recommend only the best, most complete representative unless another version adds material facts.
+
+Return JSON only with a top-level `reviews` array. Include exactly one object per candidate with: article_id (integer), tv_recommended (boolean), email_recommended (boolean), editorial_score (integer 0-100), event_key (short string), and reasoning (one concise sentence that an administrator can understand).
+
+Candidates:
+""" + json.dumps(candidates, default=str)
+    completion = OpenAI(api_key=api_key).chat.completions.create(
+        model=NEWS_EDITORIAL_MODEL,
+        messages=[
+            {"role": "system", "content": "You are a precise commercial rotorcraft news editor. Return valid JSON only."},
+            {"role": "user", "content": prompt},
+        ],
+        response_format={"type": "json_object"},
+        temperature=0.1,
+    )
+    payload = json.loads(completion.choices[0].message.content)
+    reviews = payload.get("reviews") or []
+    valid_ids = {candidate["article_id"] for candidate in candidates}
+    saved = 0
+    for review in reviews:
+        try:
+            article_id = int(review.get("article_id"))
+            if article_id not in valid_ids:
+                continue
+            score = max(0, min(100, int(review.get("editorial_score") or 0)))
+            reasoning = str(review.get("reasoning") or "No editorial reasoning returned.")[:2000]
+            db_execute(
+                """
+                INSERT INTO news_editorial_reviews
+                    (article_id, tv_recommended, email_recommended, editorial_score,
+                     event_key, reasoning, model_provider, model_name)
+                VALUES (?, ?, ?, ?, ?, ?, 'openai', ?)
+                ON CONFLICT (article_id) DO UPDATE SET
+                    tv_recommended = EXCLUDED.tv_recommended,
+                    email_recommended = EXCLUDED.email_recommended,
+                    editorial_score = EXCLUDED.editorial_score,
+                    event_key = EXCLUDED.event_key,
+                    reasoning = EXCLUDED.reasoning,
+                    model_provider = EXCLUDED.model_provider,
+                    model_name = EXCLUDED.model_name,
+                    reviewed_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    article_id,
+                    bool(review.get("tv_recommended")),
+                    bool(review.get("email_recommended")),
+                    score,
+                    str(review.get("event_key") or "")[:240] or None,
+                    reasoning,
+                    NEWS_EDITORIAL_MODEL,
+                ),
+                commit=True,
+            )
+            saved += 1
+        except (TypeError, ValueError):
+            continue
+    return {"reviewed": saved, "candidates": len(candidates), "model": NEWS_EDITORIAL_MODEL}
+
+
 def run_ingestion(source_type=None, limit=50, force=False):
     sources = due_sources(limit=limit, source_type=source_type, force=force)
     customer_aliases = get_customer_aliases()
@@ -715,6 +839,10 @@ def run_ingestion(source_type=None, limit=50, force=False):
             # due so that the next scheduled run can pick them up.
             if isinstance(exc, SourceRateLimitedError):
                 break
+    try:
+        result["editorial_review"] = run_news_editorial_review()
+    except Exception as exc:
+        result["editorial_review"] = {"reviewed": 0, "error": str(exc)}
     return result
 
 
@@ -1206,7 +1334,8 @@ def get_news_for_salesperson(salesperson_id, limit=20, days=45):
         JOIN customers c ON c.id = acm.customer_id
         WHERE c.salesperson_id = ?
           AND na.duplicate_of_article_id IS NULL
-          AND COALESCE(na.published_at, na.fetched_at) >= CURRENT_TIMESTAMP - (? * INTERVAL '1 day')
+          AND na.published_at >= CURRENT_TIMESTAMP - (? * INTERVAL '1 day')
+          AND COALESCE((SELECT ner.email_recommended FROM news_editorial_reviews ner WHERE ner.article_id = na.id), TRUE)
           AND acm.relevance_score >= 40
         ORDER BY COALESCE(c.watch, FALSE) DESC, acm.relevance_score DESC, COALESCE(na.published_at, na.fetched_at) DESC
         LIMIT ?
@@ -1232,7 +1361,7 @@ def get_news_for_customer(customer_id, limit=10, days=90):
         JOIN news_articles na ON na.id = acm.article_id
         WHERE acm.customer_id = ?
           AND na.duplicate_of_article_id IS NULL
-          AND COALESCE(na.published_at, na.fetched_at) >= CURRENT_TIMESTAMP - (? * INTERVAL '1 day')
+          AND na.published_at >= CURRENT_TIMESTAMP - (? * INTERVAL '1 day')
         ORDER BY acm.relevance_score DESC, COALESCE(na.published_at, na.fetched_at) DESC
         LIMIT ?
         """,

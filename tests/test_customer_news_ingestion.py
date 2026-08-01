@@ -15,6 +15,7 @@ from services.customer_news_ingestion import (
     due_sources,
     list_recent_articles,
     selection_diagnostics,
+    run_news_editorial_review,
 )
 
 
@@ -35,6 +36,15 @@ class FakeResponse:
 
 
 class NewsSourceFetchingTests(unittest.TestCase):
+    @patch.dict("os.environ", {}, clear=True)
+    @patch("services.customer_news_ingestion.db_execute")
+    def test_editorial_review_skips_safely_without_api_key(self, mock_execute):
+        result = run_news_editorial_review()
+
+        self.assertEqual(result["reviewed"], 0)
+        self.assertIn("OPENAI_API_KEY", result["skipped"])
+        mock_execute.assert_not_called()
+
     @patch("services.customer_news_ingestion.db_execute")
     def test_due_sources_can_force_active_sources_regardless_of_schedule(self, mock_execute):
         mock_execute.return_value = []
@@ -61,6 +71,7 @@ class NewsSourceFetchingTests(unittest.TestCase):
             [{"article_id": 11, "title": "Dashboard story"}],
             [{"salesperson_id": 3, "selected_for_nightly_precheck": 1}],
             [{"salesperson_id": 3, "article_id": 12, "item_rank": 1}],
+            [{"article_id": 13, "tv_recommended": False, "reasoning": "Duplicate event."}],
         ]
 
         diagnostics = selection_diagnostics()
@@ -69,6 +80,7 @@ class NewsSourceFetchingTests(unittest.TestCase):
         self.assertEqual(diagnostics["dashboard"]["selected_articles"][0]["article_id"], 11)
         self.assertEqual(diagnostics["nightly_email"]["salespeople"][0]["salesperson_id"], 3)
         self.assertEqual(diagnostics["nightly_email"]["selected_articles_precheck"][0]["article_id"], 12)
+        self.assertEqual(diagnostics["editorial_reviews"][0]["reasoning"], "Duplicate event.")
         self.assertIn("semantic duplicate", diagnostics["nightly_email"]["selection_rules"]["final_filter_note"])
 
     @patch("services.customer_news_ingestion.db_execute")
@@ -103,6 +115,8 @@ class NewsSourceFetchingTests(unittest.TestCase):
         order_by = query.split("ORDER BY", 1)[1]
         self.assertIn("EXISTS (SELECT 1 FROM tv_ranked", order_by)
         self.assertIn("EXISTS (SELECT 1 FROM nightly_ranked", order_by)
+        self.assertIn("na.published_at >= CURRENT_TIMESTAMP - INTERVAL '45 days'", query)
+        self.assertIn("na.published_at >= CURRENT_TIMESTAMP - INTERVAL '45 days'", query)
 
     @patch("services.customer_news_ingestion._upsert_source")
     @patch("services.customer_news_ingestion._http_get")

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Sproutt Office Dashboard</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-customers.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-customers.css') }}?v=20260801-1">
 </head>
 <body>
 <main class="tv-shell" id="tvDashboard">
@@ -55,7 +55,7 @@
 </main>
 
 <section class="news-intro-screen" id="newsIntroScreen" aria-hidden="true">
-    <div class="news-intro-rule"></div><p>Sproutt intelligence</p><h1>News today</h1><span>Customer and aviation intelligence</span>
+    <div class="news-intro-rule"></div><p>Sproutt intelligence</p><h1>News briefing</h1><span>Customer and aviation intelligence</span>
 </section>
 
 <section class="today-headlines-screen" id="todayHeadlinesScreen" aria-live="polite">
@@ -83,7 +83,7 @@
 <section class="story-screen" id="storyScreen" aria-live="polite">
     <header><div class="brand"><span class="brand-mark">S</span><span>SPROUTT INTELLIGENCE</span></div><span id="storySource"></span></header>
     <div class="story-body" id="storyBody">
-        <p class="eyebrow">Extended story</p><h1 id="storyTitle"></h1>
+        <p class="eyebrow">Extended story <span class="news-new-badge" id="storyFreshness">NEW</span></p><h1 id="storyTitle"></h1>
         <div class="story-columns"><article><h2>What happened</h2><div id="storySummary"></div></article>
         <article><h2>Why it matters to us</h2><div id="storyRelevance"></div><h2>Next steps</h2><div id="storyActions"></div></article></div>
     </div>
@@ -104,6 +104,6 @@
 
 <div class="wipe" id="sceneWipe"></div>
 <script>window.TV_DASHBOARD_DATA = {{ initial_data|tojson }};</script>
-<script src="{{ url_for('static', filename='js/dashboard-tv.js') }}?v=20260731-2"></script>
+<script src="{{ url_for('static', filename='js/dashboard-tv.js') }}?v=20260801-1"></script>
 </body>
 </html>

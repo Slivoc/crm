@@ -386,17 +386,33 @@
                   <div class="mt-1 d-flex flex-wrap gap-1">
                     {% if article.selected_for_nightly_precheck %}<span class="badge bg-primary" title="The final semantic duplicate check runs immediately before sending and can still remove this item.">Nightly preview{% if article.nightly_salespeople %}: {{ article.nightly_salespeople }}{% endif %}</span>{% endif %}
                     {% if article.selected_for_tv %}<span class="badge bg-info text-dark">Dashboard / TV</span>{% endif %}
+                    {% if not article.published_at %}<span class="badge bg-warning text-dark" title="The feed did not provide a usable publication date. This story is retained for diagnostics but cannot be selected for TV or nightly email.">Missing publish date · not selectable</span>{% endif %}
+                    {% if article.ai_tv_recommended is sameas false %}<span class="badge bg-danger">AI: exclude from TV</span>{% elif article.ai_tv_recommended is sameas true %}<span class="badge bg-success">AI: TV recommended</span>{% elif article.published_at %}<span class="badge bg-secondary">Awaiting AI review</span>{% endif %}
+                    {% if article.ai_editorial_score is not none %}<span class="badge bg-light text-dark border">Editorial {{ article.ai_editorial_score }}/100</span>{% endif %}
                     {% if not article.selected_for_nightly_precheck and not article.selected_for_tv %}<span class="badge bg-light text-muted border">Not selected</span>{% endif %}
                     {% if article.max_relevance_score is not none %}<span class="badge bg-light text-dark border">Score {{ article.max_relevance_score }}</span>{% endif %}
                   </div>
+                  {% if article.ai_editorial_reasoning %}
+                    <div class="small mt-1 {{ 'text-danger' if article.ai_tv_recommended is sameas false else 'text-muted' }}">
+                      <i class="bi bi-stars me-1"></i>{{ article.ai_editorial_reasoning }}
+                      {% if article.ai_event_key %}<span class="text-muted"> · Event: {{ article.ai_event_key }}</span>{% endif %}
+                    </div>
+                    {% if article.ai_tv_recommended is sameas true and not article.selected_for_tv %}
+                      <div class="small text-warning-emphasis mt-1">
+                        Not showing on TV: {{ 'outside the 45-day TV window' if not article.tv_age_eligible else 'outside the current top-three rank for its matched customer(s)' }}.
+                      </div>
+                    {% endif %}
+                  {% elif not article.published_at %}
+                    <div class="small text-warning-emphasis mt-1">Excluded because the source supplied no usable publication date.</div>
+                  {% endif %}
                 </td>
                 <td class="small">{{ article.source_name or article.source_domain or article.source_config_name }}</td>
                 <td class="small text-muted">
                   {% if article_view == 'matched' and article.last_matched_at %}
                     <div><span class="text-success">Matched</span> {{ article.last_matched_at }}</div>
-                    <div>Published {{ article.published_at or article.fetched_at }}</div>
+                    <div>{% if article.published_at %}Published {{ article.published_at }}{% else %}Publish date unavailable · fetched {{ article.fetched_at }}{% endif %}</div>
                   {% else %}
-                    {{ article.published_at or article.fetched_at }}
+                    {% if article.published_at %}{{ article.published_at }}{% else %}Publish date unavailable · fetched {{ article.fetched_at }}{% endif %}
                   {% endif %}
                 </td>
                 <td class="text-end">{{ article.customer_match_count or 0 }}</td>

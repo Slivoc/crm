@@ -4,6 +4,7 @@
     let newsIndex = 0;
     let headlineIndex = 0;
     let extendedStoryIndex = 0;
+    let shownStoryIds = new Set();
     let extendedBatchActive = false;
     let storyScrollTimer;
     // Retained by the dormant legacy scene helpers below; those scenes are no
@@ -151,6 +152,7 @@
                 await wait(450);
             }
             text('storyTitle', story.title); text('storySource', [story.customer_names, story.source_name].filter(Boolean).join(' · '));
+            el('storyFreshness').classList.toggle('active', Boolean(item.is_today));
             renderMarkdown('storySummary', story.summary); renderMarkdown('storyRelevance', story.commercial_angle); renderMarkdown('storyActions', story.suggested_action);
             if (firstStory) {
                 el('newsIntroScreen').classList.add('active');
@@ -187,22 +189,42 @@
         const items = [...(data.news || [])];
         if (!items.length || sceneIsActive()) return;
 
+        await showTodayHeadlines();
+        const batch = buildStoryBatch(items);
         extendedBatchActive = true;
         try {
-            // Use a dedicated cursor so every queued article gets a turn. The
-            // ribbon's faster rotation no longer determines extended stories.
-            // Keep the cycle at exactly five, wrapping when fewer are available.
-            for (let offset = 0; offset < EXTENDED_STORIES_PER_CYCLE; offset += 1) {
-                const item = items[extendedStoryIndex % items.length];
-                extendedStoryIndex = (extendedStoryIndex + 1) % items.length;
+            for (let offset = 0; offset < batch.length; offset += 1) {
+                const item = batch[offset];
                 await showExtendedStory(item, {
                     firstStory: offset === 0,
-                    lastStory: offset === EXTENDED_STORIES_PER_CYCLE - 1
+                    lastStory: offset === batch.length - 1
                 });
             }
         } finally {
             extendedBatchActive = false;
         }
+    }
+
+    function buildStoryBatch(items) {
+        const now = Date.now();
+        const ageDays = item => Math.max(0, (now - new Date(item.published_at).getTime()) / 86400000);
+        const ranked = [...items].sort((a, b) =>
+            Number(b.editorial_score ?? b.relevance_score ?? 0) - Number(a.editorial_score ?? a.relevance_score ?? 0) ||
+            new Date(b.published_at) - new Date(a.published_at));
+        if (ranked.filter(item => !shownStoryIds.has(item.id)).length < Math.min(EXTENDED_STORIES_PER_CYCLE, ranked.length)) {
+            shownStoryIds = new Set();
+        }
+        const batch = [];
+        const take = (predicate, count) => {
+            ranked.filter(item => !shownStoryIds.has(item.id) && !batch.some(chosen => chosen.id === item.id) && predicate(item))
+                .slice(0, count).forEach(item => batch.push(item));
+        };
+        take(item => ageDays(item) <= 2, 2);
+        take(item => ageDays(item) > 2 && ageDays(item) <= 14, 2);
+        take(item => ageDays(item) > 14 && ageDays(item) <= 45, 1);
+        take(() => true, EXTENDED_STORIES_PER_CYCLE - batch.length);
+        batch.forEach(item => shownStoryIds.add(item.id));
+        return batch;
     }
 
     function formatActivityDate(value) {
@@ -234,21 +256,29 @@
             .some(id => el(id).classList.contains('active'));
     }
 
-    function showTodayHeadlines() {
-        if (sceneIsActive()) return;
+    async function showTodayHeadlines() {
+        if (sceneIsActive()) return false;
         const items = (data.news || []).filter(item => item.is_today).slice(0, 8);
-        if (!items.length) return;
+        if (!items.length) return false;
         el('todayHeadlinesList').innerHTML = items.map((item, index) => `
             <li>
                 <span>${String(index + 1).padStart(2, '0')}</span>
-                <div><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml([item.customer_names, item.source_name].filter(Boolean).join(' · '))}</small></div>
+                <div><strong><span class="news-new-badge">NEW</span>${escapeHtml(item.title)}</strong><small>${escapeHtml([item.customer_names, item.source_name].filter(Boolean).join(' · '))}</small></div>
             </li>`).join('');
         text('todayHeadlinesDate', new Date().toLocaleDateString([], {weekday: 'long', day: 'numeric', month: 'long'}));
         text('todayHeadlinesCount', `${items.length} headline${items.length === 1 ? '' : 's'} today`);
         el('sceneWipe').classList.add('active');
-        setTimeout(() => el('todayHeadlinesScreen').classList.add('active'), 450);
-        setTimeout(() => el('sceneWipe').classList.remove('active'), 1050);
-        todayHeadlinesTimer = setTimeout(hideTodayHeadlines, 18000);
+        await wait(450);
+        el('todayHeadlinesScreen').classList.add('active');
+        await wait(600);
+        el('sceneWipe').classList.remove('active');
+        await wait(12000);
+        el('sceneWipe').classList.add('active');
+        await wait(450);
+        el('todayHeadlinesScreen').classList.remove('active');
+        await wait(600);
+        el('sceneWipe').classList.remove('active');
+        return true;
     }
 
     function hideTodayHeadlines() {
