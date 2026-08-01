@@ -16,6 +16,8 @@ from services.customer_news_ingestion import (
     list_recent_articles,
     selection_diagnostics,
     run_news_editorial_review,
+    save_customer_alias,
+    delete_customer_alias,
 )
 
 
@@ -36,6 +38,18 @@ class FakeResponse:
 
 
 class NewsSourceFetchingTests(unittest.TestCase):
+    @patch("services.customer_news_ingestion.db_execute")
+    def test_customer_alias_rejects_short_values_before_writing(self, mock_execute):
+        with self.assertRaisesRegex(ValueError, "at least three"):
+            save_customer_alias(7, "AB")
+        mock_execute.assert_not_called()
+
+    @patch("services.customer_news_ingestion.db_execute")
+    def test_delete_missing_customer_alias_is_safe(self, mock_execute):
+        mock_execute.return_value = None
+        self.assertFalse(delete_customer_alias(404))
+        mock_execute.assert_called_once()
+
     @patch.dict("os.environ", {}, clear=True)
     @patch("services.customer_news_ingestion.db_execute")
     def test_editorial_review_skips_safely_without_api_key(self, mock_execute):

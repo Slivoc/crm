@@ -18,11 +18,15 @@ from services.customer_news_ingestion import (
     delete_news_articles,
     delete_news_source,
     delete_news_sources,
+    delete_customer_alias,
     ingestion_stats,
     list_recent_articles,
+    list_alias_customers,
+    list_customer_aliases,
     list_sources,
     run_ingestion,
     save_news_source,
+    save_customer_alias,
     selection_diagnostics,
     set_source_active,
     test_source,
@@ -135,6 +139,8 @@ def _render_news_control(**context):
         ),
         article_view=article_view,
         ingestion_job=NEWS_INGESTION_JOB,
+        alias_customers=list_alias_customers(),
+        customer_aliases=list_customer_aliases(),
         **context,
     )
 
@@ -196,6 +202,37 @@ def update_news_source_route(source_id):
         flash('News source updated.', 'success')
     except Exception as exc:
         flash(f'Unable to update news source: {exc}', 'error')
+    return redirect(url_for('admin.news_control'))
+
+
+@admin_bp.route('/news/aliases', methods=['POST'])
+@admin_required
+def add_customer_news_alias():
+    try:
+        result = save_customer_alias(
+            request.form.get('customer_id'),
+            request.form.get('alias'),
+            request.form.get('weight'),
+        )
+        flash(
+            f'Customer alias saved and matched to {result["matched_articles"]} recent article(s).',
+            'success',
+        )
+    except Exception as exc:
+        flash(f'Unable to save customer alias: {exc}', 'error')
+    return redirect(url_for('admin.news_control'))
+
+
+@admin_bp.route('/news/aliases/<int:alias_id>/delete', methods=['POST'])
+@admin_required
+def delete_customer_news_alias(alias_id):
+    try:
+        if delete_customer_alias(alias_id):
+            flash('Customer alias and its article matches were deleted.', 'success')
+        else:
+            flash('Customer alias was not found.', 'warning')
+    except Exception as exc:
+        flash(f'Unable to delete customer alias: {exc}', 'error')
     return redirect(url_for('admin.news_control'))
 
 

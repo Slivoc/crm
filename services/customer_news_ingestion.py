@@ -505,6 +505,7 @@ def selection_diagnostics():
         fetch="all",
     ) or []
 
+
     nightly_salespeople = db_execute(
         """
         WITH eligible AS (
@@ -677,9 +678,98 @@ def selection_diagnostics():
             "ai_configured": bool(os.getenv("OPENAI_API_KEY")),
             "model": NEWS_EDITORIAL_MODEL,
             "batch_limit_per_ingestion": 120,
+            "model_request_batch_size": 8,
             "fallback_behavior": "Unreviewed eligible stories continue through deterministic selection until an AI review is saved.",
         },
     }
+
+
+def list_customer_aliases():
+    return db_execute(
+        """
+        SELECT ca.id, ca.customer_id, c.name AS customer_name, ca.alias,
+               ca.alias_type, ca.weight, ca.active, ca.created_at, ca.updated_at
+        FROM customer_aliases ca
+        JOIN customers c ON c.id = ca.customer_id
+        ORDER BY c.name, ca.alias
+        """,
+        fetch="all",
+    ) or []
+
+
+def list_alias_customers():
+    return db_execute(
+        "SELECT id, name FROM customers WHERE name IS NOT NULL AND name <> '' ORDER BY name",
+        fetch="all",
+    ) or []
+
+
+def save_customer_alias(customer_id, alias, weight=100):
+    customer_id = int(customer_id)
+    alias = (alias or "").strip()
+    if len(alias) < 3:
+        raise ValueError("Alias must contain at least three characters.")
+    weight = max(1, min(100, int(weight or 100)))
+    customer = db_execute("SELECT id, name FROM customers WHERE id = ?", (customer_id,), fetch="one")
+    if not customer:
+        raise ValueError("Customer was not found.")
+    row = db_execute(
+        """
+        INSERT INTO customer_aliases (customer_id, alias, alias_type, weight, active)
+        VALUES (?, ?, 'manual', ?, TRUE)
+        ON CONFLICT (customer_id, alias) DO UPDATE SET
+            weight = EXCLUDED.weight, active = TRUE, updated_at = CURRENT_TIMESTAMP
+        RETURNING id
+        """,
+        (customer_id, alias, weight), fetch="one", commit=True,
+    )
+    matched_articles = rematch_customer_alias(customer_id, customer.get("name"), alias, weight)
+    return {"id": row.get("id") if row else None, "matched_articles": matched_articles}
+
+
+def rematch_customer_alias(customer_id, customer_name, alias, weight=100, days=45):
+    articles = db_execute(
+        """
+        SELECT id FROM news_articles
+        WHERE duplicate_of_article_id IS NULL
+          AND published_at >= CURRENT_TIMESTAMP - (? * INTERVAL '1 day')
+        ORDER BY published_at DESC
+        """,
+        (days,), fetch="all",
+    ) or []
+    alias_record = {
+        "customer_id": int(customer_id), "customer_name": customer_name,
+        "alias": alias, "alias_type": "manual", "weight": int(weight),
+    }
+    matched = 0
+    for article in articles:
+        article_id = article.get("id")
+        if match_article_to_customers(article_id, aliases=[alias_record]):
+            matched += 1
+            db_execute("DELETE FROM news_editorial_reviews WHERE article_id = ?", (article_id,), commit=True)
+    return matched
+
+
+def delete_customer_alias(alias_id):
+    alias_row = db_execute(
+        "SELECT id, customer_id, alias FROM customer_aliases WHERE id = ?", (alias_id,), fetch="one",
+    )
+    if not alias_row:
+        return False
+    affected = db_execute(
+        """DELETE FROM article_customer_mentions
+           WHERE customer_id = ? AND matched_alias = ? RETURNING article_id""",
+        (alias_row["customer_id"], alias_row["alias"]), fetch="all", commit=True,
+    ) or []
+    db_execute("DELETE FROM customer_aliases WHERE id = ?", (alias_id,), commit=True)
+    article_ids = sorted({row["article_id"] for row in affected})
+    if article_ids:
+        placeholders = ", ".join("?" for _ in article_ids)
+        db_execute(
+            f"DELETE FROM news_editorial_reviews WHERE article_id IN ({placeholders})",
+            tuple(article_ids), commit=True,
+        )
+    return True
 
 
 def set_source_active(source_id, active):
@@ -753,12 +843,11 @@ def delete_all_news_articles():
     return len(deleted)
 
 
-def run_news_editorial_review(limit=120):
-    """Review recent matched stories once and persist explainable recommendations."""
+def run_news_editorial_review(limit=120, batch_size=8):
+    """Review recent matched stories in small, complete, explainable batches."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return {"reviewed": 0, "skipped": "OPENAI_API_KEY is not configured"}
-
     rows = db_execute(
         """
         SELECT na.id AS article_id, na.title, na.published_at, na.source_name,
@@ -776,8 +865,7 @@ def run_news_editorial_review(limit=120):
         ORDER BY MAX(acm.relevance_score) DESC, na.published_at DESC
         LIMIT ?
         """,
-        (limit,),
-        fetch="all",
+        (limit,), fetch="all",
     ) or []
     if not rows:
         return {"reviewed": 0, "skipped": "No unreviewed eligible stories"}
@@ -785,65 +873,69 @@ def run_news_editorial_review(limit=120):
     candidates = [dict(row) for row in rows]
     for candidate in candidates:
         candidate["published_at"] = str(candidate.get("published_at") or "")
-    prompt = """Act as the news editor for MGC, a helicopter-parts supplier. Review the candidate stories as one batch.
-Recommend stories for an office TV and salesperson email when they contain commercially useful customer or rotorcraft intelligence: orders, contracts, deliveries, fleet changes, MRO, operational expansion, partnerships, regulation, or strong sales triggers. Reject generic corporate publicity, weak name collisions, stale follow-ups, and noise. Group reports of the same underlying event with the same short event_key and recommend only the best, most complete representative unless another version adds material facts.
+    client = OpenAI(api_key=api_key)
+    saved_ids = set()
+    batch_errors = []
+    for start in range(0, len(candidates), max(1, batch_size)):
+        batch = candidates[start:start + max(1, batch_size)]
+        prompt = """Act as the news editor for MGC, a helicopter-parts supplier. Recommend commercially useful customer or rotorcraft intelligence for an office TV and salesperson email. Prefer orders, contracts, deliveries, fleet changes, MRO, operational expansion, partnerships, regulation, and strong sales triggers. Reject generic publicity, weak name collisions, stale follow-ups, and noise. Give reports of the same event the same event_key and recommend only the best representative.
 
-Return JSON only with a top-level `reviews` array. Include exactly one object per candidate with: article_id (integer), tv_recommended (boolean), email_recommended (boolean), editorial_score (integer 0-100), event_key (short string), and reasoning (one concise sentence that an administrator can understand).
+Return JSON only with a `reviews` array containing exactly one object for every candidate. Each object requires article_id, tv_recommended, email_recommended, editorial_score (0-100), event_key, and one-sentence reasoning.
 
 Candidates:
-""" + json.dumps(candidates, default=str)
-    completion = OpenAI(api_key=api_key).chat.completions.create(
-        model=NEWS_EDITORIAL_MODEL,
-        messages=[
-            {"role": "system", "content": "You are a precise commercial rotorcraft news editor. Return valid JSON only."},
-            {"role": "user", "content": prompt},
-        ],
-        response_format={"type": "json_object"},
-        temperature=0.1,
-    )
-    payload = json.loads(completion.choices[0].message.content)
-    reviews = payload.get("reviews") or []
-    valid_ids = {candidate["article_id"] for candidate in candidates}
-    saved = 0
-    for review in reviews:
+""" + json.dumps(batch, default=str)
         try:
-            article_id = int(review.get("article_id"))
-            if article_id not in valid_ids:
-                continue
-            score = max(0, min(100, int(review.get("editorial_score") or 0)))
-            reasoning = str(review.get("reasoning") or "No editorial reasoning returned.")[:2000]
-            db_execute(
-                """
-                INSERT INTO news_editorial_reviews
-                    (article_id, tv_recommended, email_recommended, editorial_score,
-                     event_key, reasoning, model_provider, model_name)
-                VALUES (?, ?, ?, ?, ?, ?, 'openai', ?)
-                ON CONFLICT (article_id) DO UPDATE SET
-                    tv_recommended = EXCLUDED.tv_recommended,
-                    email_recommended = EXCLUDED.email_recommended,
-                    editorial_score = EXCLUDED.editorial_score,
-                    event_key = EXCLUDED.event_key,
-                    reasoning = EXCLUDED.reasoning,
-                    model_provider = EXCLUDED.model_provider,
-                    model_name = EXCLUDED.model_name,
-                    reviewed_at = CURRENT_TIMESTAMP,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (
-                    article_id,
-                    bool(review.get("tv_recommended")),
-                    bool(review.get("email_recommended")),
-                    score,
-                    str(review.get("event_key") or "")[:240] or None,
-                    reasoning,
-                    NEWS_EDITORIAL_MODEL,
-                ),
-                commit=True,
+            completion = client.chat.completions.create(
+                model=NEWS_EDITORIAL_MODEL,
+                messages=[
+                    {"role": "system", "content": "You are a precise commercial rotorcraft news editor. Return valid JSON only."},
+                    {"role": "user", "content": prompt},
+                ],
+                response_format={"type": "json_object"}, temperature=0.1,
             )
-            saved += 1
-        except (TypeError, ValueError):
+            reviews = (json.loads(completion.choices[0].message.content).get("reviews") or [])
+        except Exception as exc:
+            batch_errors.append({"article_ids": [item["article_id"] for item in batch], "error": str(exc)})
             continue
-    return {"reviewed": saved, "candidates": len(candidates), "model": NEWS_EDITORIAL_MODEL}
+        valid_ids = {item["article_id"] for item in batch}
+        for review in reviews:
+            try:
+                article_id = int(review.get("article_id"))
+                if article_id not in valid_ids or article_id in saved_ids:
+                    continue
+                score = max(0, min(100, int(review.get("editorial_score") or 0)))
+                db_execute(
+                    """
+                    INSERT INTO news_editorial_reviews
+                        (article_id, tv_recommended, email_recommended, editorial_score,
+                         event_key, reasoning, model_provider, model_name)
+                    VALUES (?, ?, ?, ?, ?, ?, 'openai', ?)
+                    ON CONFLICT (article_id) DO UPDATE SET
+                        tv_recommended = EXCLUDED.tv_recommended,
+                        email_recommended = EXCLUDED.email_recommended,
+                        editorial_score = EXCLUDED.editorial_score,
+                        event_key = EXCLUDED.event_key,
+                        reasoning = EXCLUDED.reasoning,
+                        model_provider = EXCLUDED.model_provider,
+                        model_name = EXCLUDED.model_name,
+                        reviewed_at = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (article_id, bool(review.get("tv_recommended")), bool(review.get("email_recommended")),
+                     score, str(review.get("event_key") or "")[:240] or None,
+                     str(review.get("reasoning") or "No editorial reasoning returned.")[:2000],
+                     NEWS_EDITORIAL_MODEL),
+                    commit=True,
+                )
+                saved_ids.add(article_id)
+            except (TypeError, ValueError):
+                continue
+    missing_ids = sorted({item["article_id"] for item in candidates} - saved_ids)
+    return {
+        "reviewed": len(saved_ids), "candidates": len(candidates), "missing_article_ids": missing_ids,
+        "batches": (len(candidates) + max(1, batch_size) - 1) // max(1, batch_size),
+        "batch_errors": batch_errors, "model": NEWS_EDITORIAL_MODEL,
+    }
 
 
 def run_ingestion(source_type=None, limit=50, force=False):
