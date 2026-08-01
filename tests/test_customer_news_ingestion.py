@@ -11,6 +11,7 @@ from services.customer_news_ingestion import (
     fetch_gdelt_source,
     fetch_rss_source,
     discover_webpage_feeds,
+    due_sources,
     list_recent_articles,
     selection_diagnostics,
 )
@@ -33,6 +34,25 @@ class FakeResponse:
 
 
 class NewsSourceFetchingTests(unittest.TestCase):
+    @patch("services.customer_news_ingestion.db_execute")
+    def test_due_sources_can_force_active_sources_regardless_of_schedule(self, mock_execute):
+        mock_execute.return_value = []
+
+        due_sources(source_type="rss", force=True)
+
+        query = mock_execute.call_args.args[0]
+        self.assertIn("active = TRUE", query)
+        self.assertIn("source_type = ?", query)
+        self.assertNotIn("last_checked_at <=", query)
+
+    @patch("services.customer_news_ingestion.db_execute")
+    def test_due_sources_normally_honours_check_frequency(self, mock_execute):
+        mock_execute.return_value = []
+
+        due_sources(source_type="rss")
+
+        self.assertIn("last_checked_at <=", mock_execute.call_args.args[0])
+
     @patch("services.customer_news_ingestion.db_execute")
     def test_selection_diagnostics_exports_dashboard_and_nightly_snapshots(self, mock_execute):
         mock_execute.side_effect = [

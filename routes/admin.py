@@ -34,6 +34,7 @@ NEWS_INGESTION_JOB = {
     'started_at': None,
     'finished_at': None,
     'source_type': None,
+    'force': False,
     'result': None,
     'error': None,
 }
@@ -142,9 +143,11 @@ def _render_news_control(**context):
 def run_news_ingestion_route():
     payload = request.get_json(silent=True) if request.is_json else {}
     source_type = (payload or {}).get('source_type') or request.form.get('source_type') or None
+    force_value = (payload or {}).get('force') if request.is_json else request.form.get('force')
+    force = force_value is True or str(force_value or '').lower() in {'1', 'true', 'yes', 'on'}
     if source_type == 'all':
         source_type = None
-    started = _start_news_ingestion_background(source_type=source_type)
+    started = _start_news_ingestion_background(source_type=source_type, force=force)
     if request.headers.get('Accept') == 'application/json' or request.is_json:
         return jsonify({'success': True, 'started': started, 'job': NEWS_INGESTION_JOB})
     if started:
@@ -308,7 +311,7 @@ def test_news_source_route(source_id):
         return _render_news_control(source_test={'error': str(exc), 'source_id': source_id})
 
 
-def _start_news_ingestion_background(source_type=None):
+def _start_news_ingestion_background(source_type=None, force=False):
     with NEWS_INGESTION_LOCK:
         if NEWS_INGESTION_JOB.get('running'):
             return False
@@ -317,6 +320,7 @@ def _start_news_ingestion_background(source_type=None):
             'started_at': datetime.now().isoformat(timespec='seconds'),
             'finished_at': None,
             'source_type': source_type or 'all',
+            'force': bool(force),
             'result': None,
             'error': None,
         })
@@ -326,7 +330,7 @@ def _start_news_ingestion_background(source_type=None):
     def worker():
         try:
             with app.app_context():
-                result = run_ingestion(source_type=source_type, limit=50)
+                result = run_ingestion(source_type=source_type, limit=50, force=force)
             with NEWS_INGESTION_LOCK:
                 NEWS_INGESTION_JOB.update({
                     'running': False,

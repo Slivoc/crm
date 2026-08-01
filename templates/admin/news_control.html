@@ -19,6 +19,13 @@
           <i class="bi bi-arrow-repeat me-1"></i> Run Due RSS Sources
         </button>
       </form>
+      <form method="post" action="{{ url_for('admin.run_news_ingestion_route') }}" onsubmit="return confirm('Force a check of every active RSS source, including ones checked recently?');">
+        <input type="hidden" name="source_type" value="rss">
+        <input type="hidden" name="force" value="1">
+        <button class="btn btn-outline-primary" type="submit">
+          <i class="bi bi-arrow-clockwise me-1"></i> Force All RSS Sources
+        </button>
+      </form>
     </div>
   </div>
 
@@ -61,7 +68,7 @@
       <div>
         <strong>Ingestion job:</strong>
         {% if ingestion_job.running %}
-          Running {{ ingestion_job.source_type }} since {{ ingestion_job.started_at }}.
+          Running {{ 'forced ' if ingestion_job.force else '' }}{{ ingestion_job.source_type }} since {{ ingestion_job.started_at }}.
         {% elif ingestion_job.finished_at %}
           Last finished {{ ingestion_job.finished_at }}.
           {% if ingestion_job.result %}
@@ -402,6 +409,9 @@
 </div>
 <script>
   (() => {
+    {% if ingestion_job.running %}
+    window.setTimeout(() => window.location.reload(), 3000);
+    {% endif %}
     const selectionFilter = document.getElementById('news-selection-filter');
     const articleRows = [...document.querySelectorAll('.news-article-row')];
     function applyArticleFilter() {
@@ -457,7 +467,8 @@
         queryInput.focus();
         return;
       }
-      document.getElementById('news-source-url').value = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-GB&gl=GB&ceid=GB:en`;
+      const datedQuery = /(?:^|\s)when:\d+d(?:\s|$)/i.test(query) ? query : `${query} when:30d`;
+      document.getElementById('news-source-url').value = `https://news.google.com/rss/search?q=${encodeURIComponent(datedQuery)}&hl=en-GB&gl=GB&ceid=GB:en`;
       const nameInput = document.getElementById('news-source-name');
       if (!nameInput.value.trim()) nameInput.value = `Google News - ${query}`;
       document.getElementById('news-source-type').value = 'rss';

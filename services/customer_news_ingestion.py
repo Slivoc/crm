@@ -300,23 +300,26 @@ def update_news_source(source_id, name, source_type, url=None, query=None, secto
     )
 
 
-def due_sources(limit=50, source_type=None):
+def due_sources(limit=50, source_type=None, force=False):
     params = []
     source_filter = ""
     if source_type:
         source_filter = "AND source_type = ?"
         params.append(source_type)
     params.append(limit)
+    schedule_filter = "" if force else """
+          AND (
+            last_checked_at IS NULL
+            OR last_checked_at <= CURRENT_TIMESTAMP - (check_frequency_minutes * INTERVAL '1 minute')
+          )
+    """
     return db_execute(
         f"""
         SELECT *
         FROM news_sources
         WHERE active = TRUE
           {source_filter}
-          AND (
-            last_checked_at IS NULL
-            OR last_checked_at <= CURRENT_TIMESTAMP - (check_frequency_minutes * INTERVAL '1 minute')
-          )
+          {schedule_filter}
         ORDER BY priority DESC, COALESCE(last_checked_at, TIMESTAMP '1970-01-01') ASC
         LIMIT ?
         """,
@@ -662,8 +665,8 @@ def delete_news_articles(article_ids):
     return len(deleted)
 
 
-def run_ingestion(source_type=None, limit=50):
-    sources = due_sources(limit=limit, source_type=source_type)
+def run_ingestion(source_type=None, limit=50, force=False):
+    sources = due_sources(limit=limit, source_type=source_type, force=force)
     customer_aliases = get_customer_aliases()
     result = {
         "sources_checked": 0,
