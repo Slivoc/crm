@@ -467,7 +467,9 @@
         queryInput.focus();
         return;
       }
-      const datedQuery = /(?:^|\s)when:\d+d(?:\s|$)/i.test(query) ? query : `${query} when:30d`;
+      const hasAdvancedSyntax = /["()]|\b(?:AND|OR|NOT)\b/i.test(query);
+      const quotedQuery = hasAdvancedSyntax ? query : `"${query}"`;
+      const datedQuery = /(?:^|\s)when:\d+d(?:\s|$)/i.test(quotedQuery) ? quotedQuery : `${quotedQuery} when:30d`;
       document.getElementById('news-source-url').value = `https://news.google.com/rss/search?q=${encodeURIComponent(datedQuery)}&hl=en-GB&gl=GB&ceid=GB:en`;
       const nameInput = document.getElementById('news-source-name');
       if (!nameInput.value.trim()) nameInput.value = `Google News - ${query}`;
