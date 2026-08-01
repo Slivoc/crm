@@ -72,6 +72,8 @@ class NewsSourceFetchingTests(unittest.TestCase):
             [{"salesperson_id": 3, "selected_for_nightly_precheck": 1}],
             [{"salesperson_id": 3, "article_id": 12, "item_rank": 1}],
             [{"article_id": 13, "tv_recommended": False, "reasoning": "Duplicate event."}],
+            {"eligible_articles": 4, "completed_reviews": 1, "awaiting_reviews": 3},
+            [{"article_id": 14, "title": "Awaiting story"}],
         ]
 
         diagnostics = selection_diagnostics()
@@ -81,6 +83,8 @@ class NewsSourceFetchingTests(unittest.TestCase):
         self.assertEqual(diagnostics["nightly_email"]["salespeople"][0]["salesperson_id"], 3)
         self.assertEqual(diagnostics["nightly_email"]["selected_articles_precheck"][0]["article_id"], 12)
         self.assertEqual(diagnostics["editorial_reviews"][0]["reasoning"], "Duplicate event.")
+        self.assertEqual(diagnostics["editorial_review_status"]["summary"]["awaiting_reviews"], 3)
+        self.assertEqual(diagnostics["editorial_review_status"]["awaiting_articles"][0]["article_id"], 14)
         self.assertIn("semantic duplicate", diagnostics["nightly_email"]["selection_rules"]["final_filter_note"])
 
     @patch("services.customer_news_ingestion.db_execute")

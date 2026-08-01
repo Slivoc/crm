@@ -602,6 +602,45 @@ def selection_diagnostics():
         """,
         fetch="all",
     ) or []
+    editorial_review_summary = db_execute(
+        """
+        WITH eligible AS (
+            SELECT DISTINCT na.id
+            FROM news_articles na
+            JOIN article_customer_mentions acm ON acm.article_id = na.id
+            WHERE na.duplicate_of_article_id IS NULL
+              AND na.published_at >= CURRENT_TIMESTAMP - INTERVAL '45 days'
+        )
+        SELECT COUNT(*) AS eligible_articles,
+               COUNT(ner.article_id) AS completed_reviews,
+               COUNT(*) FILTER (WHERE ner.article_id IS NULL) AS awaiting_reviews,
+               COUNT(*) FILTER (WHERE ner.tv_recommended) AS tv_recommended,
+               COUNT(*) FILTER (WHERE ner.article_id IS NOT NULL AND NOT ner.tv_recommended) AS tv_rejected,
+               COUNT(*) FILTER (WHERE ner.email_recommended) AS email_recommended,
+               COUNT(*) FILTER (WHERE ner.article_id IS NOT NULL AND NOT ner.email_recommended) AS email_rejected,
+               MAX(ner.reviewed_at) AS last_reviewed_at
+        FROM eligible e
+        LEFT JOIN news_editorial_reviews ner ON ner.article_id = e.id
+        """,
+        fetch="one",
+    )
+    awaiting_editorial_reviews = db_execute(
+        """
+        SELECT na.id AS article_id, na.title, na.published_at, na.source_name,
+               MAX(acm.relevance_score) AS max_relevance_score,
+               STRING_AGG(DISTINCT c.name, ', ' ORDER BY c.name) AS matched_customers
+        FROM news_articles na
+        JOIN article_customer_mentions acm ON acm.article_id = na.id
+        JOIN customers c ON c.id = acm.customer_id
+        LEFT JOIN news_editorial_reviews ner ON ner.article_id = na.id
+        WHERE na.duplicate_of_article_id IS NULL
+          AND na.published_at >= CURRENT_TIMESTAMP - INTERVAL '45 days'
+          AND ner.article_id IS NULL
+        GROUP BY na.id
+        ORDER BY MAX(acm.relevance_score) DESC, na.published_at DESC
+        """,
+        fetch="all",
+    ) or []
 
     return {
         "dashboard": {
@@ -632,6 +671,14 @@ def selection_diagnostics():
             "selected_articles_precheck": [dict(row) for row in nightly_articles],
         },
         "editorial_reviews": [dict(row) for row in editorial_reviews],
+        "editorial_review_status": {
+            "summary": dict(editorial_review_summary or {}),
+            "awaiting_articles": [dict(row) for row in awaiting_editorial_reviews],
+            "ai_configured": bool(os.getenv("OPENAI_API_KEY")),
+            "model": NEWS_EDITORIAL_MODEL,
+            "batch_limit_per_ingestion": 120,
+            "fallback_behavior": "Unreviewed eligible stories continue through deterministic selection until an AI review is saved.",
+        },
     }
 
 
