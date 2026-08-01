@@ -12,6 +12,7 @@ from services.customer_news_ingestion import (
     fetch_rss_source,
     discover_webpage_feeds,
     list_recent_articles,
+    selection_diagnostics,
 )
 
 
@@ -32,6 +33,23 @@ class FakeResponse:
 
 
 class NewsSourceFetchingTests(unittest.TestCase):
+    @patch("services.customer_news_ingestion.db_execute")
+    def test_selection_diagnostics_exports_dashboard_and_nightly_snapshots(self, mock_execute):
+        mock_execute.side_effect = [
+            {"selected_distinct_articles": 2},
+            [{"article_id": 11, "title": "Dashboard story"}],
+            [{"salesperson_id": 3, "selected_for_nightly_precheck": 1}],
+            [{"salesperson_id": 3, "article_id": 12, "item_rank": 1}],
+        ]
+
+        diagnostics = selection_diagnostics()
+
+        self.assertEqual(diagnostics["dashboard"]["counts"]["selected_distinct_articles"], 2)
+        self.assertEqual(diagnostics["dashboard"]["selected_articles"][0]["article_id"], 11)
+        self.assertEqual(diagnostics["nightly_email"]["salespeople"][0]["salesperson_id"], 3)
+        self.assertEqual(diagnostics["nightly_email"]["selected_articles_precheck"][0]["article_id"], 12)
+        self.assertIn("semantic duplicate", diagnostics["nightly_email"]["selection_rules"]["final_filter_note"])
+
     @patch("services.customer_news_ingestion.db_execute")
     def test_recent_articles_default_to_customer_matches(self, mock_execute):
         mock_execute.return_value = []

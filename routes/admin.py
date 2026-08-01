@@ -22,6 +22,7 @@ from services.customer_news_ingestion import (
     list_sources,
     run_ingestion,
     save_news_source,
+    selection_diagnostics,
     set_source_active,
     test_source,
     update_news_source,
@@ -285,6 +286,7 @@ def export_news_diagnostics():
             'sources_with_errors': sum(bool(source.get('last_error')) for source in sources),
         },
         'last_ingestion_job': dict(NEWS_INGESTION_JOB),
+        'selection_diagnostics': selection_diagnostics(),
         'sources': sources,
     }
     filename = f"news-source-diagnostics-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}.json"

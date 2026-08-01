@@ -432,6 +432,175 @@ def ingestion_stats():
     return dict(row or {})
 
 
+def selection_diagnostics():
+    """Describe and snapshot the selectors used by the TV and nightly email."""
+    dashboard_summary = db_execute(
+        """
+        WITH eligible AS (
+            SELECT acm.article_id, acm.customer_id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY acm.customer_id
+                       ORDER BY COALESCE(na.published_at, na.fetched_at) DESC,
+                                acm.relevance_score DESC, na.id DESC
+                   ) AS item_rank
+            FROM article_customer_mentions acm
+            JOIN news_articles na ON na.id = acm.article_id
+            WHERE na.duplicate_of_article_id IS NULL
+              AND COALESCE(na.published_at, na.fetched_at) >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+        )
+        SELECT COUNT(*) AS eligible_customer_article_matches,
+               COUNT(DISTINCT article_id) AS eligible_distinct_articles,
+               COUNT(DISTINCT customer_id) AS eligible_customers,
+               COUNT(*) FILTER (WHERE item_rank <= 3) AS selected_customer_article_matches,
+               COUNT(DISTINCT article_id) FILTER (WHERE item_rank <= 3) AS selected_distinct_articles
+        FROM eligible
+        """,
+        fetch="one",
+    )
+    dashboard_articles = db_execute(
+        """
+        WITH ranked AS (
+            SELECT acm.article_id, acm.customer_id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY acm.customer_id
+                       ORDER BY COALESCE(na.published_at, na.fetched_at) DESC,
+                                acm.relevance_score DESC, na.id DESC
+                   ) AS item_rank
+            FROM article_customer_mentions acm
+            JOIN news_articles na ON na.id = acm.article_id
+            WHERE na.duplicate_of_article_id IS NULL
+              AND COALESCE(na.published_at, na.fetched_at) >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+        )
+        SELECT na.id AS article_id, na.title, na.source_name,
+               COALESCE(na.published_at, na.fetched_at) AS article_date,
+               MAX(acm.relevance_score) AS max_relevance_score,
+               STRING_AGG(DISTINCT c.name, ', ' ORDER BY c.name) AS matched_customers
+        FROM (SELECT DISTINCT article_id FROM ranked WHERE item_rank <= 3) selected
+        JOIN news_articles na ON na.id = selected.article_id
+        JOIN article_customer_mentions acm ON acm.article_id = na.id
+        JOIN customers c ON c.id = acm.customer_id
+        GROUP BY na.id
+        ORDER BY COALESCE(na.published_at, na.fetched_at) DESC,
+                 MAX(acm.relevance_score) DESC
+        """,
+        fetch="all",
+    ) or []
+
+    nightly_salespeople = db_execute(
+        """
+        WITH eligible AS (
+            SELECT acm.article_id, acm.customer_id, c.salesperson_id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY c.salesperson_id
+                       ORDER BY COALESCE(c.watch, FALSE) DESC,
+                                acm.relevance_score DESC,
+                                COALESCE(na.published_at, na.fetched_at) DESC,
+                                na.id DESC
+                   ) AS item_rank
+            FROM article_customer_mentions acm
+            JOIN news_articles na ON na.id = acm.article_id
+            JOIN customers c ON c.id = acm.customer_id
+            WHERE c.salesperson_id IS NOT NULL
+              AND na.duplicate_of_article_id IS NULL
+              AND COALESCE(na.published_at, na.fetched_at) >= CURRENT_TIMESTAMP - INTERVAL '45 days'
+              AND acm.relevance_score >= 40
+              AND NOT EXISTS (
+                  SELECT 1 FROM sent_customer_news scn
+                  WHERE scn.salesperson_id = c.salesperson_id
+                    AND scn.customer_id = c.id
+                    AND scn.sent_at >= CURRENT_TIMESTAMP - INTERVAL '90 days'
+                    AND LOWER(REGEXP_REPLACE(scn.headline, '[^[:alnum:]_]+', '', 'g')) =
+                        LOWER(REGEXP_REPLACE(na.title, '[^[:alnum:]_]+', '', 'g'))
+              )
+        )
+        SELECT s.id AS salesperson_id, s.name AS salesperson_name,
+               (SELECT COUNT(*) FROM customers c WHERE c.salesperson_id = s.id) AS assigned_customers,
+               COUNT(e.article_id) AS eligible_customer_article_matches,
+               COUNT(DISTINCT e.customer_id) AS customers_with_eligible_news,
+               COUNT(e.article_id) FILTER (WHERE e.item_rank <= 50) AS query_candidates,
+               COUNT(e.article_id) FILTER (WHERE e.item_rank <= 20) AS selected_for_nightly_precheck
+        FROM salespeople s
+        LEFT JOIN eligible e ON e.salesperson_id = s.id
+        GROUP BY s.id, s.name
+        ORDER BY s.name
+        """,
+        fetch="all",
+    ) or []
+    nightly_articles = db_execute(
+        """
+        WITH ranked AS (
+            SELECT acm.article_id, acm.customer_id, c.salesperson_id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY c.salesperson_id
+                       ORDER BY COALESCE(c.watch, FALSE) DESC,
+                                acm.relevance_score DESC,
+                                COALESCE(na.published_at, na.fetched_at) DESC,
+                                na.id DESC
+                   ) AS item_rank
+            FROM article_customer_mentions acm
+            JOIN news_articles na ON na.id = acm.article_id
+            JOIN customers c ON c.id = acm.customer_id
+            WHERE c.salesperson_id IS NOT NULL
+              AND na.duplicate_of_article_id IS NULL
+              AND COALESCE(na.published_at, na.fetched_at) >= CURRENT_TIMESTAMP - INTERVAL '45 days'
+              AND acm.relevance_score >= 40
+              AND NOT EXISTS (
+                  SELECT 1 FROM sent_customer_news scn
+                  WHERE scn.salesperson_id = c.salesperson_id
+                    AND scn.customer_id = c.id
+                    AND scn.sent_at >= CURRENT_TIMESTAMP - INTERVAL '90 days'
+                    AND LOWER(REGEXP_REPLACE(scn.headline, '[^[:alnum:]_]+', '', 'g')) =
+                        LOWER(REGEXP_REPLACE(na.title, '[^[:alnum:]_]+', '', 'g'))
+              )
+        )
+        SELECT r.salesperson_id, s.name AS salesperson_name, r.item_rank,
+               r.customer_id, c.name AS customer_name,
+               na.id AS article_id, na.title, na.source_name,
+               COALESCE(na.published_at, na.fetched_at) AS article_date,
+               acm.relevance_score, COALESCE(c.watch, FALSE) AS customer_watched
+        FROM ranked r
+        JOIN salespeople s ON s.id = r.salesperson_id
+        JOIN customers c ON c.id = r.customer_id
+        JOIN news_articles na ON na.id = r.article_id
+        JOIN article_customer_mentions acm
+          ON acm.article_id = r.article_id AND acm.customer_id = r.customer_id
+        WHERE r.item_rank <= 20
+        ORDER BY s.name, r.item_rank
+        """,
+        fetch="all",
+    ) or []
+
+    return {
+        "dashboard": {
+            "consumer": "Office TV dashboard (/dashboard/tv)",
+            "selection_rules": {
+                "lookback_days": 30,
+                "per_customer_limit": 3,
+                "minimum_relevance_score": None,
+                "exclude_duplicate_articles": True,
+                "ranking": ["article_date_desc", "relevance_score_desc", "article_id_desc"],
+            },
+            "counts": dict(dashboard_summary or {}),
+            "selected_articles": [dict(row) for row in dashboard_articles],
+        },
+        "nightly_email": {
+            "consumer": "Weekday 01:00 salesperson customer-news email",
+            "selection_rules": {
+                "lookback_days": 45,
+                "minimum_relevance_score": 40,
+                "query_candidate_limit_per_salesperson": 50,
+                "final_email_limit_per_salesperson": 20,
+                "sent_headline_lookback_days": 90,
+                "exclude_duplicate_articles": True,
+                "ranking": ["watched_customer_first", "relevance_score_desc", "article_date_desc", "article_id_desc"],
+                "final_filter_note": "A hash and AI semantic duplicate check runs at send time; precheck selections can therefore be removed from the final email.",
+            },
+            "salespeople": [dict(row) for row in nightly_salespeople],
+            "selected_articles_precheck": [dict(row) for row in nightly_articles],
+        },
+    }
+
+
 def set_source_active(source_id, active):
     db_execute(
         "UPDATE news_sources SET active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
