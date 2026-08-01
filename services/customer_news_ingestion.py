@@ -369,7 +369,7 @@ def list_recent_articles(limit=100, matched_only=True, prioritize_selected=False
     # Keep anything currently used by the TV or nightly email inside that slice,
     # even when a large ingestion run has pushed it below the newest 100 rows.
     selected_order = """
-        (EXISTS (SELECT 1 FROM tv_ranked x WHERE x.article_id = na.id AND x.item_rank <= 3)
+        (EXISTS (SELECT 1 FROM tv_ranked x WHERE x.article_id = na.id AND x.item_rank <= 10)
          OR EXISTS (SELECT 1 FROM nightly_ranked x WHERE x.article_id = na.id AND x.item_rank <= 20)) DESC,
     """ if prioritize_selected else ""
     order_by = f"{selected_order}{recent_order}"
@@ -377,7 +377,7 @@ def list_recent_articles(limit=100, matched_only=True, prioritize_selected=False
         f"""
         WITH tv_ranked AS (
             SELECT acm.article_id,
-                   ROW_NUMBER() OVER (PARTITION BY acm.customer_id ORDER BY COALESCE(na.published_at, na.fetched_at) DESC, acm.relevance_score DESC, na.id DESC) AS item_rank
+                   ROW_NUMBER() OVER (PARTITION BY acm.customer_id ORDER BY COALESCE((SELECT ner.editorial_score FROM news_editorial_reviews ner WHERE ner.article_id = na.id), acm.relevance_score) DESC, na.published_at DESC, na.id DESC) AS item_rank
             FROM article_customer_mentions acm
             JOIN news_articles na ON na.id = acm.article_id
             WHERE na.duplicate_of_article_id IS NULL
@@ -407,7 +407,7 @@ def list_recent_articles(limit=100, matched_only=True, prioritize_selected=False
                MAX(acm.relevance_score) AS max_relevance_score,
                MAX(acm.created_at) AS last_matched_at,
                STRING_AGG(DISTINCT c.name, ', ' ORDER BY c.name) AS matched_customers,
-               EXISTS (SELECT 1 FROM tv_ranked x WHERE x.article_id = na.id AND x.item_rank <= 3) AS selected_for_tv,
+               EXISTS (SELECT 1 FROM tv_ranked x WHERE x.article_id = na.id AND x.item_rank <= 10) AS selected_for_tv,
                EXISTS (SELECT 1 FROM nightly_ranked x WHERE x.article_id = na.id AND x.item_rank <= 20) AS selected_for_nightly_precheck,
                (SELECT STRING_AGG(DISTINCT s.name, ', ' ORDER BY s.name) FROM nightly_ranked x JOIN salespeople s ON s.id = x.salesperson_id WHERE x.article_id = na.id AND x.item_rank <= 20) AS nightly_salespeople
                ,(SELECT ner.tv_recommended FROM news_editorial_reviews ner WHERE ner.article_id = na.id) AS ai_tv_recommended
@@ -457,8 +457,8 @@ def selection_diagnostics():
             SELECT acm.article_id, acm.customer_id,
                    ROW_NUMBER() OVER (
                        PARTITION BY acm.customer_id
-                       ORDER BY COALESCE(na.published_at, na.fetched_at) DESC,
-                                acm.relevance_score DESC, na.id DESC
+                       ORDER BY COALESCE((SELECT ner.editorial_score FROM news_editorial_reviews ner WHERE ner.article_id = na.id), acm.relevance_score) DESC,
+                                na.published_at DESC, na.id DESC
                    ) AS item_rank
             FROM article_customer_mentions acm
             JOIN news_articles na ON na.id = acm.article_id
@@ -469,8 +469,8 @@ def selection_diagnostics():
         SELECT COUNT(*) AS eligible_customer_article_matches,
                COUNT(DISTINCT article_id) AS eligible_distinct_articles,
                COUNT(DISTINCT customer_id) AS eligible_customers,
-               COUNT(*) FILTER (WHERE item_rank <= 3) AS selected_customer_article_matches,
-               COUNT(DISTINCT article_id) FILTER (WHERE item_rank <= 3) AS selected_distinct_articles
+               COUNT(*) FILTER (WHERE item_rank <= 10) AS selected_customer_article_matches,
+               COUNT(DISTINCT article_id) FILTER (WHERE item_rank <= 10) AS selected_distinct_articles
         FROM eligible
         """,
         fetch="one",
@@ -481,8 +481,8 @@ def selection_diagnostics():
             SELECT acm.article_id, acm.customer_id,
                    ROW_NUMBER() OVER (
                        PARTITION BY acm.customer_id
-                       ORDER BY COALESCE(na.published_at, na.fetched_at) DESC,
-                                acm.relevance_score DESC, na.id DESC
+                       ORDER BY COALESCE((SELECT ner.editorial_score FROM news_editorial_reviews ner WHERE ner.article_id = na.id), acm.relevance_score) DESC,
+                                na.published_at DESC, na.id DESC
                    ) AS item_rank
             FROM article_customer_mentions acm
             JOIN news_articles na ON na.id = acm.article_id
@@ -494,7 +494,7 @@ def selection_diagnostics():
                COALESCE(na.published_at, na.fetched_at) AS article_date,
                MAX(acm.relevance_score) AS max_relevance_score,
                STRING_AGG(DISTINCT c.name, ', ' ORDER BY c.name) AS matched_customers
-        FROM (SELECT DISTINCT article_id FROM ranked WHERE item_rank <= 3) selected
+        FROM (SELECT DISTINCT article_id FROM ranked WHERE item_rank <= 10) selected
         JOIN news_articles na ON na.id = selected.article_id
         JOIN article_customer_mentions acm ON acm.article_id = na.id
         JOIN customers c ON c.id = acm.customer_id
@@ -648,10 +648,10 @@ def selection_diagnostics():
             "consumer": "Office TV dashboard (/dashboard/tv)",
             "selection_rules": {
                 "lookback_days": 45,
-                "per_customer_limit": 3,
+                "per_customer_limit": 10,
                 "minimum_relevance_score": None,
                 "exclude_duplicate_articles": True,
-                "ranking": ["article_date_desc", "relevance_score_desc", "article_id_desc"],
+                "ranking": ["ai_editorial_score_or_relevance_desc", "article_date_desc", "article_id_desc"],
             },
             "counts": dict(dashboard_summary or {}),
             "selected_articles": [dict(row) for row in dashboard_articles],
@@ -678,7 +678,7 @@ def selection_diagnostics():
             "ai_configured": bool(os.getenv("OPENAI_API_KEY")),
             "model": NEWS_EDITORIAL_MODEL,
             "batch_limit_per_ingestion": 120,
-            "model_request_batch_size": 8,
+            "model_request_batch_size": 1,
             "fallback_behavior": "Unreviewed eligible stories continue through deterministic selection until an AI review is saved.",
         },
     }
@@ -843,7 +843,7 @@ def delete_all_news_articles():
     return len(deleted)
 
 
-def run_news_editorial_review(limit=120, batch_size=8):
+def run_news_editorial_review(limit=120, batch_size=1):
     """Review recent matched stories in small, complete, explainable batches."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:

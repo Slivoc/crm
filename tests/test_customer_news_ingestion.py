@@ -132,8 +132,10 @@ class NewsSourceFetchingTests(unittest.TestCase):
         query = mock_execute.call_args.args[0]
         order_by = query.split("ORDER BY", 1)[1]
         self.assertIn("EXISTS (SELECT 1 FROM tv_ranked", order_by)
+        self.assertIn("x.item_rank <= 10", query)
         self.assertIn("EXISTS (SELECT 1 FROM nightly_ranked", order_by)
         self.assertIn("na.published_at >= CURRENT_TIMESTAMP - INTERVAL '45 days'", query)
+        self.assertIn("ner.editorial_score", query)
         self.assertIn("na.published_at >= CURRENT_TIMESTAMP - INTERVAL '45 days'", query)
 
     @patch("services.customer_news_ingestion._upsert_source")

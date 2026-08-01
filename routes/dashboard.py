@@ -143,8 +143,11 @@ def _tv_payload(conn):
             SELECT acm.article_id, acm.customer_id,
                    ROW_NUMBER() OVER (
                        PARTITION BY acm.customer_id
-                       ORDER BY COALESCE(na.published_at, na.fetched_at) DESC,
-                                acm.relevance_score DESC,
+                       ORDER BY COALESCE(
+                                    (SELECT ner.editorial_score FROM news_editorial_reviews ner WHERE ner.article_id = na.id),
+                                    acm.relevance_score
+                                ) DESC,
+                                na.published_at DESC,
                                 na.id DESC
                    ) AS customer_article_rank
             FROM article_customer_mentions acm
@@ -155,7 +158,7 @@ def _tv_payload(conn):
         ), selected_articles AS (
             SELECT DISTINCT article_id
             FROM ranked_customer_articles
-            WHERE customer_article_rank <= 3
+            WHERE customer_article_rank <= 10
         )
         SELECT na.id, na.title, na.url, na.source_name, na.summary_raw, na.body_excerpt,
                na.published_at,

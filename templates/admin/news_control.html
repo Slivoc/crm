@@ -451,7 +451,7 @@
                     </div>
                     {% if article.ai_tv_recommended is sameas true and not article.selected_for_tv %}
                       <div class="small text-warning-emphasis mt-1">
-                        Not showing on TV: {{ 'outside the 45-day TV window' if not article.tv_age_eligible else 'outside the current top-three rank for its matched customer(s)' }}.
+                        Not showing on TV: {{ 'outside the 45-day TV window' if not article.tv_age_eligible else 'outside the current top-ten rank for its matched customer(s)' }}.
                       </div>
                     {% endif %}
                   {% elif not article.published_at %}
