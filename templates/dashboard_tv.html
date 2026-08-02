@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Sproutt Office Dashboard</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-pace.css') }}?v=20260802-1">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-customers.css') }}?v=20260801-1">
 </head>
 <body>
@@ -21,7 +22,10 @@
             <div class="target-figures"><strong id="salesActual">£0</strong><span>of <b id="salesTarget">£0</b></span></div>
         </div>
         <div class="target-percent" id="salesPercent">0%</div>
-        <div class="progress-track"><div class="progress-fill" id="salesProgress"></div></div>
+        <div class="progress-track">
+            <div class="progress-fill" id="salesProgress"></div>
+            <div class="pace-marker" id="salesPaceMarker"><span id="salesPaceLabel"></span></div>
+        </div>
         <div class="target-footer"><span id="salesRemaining">No target set</span><span id="orderCount"></span></div>
     </section>
 
@@ -104,6 +108,6 @@
 
 <div class="wipe" id="sceneWipe"></div>
 <script>window.TV_DASHBOARD_DATA = {{ initial_data|tojson }};</script>
-<script src="{{ url_for('static', filename='js/dashboard-tv.js') }}?v=20260801-1"></script>
+<script src="{{ url_for('static', filename='js/dashboard-tv.js') }}?v=20260802-2"></script>
 </body>
 </html>

@@ -2,6 +2,7 @@ from flask import Blueprint, render_template, jsonify, request, g, current_app, 
 from flask_login import current_user, login_required
 from werkzeug.utils import secure_filename
 import sqlite3
+import calendar
 from datetime import datetime
 from models import get_db, dict_from_row
 import json
@@ -13,6 +14,13 @@ from openai import OpenAI
 dashboard_bp = Blueprint('dashboard', __name__)
 
 TV_IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png', 'webp'}
+
+
+def _monthly_target_pace(now=None):
+    """Return the calendar-month percentage that has elapsed as of today."""
+    now = now or datetime.now()
+    days_in_month = calendar.monthrange(now.year, now.month)[1]
+    return round(now.day / days_in_month * 100, 1)
 
 
 def _use_mgc_company_name(value):
@@ -68,7 +76,8 @@ def _tv_employee(conn):
 
 def _tv_payload(conn):
     """Build the read-only snapshot used by the office TV presentation."""
-    month_key = datetime.now().strftime('%Y-%m')
+    now = datetime.now()
+    month_key = now.strftime('%Y-%m')
     summary = conn.execute('''
         SELECT
             COALESCE(SUM(total_value), 0) AS actual,
@@ -201,6 +210,7 @@ def _tv_payload(conn):
 
     actual = float(summary['actual'] or 0)
     target_amount = float(target['amount'] or 0)
+    pace_percentage = _monthly_target_pace(now)
     employee = _tv_employee(conn)
     if employee.get('image_path'):
         employee['image_url'] = url_for('dashboard.tv_employee_image', filename=os.path.basename(employee['image_path']))
@@ -217,13 +227,15 @@ def _tv_payload(conn):
         ]
 
     return {
-        'month_label': datetime.now().strftime('%B %Y'),
-        'updated_at': datetime.now().isoformat(timespec='seconds'),
+        'month_label': now.strftime('%B %Y'),
+        'updated_at': now.isoformat(timespec='seconds'),
         'sales': {
             'actual': actual,
             'target': target_amount,
             'remaining': max(target_amount - actual, 0),
             'percentage': round((actual / target_amount * 100), 1) if target_amount else 0,
+            'pace_percentage': pace_percentage,
+            'pace_amount': round(target_amount * pace_percentage / 100, 2),
             'order_count': int(summary['order_count'] or 0),
         },
         'biggest_orders': [dict(row) for row in biggest_orders],

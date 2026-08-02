@@ -12,6 +12,7 @@
     let headlineTimer;
     let todayHeadlinesTimer;
     const MAIN_DASHBOARD_DURATION = 45000;
+    const PORTAL_ACTIVITY_DURATION = 16000;
     const EXTENDED_STORIES_PER_CYCLE = 5;
     const el = id => document.getElementById(id);
     const text = (id, value) => { if (el(id)) el(id).textContent = value; };
@@ -44,6 +45,14 @@
         text('salesRemaining', snapshot.sales.target ? `${money.format(snapshot.sales.remaining)} remaining` : 'Monthly target not set');
         text('orderCount', `${snapshot.sales.order_count} orders booked`);
         el('salesProgress').style.width = `${Math.min(snapshot.sales.percentage, 100)}%`;
+        const pacePercentage = Math.min(Math.max(Number(snapshot.sales.pace_percentage || 0), 0), 100);
+        const paceMarker = el('salesPaceMarker');
+        paceMarker.style.left = `${pacePercentage}%`;
+        paceMarker.style.display = snapshot.sales.target ? '' : 'none';
+        text('salesPaceLabel', `Should be ${money.format(snapshot.sales.pace_amount || 0)} today`);
+        el('salesPaceLabel').style.transform = pacePercentage < 10
+            ? 'translateX(0)'
+            : pacePercentage > 90 ? 'translateX(-100%)' : 'translateX(-50%)';
         el('ordersList').innerHTML = (snapshot.biggest_orders || []).slice(0, 3).map((order, index) => `<li style="animation-delay:${index * 80}ms"><span class="order-logo">${order.logo_url ? `<img src="${escapeAttribute(order.logo_url)}" alt="">` : escapeHtml((order.customer_name || '?').charAt(0))}</span><div><span class="row-name">${customerWithSalesperson(order.customer_name, order.salesperson_name)}</span><span class="row-meta">${escapeHtml(order.sales_order_ref)}</span></div><span class="row-value">${money.format(Number(order.total_value || 0))}</span></li>`).join('') || '<li><div><span class="row-name">No orders yet this month</span></div></li>';
         el('nonDaveOrdersList').innerHTML = (snapshot.biggest_non_dave_orders || []).map((order, index) => `<li style="animation-delay:${index * 80}ms"><span class="order-logo compact">${order.logo_url ? `<img src="${escapeAttribute(order.logo_url)}" alt="">` : escapeHtml((order.customer_name || '?').charAt(0))}</span><div><span class="row-name">${customerWithSalesperson(order.customer_name, order.salesperson_name)}</span><span class="row-meta">${escapeHtml(order.sales_order_ref)}</span></div><span class="row-value">${money.format(Number(order.total_value || 0))}</span></li>`).join('') || '<li><div><span class="row-name">No non-Dave orders yet</span></div></li>';
         const topCustomers = snapshot.highest_spending_customers || [];
@@ -69,6 +78,12 @@
 
     function escapeAttribute(value) {
         return escapeHtml(value).replace(/`/g, '&#96;');
+    }
+
+    function stripHtml(value) {
+        if (!value) return '';
+        const parsed = new DOMParser().parseFromString(String(value), 'text/html');
+        return (parsed.body.textContent || '').replace(/\s+/g, ' ').trim();
     }
 
     function markdown(value) {
@@ -133,7 +148,7 @@
         if (!item?.id) return false;
         let story = {
             ...item,
-            summary: item.summary_raw || item.body_excerpt || 'No additional article summary is available yet.',
+            summary: item.body_excerpt || stripHtml(item.summary_raw) || 'No additional article summary is available yet.',
             commercial_angle: item.customer_names
                 ? `Linked customer intelligence: ${item.customer_names}`
                 : 'Relevant aviation intelligence for the commercial team.',
@@ -153,7 +168,8 @@
             }
             text('storyTitle', story.title); text('storySource', [story.customer_names, story.source_name].filter(Boolean).join(' · '));
             el('storyFreshness').classList.toggle('active', Boolean(item.is_today));
-            renderMarkdown('storySummary', story.summary); renderMarkdown('storyRelevance', story.commercial_angle); renderMarkdown('storyActions', story.suggested_action);
+            renderMarkdown('storySummary', /<\/?[a-z][\s\S]*>/i.test(story.summary || '') ? stripHtml(story.summary) : story.summary);
+            renderMarkdown('storyRelevance', story.commercial_angle); renderMarkdown('storyActions', story.suggested_action);
             if (firstStory) {
                 el('newsIntroScreen').classList.add('active');
                 await wait(3000);
@@ -344,6 +360,7 @@
         // randomly skip content. Each return to metrics follows a full batch.
         while (true) {
             await wait(MAIN_DASHBOARD_DURATION);
+            await showPortalActivity();
             await showExtendedStoryBatch();
         }
     }

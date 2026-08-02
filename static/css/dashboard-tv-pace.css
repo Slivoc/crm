@@ -1,0 +1,46 @@
+.progress-track {
+    position: relative;
+    overflow: visible;
+    margin-top: 2.6vh;
+}
+
+.progress-fill {
+    overflow: hidden;
+}
+
+.pace-marker {
+    position: absolute;
+    z-index: 2;
+    top: -.45vh;
+    bottom: -.45vh;
+    width: 3px;
+    background: var(--gold);
+    box-shadow: 0 0 10px rgba(255, 200, 92, .8);
+    transform: translateX(-50%);
+}
+
+.pace-marker::after {
+    content: "";
+    position: absolute;
+    top: -5px;
+    left: 50%;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--gold);
+    transform: translate(-50%, -50%);
+}
+
+.pace-marker span {
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + .8vh);
+    padding: .25rem .55rem;
+    border-radius: .4rem;
+    background: #132b42;
+    color: var(--gold);
+    font-size: clamp(.58rem, .72vw, .78rem);
+    font-weight: 800;
+    white-space: nowrap;
+    transform: translateX(-50%);
+}

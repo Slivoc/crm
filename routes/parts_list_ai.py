@@ -9,6 +9,7 @@ import time
 import threading
 from decimal import Decimal
 import os
+from urllib.parse import quote_plus
 
 # Initialize OpenAI client
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -1866,278 +1867,103 @@ def _scrape_monroe(product_name, headless=True):
         "debug_info": []
     }
 
-    screenshot_dir = "monroe_debug_screenshots"
-    screenshots_enabled = False
-    if screenshots_enabled:
-        os.makedirs(screenshot_dir, exist_ok=True)
-    timestamp = int(time.time())
-
-    def _save_screenshot(page_obj, filename):
-        if not screenshots_enabled:
-            return
-        page_obj.screenshot(path=f"{screenshot_dir}/{filename}")
-
     try:
         logging.info(f"Monroe scrape starting for: {product_name}")
         result["debug_info"].append(f"Starting scrape for: {product_name}")
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=headless)
-            page = browser.new_page()
+            page = browser.new_page(viewport={"width": 1920, "height": 1080})
+            search_url = (
+                "https://monroeaerospace.com/search.php?section=product&search_query_adv="
+                f"{quote_plus(str(product_name))}"
+            )
+            result["debug_info"].append(f"Searching new Monroe storefront: {search_url}")
+            page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_selector('.productGrid, [data-product-results-count]', timeout=20000)
 
-            # Set viewport for consistent rendering
-            page.set_viewport_size({"width": 1920, "height": 1080})
+            wanted_sku = str(product_name).strip().upper()
+            product_url = None
+            cards = page.query_selector_all('.productGrid .productCard')
+            result["debug_info"].append(f"Found {len(cards)} product cards")
+            for card in cards:
+                sku_node = card.query_selector('.productCard-sku')
+                sku = (sku_node.text_content() if sku_node else '').strip().upper()
+                if sku != wanted_sku:
+                    continue
+                link = card.query_selector('.productCard-sku a[href], .productCard-image a[href]')
+                product_url = link.get_attribute('href') if link else None
+                result["debug_info"].append(f"Exact SKU match found: {sku}")
+                break
 
-            # Navigate to Monroe
-            logging.info(f"Monroe: Navigating to catalog.monroeaerospace.com")
-            result["debug_info"].append("Navigating to Monroe catalog")
-            page.goto("https://catalog.monroeaerospace.com/express",
-                     wait_until="domcontentloaded", timeout=60000)
-            time.sleep(2)
+            if product_url:
+                page.goto(product_url, wait_until="domcontentloaded", timeout=60000)
+                page.wait_for_selector('[data-product-sku-heading], [data-product-sku]', timeout=20000)
 
-            # Screenshot capture disabled by default.
+                sku_node = page.query_selector('[data-product-sku-heading]') or page.query_selector('[data-product-sku]')
+                detail_sku = (sku_node.text_content() if sku_node else '').strip().upper()
+                if detail_sku != wanted_sku:
+                    raise ValueError(f"Monroe returned SKU '{detail_sku}' for requested SKU '{wanted_sku}'")
 
-            # Find and fill the Express Ordering search input
-            logging.info(f"Monroe: Looking for search input")
-            result["debug_info"].append("Looking for search input #plp-express-search-text")
+                price_meta = page.query_selector('meta[property="product:price:amount"]')
+                price_text = price_meta.get_attribute('content') if price_meta else None
+                if not price_text:
+                    price_node = page.query_selector('[data-product-price-value]')
+                    price_text = price_node.text_content() if price_node else None
+                price_match = re.search(r'\d[\d,]*(?:\.\d+)?', price_text or '')
+                if price_match:
+                    parsed_price = float(price_match.group().replace(',', ''))
+                    # BigCommerce represents request-a-quote products as zero-price.
+                    if parsed_price > 0:
+                        result["unit_price"] = parsed_price
 
-            try:
-                search_input = page.wait_for_selector('#plp-express-search-text', timeout=10000)
-                logging.info(f"Monroe: Found search input, filling with '{product_name}'")
-                result["debug_info"].append(f"Found search input, filling with: {product_name}")
-                search_input.click()
-                search_input.fill(product_name)
+                availability = page.query_selector('meta[property="og:availability"]')
+                availability_text = (availability.get_attribute('content') if availability else '') or ''
+                stock_node = page.query_selector('.stockBox-statusText')
+                stock_text = (stock_node.text_content() if stock_node else availability_text).strip().lower()
+                # Hydrated product pages may add an exact count to the initial
+                # boolean stock state. Keep quantity unknown if no count is exposed.
+                inventory_match = re.search(r'([\d,]+)\s+units?\s+available', stock_text)
+                if inventory_match:
+                    result["inventory"] = int(inventory_match.group(1).replace(',', ''))
+                elif any(value in stock_text for value in ('out of stock', 'sold out', 'outofstock')):
+                    result["inventory"] = 0
 
-                _save_screenshot(page, f"{timestamp}_02_search_filled_{product_name.replace('/', '_')}.png")
-            except Exception as e:
-                logging.error(f"Monroe: Failed to find search input: {e}")
-                result["debug_info"].append(f"ERROR finding search input: {e}")
-                _save_screenshot(page, f"{timestamp}_ERROR_no_search_input.png")
-                raise
+                fields = {}
+                for label_node in page.query_selector_all('.productView-info-name'):
+                    value_node = label_node.evaluate_handle('node => node.nextElementSibling').as_element()
+                    if value_node:
+                        fields[label_node.text_content().strip().lower()] = value_node.text_content().strip()
 
-            # Click the SEARCH button
-            logging.info(f"Monroe: Looking for search button")
-            result["debug_info"].append("Looking for search button")
-
-            try:
-                search_button = page.wait_for_selector(
-                    'button:has-text("SEARCH"), .plp-cadpart-search-button, button[class*="search"]',
-                    timeout=10000
+                minimum_note = next(
+                    (value for label, value in fields.items() if 'minimum order' in label),
+                    ''
                 )
-                logging.info(f"Monroe: Found search button, clicking")
-                result["debug_info"].append("Found search button, clicking")
-                search_button.click()
-            except Exception as e:
-                logging.error(f"Monroe: Failed to find search button: {e}")
-                result["debug_info"].append(f"ERROR finding search button: {e}")
-                _save_screenshot(page, f"{timestamp}_ERROR_no_search_button.png")
-                raise
+                moq_match = re.search(r'minimum order is\s*(\d+)', minimum_note, re.I)
+                if moq_match:
+                    result["minimum_order"] = int(moq_match.group(1))
 
-            # Wait for results
-            logging.info(f"Monroe: Waiting for search results")
-            result["debug_info"].append("Waiting 3 seconds for results to load")
-            time.sleep(3)
+                increment_text = next(
+                    (value for label, value in fields.items() if 'quantity increment' in label),
+                    minimum_note
+                )
+                increment_match = re.search(r'(?:increments? of\s*)?(\d+)', increment_text, re.I)
+                if increment_match:
+                    result["purchase_increment"] = int(increment_match.group(1))
 
-            _save_screenshot(page, f"{timestamp}_03_search_results_{product_name.replace('/', '_')}.png")
+                if result["inventory"] == 0:
+                    result["unit_price"] = None
 
-            # Debug: Get page content and search for part number
-            page_content = page.content()
-            logging.info(f"Monroe: Page title: {page.title()}")
-            result["debug_info"].append(f"Page title: {page.title()}")
-
-            # Check if part number appears anywhere on page
-            if product_name.upper() in page_content.upper():
-                logging.info(f"Monroe: Part number '{product_name}' found in page content")
-                result["debug_info"].append(f"Part number found in page content")
-            else:
-                logging.warning(f"Monroe: Part number '{product_name}' NOT found in page content")
-                result["debug_info"].append(f"WARNING: Part number NOT found in page content")
-
-            def _has_exact_part_reference(haystack, part_number):
-                """Return True when part_number appears as a standalone part token."""
-                if not haystack or not part_number:
-                    return False
-                # Treat letters, numbers, slash, dot, and dash as part-number characters.
-                # This avoids matching AN5C15 against AN5C15A or AN5C15-A.
-                part_chars = r"A-Z0-9/.-"
-                pattern = rf"(?<![{part_chars}]){re.escape(part_number.upper())}(?![{part_chars}])"
-                return re.search(pattern, haystack.upper()) is not None
-
-            # Try multiple selectors to find the product link
-            product_link = None
-            selectors_to_try = [
-                f'a:has-text("{product_name}")',
-                f'a[href*="{product_name}"]',
-                '.plp-express-results a',
-                '.plp-product-link',
-                'a.product-link'
-            ]
-
-            for selector in selectors_to_try:
-                logging.info(f"Monroe: Trying selector: {selector}")
-                result["debug_info"].append(f"Trying selector: {selector}")
-
-                links = page.query_selector_all(selector)
-                logging.info(f"Monroe: Found {len(links)} links with selector '{selector}'")
-                result["debug_info"].append(f"Found {len(links)} links")
-
-                # Check each link for our part number
-                for link in links:
-                    link_text = link.text_content().strip()
-                    link_href = link.get_attribute('href') or ''
-                    logging.info(f"Monroe: Checking link text: '{link_text}', href: '{link_href}'")
-                    text_exact_match = _has_exact_part_reference(link_text, product_name)
-                    href_exact_match = _has_exact_part_reference(link_href, product_name)
-                    result["debug_info"].append(
-                        f"Link: text='{link_text}', text_exact_match={text_exact_match}, href_exact_match={href_exact_match}"
-                    )
-
-                    if text_exact_match or href_exact_match:
-                        product_link = link
-                        logging.info(f"Monroe: MATCH FOUND! Link text: {link_text}")
-                        result["debug_info"].append(f"MATCH FOUND with text: {link_text}")
-                        break
-
-                if product_link:
-                    break
-
-            if product_link:
-                logging.info(f"Monroe: Product link found, extracting price from results page")
-                result["debug_info"].append("Product link found, extracting price")
-
-                # Extract price from the search results page
-                body = page.query_selector('body')
-                if body:
-                    all_text = body.text_content()
-                    prices = re.findall(r'\$(\d+\.?\d*)', all_text)
-                    logging.info(f"Monroe: Found {len(prices)} prices on page: {prices}")
-                    result["debug_info"].append(f"Found {len(prices)} prices: {prices}")
-
-                    if prices:
-                        try:
-                            result["unit_price"] = float(prices[0])
-                            logging.info(f"Monroe: Set unit_price to ${result['unit_price']}")
-                            result["debug_info"].append(f"Set unit_price to ${result['unit_price']}")
-                        except ValueError as e:
-                            logging.error(f"Monroe: Failed to convert price '{prices[0]}': {e}")
-                            result["debug_info"].append(f"ERROR converting price: {e}")
-
-                # Click product for detailed info
-                logging.info(f"Monroe: Clicking product link for details")
-                result["debug_info"].append("Clicking product link for details")
-
-                try:
-                    # Try to handle potential popup/new tab
-                    with page.context.expect_page(timeout=5000) as new_page_info:
-                        product_link.click()
-                    new_page = new_page_info.value
-                    page = new_page
-                    logging.info(f"Monroe: New page opened")
-                    result["debug_info"].append("New page opened")
-                    page.wait_for_load_state("domcontentloaded")
-                    time.sleep(2)
-                except Exception as e:
-                    # If no new page, continue on current page
-                    logging.info(f"Monroe: No new page, continuing on current: {e}")
-                    result["debug_info"].append(f"No new page opened, continuing on current")
-                    page.wait_for_load_state("domcontentloaded")
-                    time.sleep(2)
-
-                _save_screenshot(page, f"{timestamp}_04_product_details_{product_name.replace('/', '_')}.png")
-
-                # Try to extract price from detail page if not found yet
-                if not result["unit_price"]:
-                    logging.info(f"Monroe: No price found on search page, looking on detail page")
-                    result["debug_info"].append("No price on search page, checking detail page")
-
-                    detail_body = page.query_selector('body')
-                    if detail_body:
-                        detail_text = detail_body.text_content()
-                        detail_prices = re.findall(r'\$(\d+\.?\d*)', detail_text)
-                        logging.info(f"Monroe: Found {len(detail_prices)} prices on detail page: {detail_prices}")
-                        result["debug_info"].append(f"Found {len(detail_prices)} prices on detail page: {detail_prices}")
-
-                        if detail_prices:
-                            try:
-                                result["unit_price"] = float(detail_prices[0])
-                                logging.info(f"Monroe: Set unit_price to ${result['unit_price']} from detail page")
-                                result["debug_info"].append(f"Set unit_price to ${result['unit_price']} from detail page")
-                            except ValueError as e:
-                                logging.error(f"Monroe: Failed to convert detail price '{detail_prices[0]}': {e}")
-                                result["debug_info"].append(f"ERROR converting detail price: {e}")
-
-                # Scroll to see specifications
-                logging.info(f"Monroe: Scrolling to see specifications")
-                result["debug_info"].append("Scrolling to bottom for specifications")
-                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                time.sleep(1)
-
-                _save_screenshot(page, f"{timestamp}_05_after_scroll_{product_name.replace('/', '_')}.png")
-
-                # Extract from specifications table
-                logging.info(f"Monroe: Looking for specifications table")
-                result["debug_info"].append("Looking for specifications table .plp-table")
-
-                spec_rows = page.query_selector_all('.plp-table tbody tr')
-                logging.info(f"Monroe: Found {len(spec_rows)} specification rows")
-                result["debug_info"].append(f"Found {len(spec_rows)} specification rows")
-
-                for idx, row in enumerate(spec_rows):
-                    cells = row.query_selector_all('td')
-                    if len(cells) >= 2:
-                        label = cells[0].text_content().strip().lower()
-                        value = cells[1].text_content().strip()
-                        logging.info(f"Monroe: Spec row {idx}: label='{label}', value='{value}'")
-                        result["debug_info"].append(f"Spec row {idx}: {label} = {value}")
-
-                        if 'inventory' in label and result["inventory"] is None:
-                            # First check if the value is explicitly "0" or starts with "0"
-                            if value.strip() == '0' or value.strip().startswith('0 '):
-                                result["inventory"] = 0
-                                logging.info(f"Monroe: Set inventory to 0 (explicit zero)")
-                                result["debug_info"].append(f"Set inventory to 0 (explicit zero)")
-                            # Only extract number if it's NOT part of a phone number pattern
-                            # Avoid matching (877) or other phone-like patterns
-                            elif not re.search(r'\(\d{3}\)', value) and not re.search(r'call|phone|email', value.lower()):
-                                inv_match = re.search(r'\d+', value)
-                                if inv_match:
-                                    result["inventory"] = int(inv_match.group())
-                                    logging.info(f"Monroe: Set inventory to {result['inventory']}")
-                                    result["debug_info"].append(f"Set inventory to {result['inventory']}")
-                            else:
-                                # Value contains phone number or contact info, treat as zero inventory
-                                result["inventory"] = 0
-                                logging.info(f"Monroe: Set inventory to 0 (contact info detected in value: {value})")
-                                result["debug_info"].append(f"Set inventory to 0 (contact info detected)")
-
-                        if 'minimum order' in label:
-                            moq_match = re.search(r'\d+', value)
-                            if moq_match:
-                                result["minimum_order"] = int(moq_match.group())
-                                logging.info(f"Monroe: Set minimum_order to {result['minimum_order']}")
-                                result["debug_info"].append(f"Set minimum_order to {result['minimum_order']}")
-
-                        if 'increment' in label and not result["purchase_increment"]:
-                            inc_match = re.search(r'\d+', value)
-                            if inc_match:
-                                result["purchase_increment"] = int(inc_match.group())
-                                logging.info(f"Monroe: Set purchase_increment to {result['purchase_increment']}")
-                                result["debug_info"].append(f"Set purchase_increment to {result['purchase_increment']}")
-
-                # Post-processing: If inventory is 0, clear the price
-                # Zero inventory means the product is not actually available
-                if result.get("inventory") == 0:
-                    if result.get("unit_price") is not None:
-                        logging.info(f"Monroe: Clearing unit_price because inventory is 0")
-                        result["debug_info"].append("Clearing unit_price because inventory is 0")
-                        result["unit_price"] = None
+                result["debug_info"].append(
+                    f"Parsed product page - price={result['unit_price']}, "
+                    f"availability={stock_text or 'unknown'}, MOQ={result['minimum_order']}, "
+                    f"increment={result['purchase_increment']}"
+                )
             else:
                 error_msg = f"Product '{product_name}' not found in Monroe catalog"
                 logging.warning(f"Monroe: {error_msg}")
                 result["error"] = error_msg
                 result["debug_info"].append(f"ERROR: {error_msg}")
-
-                _save_screenshot(page, f"{timestamp}_ERROR_product_not_found_{product_name.replace('/', '_')}.png")
 
             # Final summary
             logging.info(f"Monroe scrape complete for {product_name}: price=${result.get('unit_price')}, inventory={result.get('inventory')}, moq={result.get('minimum_order')}")
