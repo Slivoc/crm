@@ -49,10 +49,6 @@
         const paceMarker = el('salesPaceMarker');
         paceMarker.style.left = `${pacePercentage}%`;
         paceMarker.style.display = snapshot.sales.target ? '' : 'none';
-        text('salesPaceLabel', `Should be ${money.format(snapshot.sales.pace_amount || 0)} today`);
-        el('salesPaceLabel').style.transform = pacePercentage < 10
-            ? 'translateX(0)'
-            : pacePercentage > 90 ? 'translateX(-100%)' : 'translateX(-50%)';
         el('ordersList').innerHTML = (snapshot.biggest_orders || []).slice(0, 3).map((order, index) => `<li style="animation-delay:${index * 80}ms"><span class="order-logo">${order.logo_url ? `<img src="${escapeAttribute(order.logo_url)}" alt="">` : escapeHtml((order.customer_name || '?').charAt(0))}</span><div><span class="row-name">${customerWithSalesperson(order.customer_name, order.salesperson_name)}</span><span class="row-meta">${escapeHtml(order.sales_order_ref)}</span></div><span class="row-value">${money.format(Number(order.total_value || 0))}</span></li>`).join('') || '<li><div><span class="row-name">No orders yet this month</span></div></li>';
         el('nonDaveOrdersList').innerHTML = (snapshot.biggest_non_dave_orders || []).map((order, index) => `<li style="animation-delay:${index * 80}ms"><span class="order-logo compact">${order.logo_url ? `<img src="${escapeAttribute(order.logo_url)}" alt="">` : escapeHtml((order.customer_name || '?').charAt(0))}</span><div><span class="row-name">${customerWithSalesperson(order.customer_name, order.salesperson_name)}</span><span class="row-meta">${escapeHtml(order.sales_order_ref)}</span></div><span class="row-value">${money.format(Number(order.total_value || 0))}</span></li>`).join('') || '<li><div><span class="row-name">No non-Dave orders yet</span></div></li>';
         const topCustomers = snapshot.highest_spending_customers || [];

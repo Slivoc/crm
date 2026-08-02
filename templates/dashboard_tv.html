@@ -24,7 +24,7 @@
         <div class="target-percent" id="salesPercent">0%</div>
         <div class="progress-track">
             <div class="progress-fill" id="salesProgress"></div>
-            <div class="pace-marker" id="salesPaceMarker"><span id="salesPaceLabel"></span></div>
+            <div class="pace-marker" id="salesPaceMarker" aria-label="Expected sales position for today"></div>
         </div>
         <div class="target-footer"><span id="salesRemaining">No target set</span><span id="orderCount"></span></div>
     </section>
@@ -108,6 +108,6 @@
 
 <div class="wipe" id="sceneWipe"></div>
 <script>window.TV_DASHBOARD_DATA = {{ initial_data|tojson }};</script>
-<script src="{{ url_for('static', filename='js/dashboard-tv.js') }}?v=20260802-2"></script>
+<script src="{{ url_for('static', filename='js/dashboard-tv.js') }}?v=20260802-3"></script>
 </body>
 </html>

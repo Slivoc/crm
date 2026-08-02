@@ -1,7 +1,6 @@
 .progress-track {
     position: relative;
     overflow: visible;
-    margin-top: 2.6vh;
 }
 
 .progress-fill {
@@ -29,18 +28,4 @@
     border-radius: 50%;
     background: var(--gold);
     transform: translate(-50%, -50%);
-}
-
-.pace-marker span {
-    position: absolute;
-    left: 50%;
-    bottom: calc(100% + .8vh);
-    padding: .25rem .55rem;
-    border-radius: .4rem;
-    background: #132b42;
-    color: var(--gold);
-    font-size: clamp(.58rem, .72vw, .78rem);
-    font-weight: 800;
-    white-space: nowrap;
-    transform: translateX(-50%);
 }
