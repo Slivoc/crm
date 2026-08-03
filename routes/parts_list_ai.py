@@ -1843,6 +1843,17 @@ def _run_monroe_check_with_status(list_id, line_ids, user_id, auto_create_offer,
             pass
 
 
+def _parse_monroe_inventory(stock_text):
+    """Return Monroe's inventory count, including explicit sold-out states."""
+    normalized_text = (stock_text or '').strip().lower()
+    inventory_match = re.search(r'([\d,]+)\s+units?\s+available', normalized_text)
+    if inventory_match:
+        return int(inventory_match.group(1).replace(',', ''))
+    if any(value in normalized_text for value in ('out of stock', 'sold out', 'outofstock')):
+        return 0
+    return None
+
+
 def _scrape_monroe(product_name, headless=True):
     """
     Scrape Monroe Aerospace website for product information.
@@ -1884,6 +1895,7 @@ def _scrape_monroe(product_name, headless=True):
 
             wanted_sku = str(product_name).strip().upper()
             product_url = None
+            matched_card_stock_text = ''
             cards = page.query_selector_all('.productGrid .productCard')
             result["debug_info"].append(f"Found {len(cards)} product cards")
             for card in cards:
@@ -1891,12 +1903,23 @@ def _scrape_monroe(product_name, headless=True):
                 sku = (sku_node.text_content() if sku_node else '').strip().upper()
                 if sku != wanted_sku:
                     continue
+                matched_card_stock_text = (card.text_content() or '').strip()
                 link = card.query_selector('.productCard-sku a[href], .productCard-image a[href]')
                 product_url = link.get_attribute('href') if link else None
                 result["debug_info"].append(f"Exact SKU match found: {sku}")
                 break
 
-            if product_url:
+            # Search cards expose the authoritative out-of-stock state even when
+            # the product detail metadata still contains a non-zero list price.
+            # Reject the card before visiting its detail page so that stale price
+            # metadata can never turn an unavailable item into a positive result.
+            if _parse_monroe_inventory(matched_card_stock_text) == 0:
+                result["inventory"] = 0
+                result["error"] = f"Product '{product_name}' is out of stock at Monroe"
+                result["debug_info"].append(
+                    "Exact SKU match is marked out of stock on the search results page"
+                )
+            elif product_url:
                 page.goto(product_url, wait_until="domcontentloaded", timeout=60000)
                 page.wait_for_selector('[data-product-sku-heading], [data-product-sku]', timeout=20000)
 
@@ -1923,11 +1946,7 @@ def _scrape_monroe(product_name, headless=True):
                 stock_text = (stock_node.text_content() if stock_node else availability_text).strip().lower()
                 # Hydrated product pages may add an exact count to the initial
                 # boolean stock state. Keep quantity unknown if no count is exposed.
-                inventory_match = re.search(r'([\d,]+)\s+units?\s+available', stock_text)
-                if inventory_match:
-                    result["inventory"] = int(inventory_match.group(1).replace(',', ''))
-                elif any(value in stock_text for value in ('out of stock', 'sold out', 'outofstock')):
-                    result["inventory"] = 0
+                result["inventory"] = _parse_monroe_inventory(stock_text)
 
                 fields = {}
                 for label_node in page.query_selector_all('.productView-info-name'):
@@ -1953,6 +1972,7 @@ def _scrape_monroe(product_name, headless=True):
 
                 if result["inventory"] == 0:
                     result["unit_price"] = None
+                    result["error"] = f"Product '{product_name}' is out of stock at Monroe"
 
                 result["debug_info"].append(
                     f"Parsed product page - price={result['unit_price']}, "
