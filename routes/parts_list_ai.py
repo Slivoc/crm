@@ -19,7 +19,7 @@ if client is None:
 
 # Try to import playwright for Monroe scraping
 try:
-    from playwright.sync_api import sync_playwright
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
@@ -1849,9 +1849,21 @@ def _parse_monroe_inventory(stock_text):
     inventory_match = re.search(r'([\d,]+)\s+units?\s+available', normalized_text)
     if inventory_match:
         return int(inventory_match.group(1).replace(',', ''))
-    if any(value in normalized_text for value in ('out of stock', 'sold out', 'outofstock')):
+    if any(value in normalized_text for value in (
+        'out of stock', 'out-of-stock', 'out_of_stock', 'sold out', 'outofstock'
+    )):
         return 0
     return None
+
+
+def _apply_monroe_availability(result, stock_text):
+    """Apply Monroe stock state, ensuring unavailable products never retain a price."""
+    inventory = _parse_monroe_inventory(stock_text)
+    result["inventory"] = inventory
+    if inventory == 0:
+        result["unit_price"] = None
+        result["error"] = f"Product '{result['product_name']}' is out of stock at Monroe (no bid)"
+    return inventory
 
 
 def _scrape_monroe(product_name, headless=True):
@@ -1914,8 +1926,7 @@ def _scrape_monroe(product_name, headless=True):
             # Reject the card before visiting its detail page so that stale price
             # metadata can never turn an unavailable item into a positive result.
             if _parse_monroe_inventory(matched_card_stock_text) == 0:
-                result["inventory"] = 0
-                result["error"] = f"Product '{product_name}' is out of stock at Monroe"
+                _apply_monroe_availability(result, matched_card_stock_text)
                 result["debug_info"].append(
                     "Exact SKU match is marked out of stock on the search results page"
                 )
@@ -1928,17 +1939,24 @@ def _scrape_monroe(product_name, headless=True):
                 if detail_sku != wanted_sku:
                     raise ValueError(f"Monroe returned SKU '{detail_sku}' for requested SKU '{wanted_sku}'")
 
-                price_meta = page.query_selector('meta[property="product:price:amount"]')
-                price_text = price_meta.get_attribute('content') if price_meta else None
-                if not price_text:
-                    price_node = page.query_selector('[data-product-price-value]')
-                    price_text = price_node.text_content() if price_node else None
-                price_match = re.search(r'\d[\d,]*(?:\.\d+)?', price_text or '')
-                if price_match:
-                    parsed_price = float(price_match.group().replace(',', ''))
-                    # BigCommerce represents request-a-quote products as zero-price.
-                    if parsed_price > 0:
-                        result["unit_price"] = parsed_price
+                # The new storefront briefly renders its price before hydration
+                # replaces the stock widget with "Out of Stock". Wait for that
+                # widget before reading either availability or price, otherwise
+                # the transient price can be persisted as a valid offer.
+                try:
+                    page.wait_for_function(
+                        """() => {
+                            const node = document.querySelector('.stockBox-statusText');
+                            if (!node) return false;
+                            const status = node.textContent.trim().toLowerCase();
+                            return /out[ _-]?of[ _-]?stock|sold out|in stock|units? available/.test(status);
+                        }""",
+                        timeout=10000,
+                    )
+                except PlaywrightTimeoutError:
+                    result["debug_info"].append(
+                        "Timed out waiting for the hydrated Monroe stock status"
+                    )
 
                 availability = page.query_selector('meta[property="og:availability"]')
                 availability_text = (availability.get_attribute('content') if availability else '') or ''
@@ -1946,7 +1964,22 @@ def _scrape_monroe(product_name, headless=True):
                 stock_text = (stock_node.text_content() if stock_node else availability_text).strip().lower()
                 # Hydrated product pages may add an exact count to the initial
                 # boolean stock state. Keep quantity unknown if no count is exposed.
-                result["inventory"] = _parse_monroe_inventory(stock_text)
+                _apply_monroe_availability(result, stock_text)
+
+                # Availability is authoritative. Only inspect price markup after
+                # confirming the hydrated page is not explicitly unavailable.
+                if result["inventory"] != 0:
+                    price_meta = page.query_selector('meta[property="product:price:amount"]')
+                    price_text = price_meta.get_attribute('content') if price_meta else None
+                    if not price_text:
+                        price_node = page.query_selector('[data-product-price-value]')
+                        price_text = price_node.text_content() if price_node else None
+                    price_match = re.search(r'\d[\d,]*(?:\.\d+)?', price_text or '')
+                    if price_match:
+                        parsed_price = float(price_match.group().replace(',', ''))
+                        # BigCommerce represents request-a-quote products as zero-price.
+                        if parsed_price > 0:
+                            result["unit_price"] = parsed_price
 
                 fields = {}
                 for label_node in page.query_selector_all('.productView-info-name'):
@@ -1969,10 +2002,6 @@ def _scrape_monroe(product_name, headless=True):
                 increment_match = re.search(r'(?:increments? of\s*)?(\d+)', increment_text, re.I)
                 if increment_match:
                     result["purchase_increment"] = int(increment_match.group(1))
-
-                if result["inventory"] == 0:
-                    result["unit_price"] = None
-                    result["error"] = f"Product '{product_name}' is out of stock at Monroe"
 
                 result["debug_info"].append(
                     f"Parsed product page - price={result['unit_price']}, "
