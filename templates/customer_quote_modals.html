@@ -127,9 +127,25 @@
                 </div>
                 <div class="row mb-3">
                     <div class="col-12">
-                        <label class="form-label fw-bold" for="emailQuoteMessage">Message:</label>
+                        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-1">
+                            <label class="form-label fw-bold mb-0" for="emailQuoteMessage">Message:</label>
+                            <div class="input-group input-group-sm" style="max-width: 330px;">
+                                <label class="input-group-text" for="emailQuoteTranslationLanguage">
+                                    <i class="bi bi-stars me-1"></i>Magic translate
+                                </label>
+                                <select class="form-select" id="emailQuoteTranslationLanguage" aria-label="Translation language">
+                                    <option value="auto">Detect from sender</option>
+                                    <option value="french">French</option>
+                                    <option value="german">German</option>
+                                    <option value="spanish">Spanish</option>
+                                    <option value="czech">Czech</option>
+                                    <option value="slovak">Slovak</option>
+                                </select>
+                                <button class="btn btn-outline-primary" type="button" id="translateEmailQuoteBtn">Translate</button>
+                            </div>
+                        </div>
                         <textarea class="form-control" id="emailQuoteMessage" rows="6"></textarea>
-                        <div class="form-text">This text appears above the quote table.</div>
+                        <div class="form-text">This text appears above the quote table. Detect from sender uses the selected Reply to email.</div>
                     </div>
                 </div>
                 <div id="emailQuoteWarnings" class="alert alert-warning small d-none" role="alert"></div>
