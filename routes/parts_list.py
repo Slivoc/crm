@@ -4283,12 +4283,14 @@ def parts_list_costing(list_id):
                 cont.name AS contact_name,
                 cont.email AS contact_email,
                 s.name AS status_name,
-                p.name AS project_name
+                p.name AS project_name,
+                salesperson.name AS salesperson_name
             FROM parts_lists pl
             LEFT JOIN customers c ON c.id = pl.customer_id
             LEFT JOIN contacts cont ON cont.id = pl.contact_id
             LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
             LEFT JOIN projects p ON p.id = pl.project_id
+            LEFT JOIN salespeople salesperson ON salesperson.id = pl.salesperson_id
             WHERE pl.id = ?
             """,
             (list_id,),
@@ -4455,6 +4457,8 @@ def parts_list_costing(list_id):
                                project_name=header.get('project_name'),
                                status_id=header.get('status_id'),
                                status_name=header.get('status_name'),
+                               created_date=header.get('date_created'),
+                               salesperson_name=header.get('salesperson_name'),
                                portal_request_id=portal_request.get('id') if portal_request else None,
                                portal_request_reference=portal_request.get('reference_number') if portal_request else None,
                                lines=[dict(l) for l in lines],
@@ -9041,12 +9045,14 @@ def parts_list_sourcing(list_id):
                 cont.name as contact_name,
                 cont.email as contact_email,
                 s.name as status_name,
-                p.name as project_name
+                p.name as project_name,
+                salesperson.name as salesperson_name
             FROM parts_lists pl
             LEFT JOIN customers c ON c.id = pl.customer_id
             LEFT JOIN contacts cont ON cont.id = pl.contact_id
             LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
             LEFT JOIN projects p ON p.id = pl.project_id
+            LEFT JOIN salespeople salesperson ON salesperson.id = pl.salesperson_id
             WHERE pl.id = ?
             """,
             (list_id,),
@@ -9490,6 +9496,8 @@ def parts_list_sourcing(list_id):
                                project_name=header.get('project_name'),
                                status_id=header.get('status_id'),
                                status_name=header.get('status_name'),
+                               created_date=header.get('date_created'),
+                               salesperson_name=header.get('salesperson_name'),
                                portal_request_id=portal_request.get('id') if portal_request else None,
                                portal_request_reference=portal_request.get('reference_number') if portal_request else None,
                                lines=lines_with_data,
@@ -11064,13 +11072,15 @@ def view_parts_list(list_id):
             cont.email AS contact_email,
             s.name AS status_name,
             p.name AS project_name,
-            bh.name AS source_bom_name
+            bh.name AS source_bom_name,
+            salesperson.name AS salesperson_name
         FROM parts_lists pl
         LEFT JOIN customers c ON c.id = pl.customer_id
         LEFT JOIN contacts cont ON cont.id = pl.contact_id
         LEFT JOIN parts_list_statuses s ON s.id = pl.status_id
         LEFT JOIN projects p ON p.id = pl.project_id
         LEFT JOIN bom_headers bh ON bh.id = pl.bom_header_id
+        LEFT JOIN salespeople salesperson ON salesperson.id = pl.salesperson_id
         WHERE pl.id = ?
         """,
         (list_id,),
@@ -11120,6 +11130,8 @@ def view_parts_list(list_id):
                            source_bom_name=header.get('source_bom_name'),
                            status_id=header.get('status_id'),
                            status_name=header.get('status_name'),
+                           created_date=header.get('date_created'),
+                           salesperson_name=header.get('salesperson_name'),
                            portal_request_id=portal_request.get('id') if portal_request else None,
                            portal_request_reference=portal_request.get('reference_number') if portal_request else None,
                            lines=[dict(line) for line in lines])
