@@ -229,6 +229,26 @@
                 </div>
                 <div class="reading-body">
                     <iframe id="readingFrame" class="reading-frame" title="Email body"></iframe>
+                    <section class="mailbox-inline-reply d-none" id="mailboxInlineReply" aria-label="Quick reply composer">
+                        <div class="mailbox-inline-reply-header">
+                            <div>
+                                <span class="fw-semibold" id="mailboxInlineReplyMode">Quick reply</span>
+                                <span class="small text-muted ms-2" id="mailboxInlineReplyRecipients"></span>
+                            </div>
+                            <button type="button" class="btn-close" id="mailboxInlineReplyCloseBtn" aria-label="Close quick reply"></button>
+                        </div>
+                        <textarea class="form-control mailbox-inline-reply-message" id="mailboxInlineReplyMessage" rows="4" placeholder="Write a quick response…" aria-label="Reply message"></textarea>
+                        <div class="mailbox-inline-reply-footer">
+                            <span class="small text-muted">Ctrl/Cmd + Enter to send</span>
+                            <div class="d-flex gap-2">
+                                <button type="button" class="btn btn-sm btn-link text-decoration-none" id="mailboxFullReplyBtn">Full composer</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary" id="mailboxInlineReplyCancelBtn">Cancel</button>
+                                <button type="button" class="btn btn-sm btn-primary" id="mailboxInlineReplySendBtn">
+                                    <i class="bi bi-send me-1"></i>Send reply
+                                </button>
+                            </div>
+                        </div>
+                    </section>
                 </div>
             </div>
         </div>
@@ -521,6 +541,14 @@ const mailboxActionsBtn = document.getElementById('mailboxActionsBtn');
 const mailboxTriageBtn = document.getElementById('mailboxTriageBtn');
 const mailboxReplyBtn = document.getElementById('mailboxReplyBtn');
 const mailboxReplyAllBtn = document.getElementById('mailboxReplyAllBtn');
+const mailboxInlineReply = document.getElementById('mailboxInlineReply');
+const mailboxInlineReplyMode = document.getElementById('mailboxInlineReplyMode');
+const mailboxInlineReplyRecipients = document.getElementById('mailboxInlineReplyRecipients');
+const mailboxInlineReplyMessage = document.getElementById('mailboxInlineReplyMessage');
+const mailboxInlineReplySendBtn = document.getElementById('mailboxInlineReplySendBtn');
+const mailboxFullReplyBtn = document.getElementById('mailboxFullReplyBtn');
+const mailboxInlineReplyCancelBtn = document.getElementById('mailboxInlineReplyCancelBtn');
+const mailboxInlineReplyCloseBtn = document.getElementById('mailboxInlineReplyCloseBtn');
 const openOutlookBtn = document.getElementById('openOutlookBtn');
 const loadImagesToggle = document.getElementById('loadImagesToggle');
 const loadImagesLabel = document.getElementById('loadImagesLabel');
@@ -634,6 +662,7 @@ const MAX_ATTACHMENT_SCAN_COUNT = 3;
 const MAX_ATTACHMENT_SCAN_BYTES = 3 * 1024 * 1024;
 const MAILBOX_FORWARD_ADMIN_EMAIL = 'harry@mgcaero.co.uk';
 let mailboxFolderSaveMode = 'file_only';
+let mailboxInlineReplyAll = false;
 let selectedMailboxSalespersonIds = new Set((mailboxDefaultSalespersonFilterIds || []).map(id => Number(id)).filter(Boolean));
 updateLoadImagesButton();
 
@@ -700,6 +729,73 @@ function openMailboxReplyModal(replyAll) {
         const modalEl = document.getElementById('emailModal');
         const modalInstance = bootstrap.Modal.getOrCreateInstance(modalEl);
         modalInstance.show();
+    }
+}
+
+function closeMailboxInlineReply({clear = true} = {}) {
+    mailboxInlineReply?.classList.add('d-none');
+    if (clear && mailboxInlineReplyMessage) mailboxInlineReplyMessage.value = '';
+    mailboxInlineReplyAll = false;
+}
+
+function openMailboxInlineReply(replyAll) {
+    if (!selectedMessage?.id) {
+        showToast('Select an email first', 'warning');
+        return;
+    }
+    const recipients = buildReplyRecipients(selectedMessage, replyAll);
+    mailboxInlineReplyAll = Boolean(replyAll);
+    mailboxInlineReplyMode.textContent = replyAll ? 'Quick reply all' : 'Quick reply';
+    mailboxInlineReplyRecipients.textContent = recipients.length
+        ? `to ${recipients.map(recipient => recipient.name || recipient.email).join(', ')}`
+        : '';
+    mailboxInlineReply.classList.remove('d-none');
+    requestAnimationFrame(() => mailboxInlineReplyMessage?.focus());
+}
+
+function quickReplyHtml(value) {
+    return escapeHtml(value).replace(/\r?\n/g, '<br>');
+}
+
+async function sendMailboxInlineReply() {
+    const messageId = selectedMessage?.id;
+    const message = mailboxInlineReplyMessage?.value.trim() || '';
+    if (!messageId) {
+        showToast('Select an email first', 'warning');
+        return;
+    }
+    if (!message) {
+        showToast('Write a reply before sending', 'warning');
+        mailboxInlineReplyMessage?.focus();
+        return;
+    }
+
+    const originalHtml = mailboxInlineReplySendBtn.innerHTML;
+    mailboxInlineReplySendBtn.disabled = true;
+    mailboxInlineReplyMessage.disabled = true;
+    mailboxInlineReplySendBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sending…';
+    try {
+        const response = await fetch('/emails/graph/reply', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                message_id: messageId,
+                html_body: `<div>${quickReplyHtml(message)}</div>`,
+                reply_all: mailboxInlineReplyAll
+            })
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || 'Reply failed');
+        }
+        closeMailboxInlineReply();
+        showToast('Reply sent', 'success');
+    } catch (error) {
+        showToast(error.message || 'Reply failed', 'error');
+    } finally {
+        mailboxInlineReplySendBtn.disabled = false;
+        mailboxInlineReplyMessage.disabled = false;
+        mailboxInlineReplySendBtn.innerHTML = originalHtml;
     }
 }
 
@@ -2420,6 +2516,7 @@ async function selectMessage(messageId) {
         item.classList.toggle('selected', item.getAttribute('data-id') === messageId);
     });
     selectedMessageId = messageId;
+    closeMailboxInlineReply();
     selectedMessageLookup = null;
     mailboxTriageBtn.disabled = true;
     if (mailboxReplyBtn) mailboxReplyBtn.disabled = true;
@@ -3046,11 +3143,28 @@ mailboxTriageBtn?.addEventListener('click', async () => {
 });
 
 mailboxReplyBtn?.addEventListener('click', () => {
-    openMailboxReplyModal(false);
+    openMailboxInlineReply(false);
 });
 
 mailboxReplyAllBtn?.addEventListener('click', () => {
-    openMailboxReplyModal(true);
+    openMailboxInlineReply(true);
+});
+
+mailboxInlineReplyCancelBtn?.addEventListener('click', () => closeMailboxInlineReply());
+mailboxInlineReplyCloseBtn?.addEventListener('click', () => closeMailboxInlineReply());
+mailboxInlineReplySendBtn?.addEventListener('click', sendMailboxInlineReply);
+mailboxFullReplyBtn?.addEventListener('click', () => {
+    const replyAll = mailboxInlineReplyAll;
+    closeMailboxInlineReply();
+    openMailboxReplyModal(replyAll);
+});
+mailboxInlineReplyMessage?.addEventListener('keydown', event => {
+    if (event.key === 'Escape') {
+        closeMailboxInlineReply();
+    } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        sendMailboxInlineReply();
+    }
 });
 
 createPartsListBtn.addEventListener('click', async () => {
@@ -4232,6 +4346,38 @@ mailboxManualPartsInput?.addEventListener('keydown', (event) => {
     min-height: 300px;
     border: none;
     background: #fff;
+}
+
+.mailbox-inline-reply {
+    flex-shrink: 0;
+    margin: 0 18px 18px;
+    padding: 14px;
+    border: 1px solid #cbdcf8;
+    border-radius: 12px;
+    background: #f8fbff;
+    box-shadow: 0 8px 24px rgba(32, 33, 36, 0.12);
+}
+
+.mailbox-inline-reply-header,
+.mailbox-inline-reply-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.mailbox-inline-reply-header {
+    margin-bottom: 10px;
+}
+
+.mailbox-inline-reply-message {
+    resize: vertical;
+    min-height: 92px;
+    max-height: 240px;
+}
+
+.mailbox-inline-reply-footer {
+    margin-top: 10px;
 }
 
 .reading-supplier-actions {

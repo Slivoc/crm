@@ -367,6 +367,45 @@ def _fetch_graph_messages_from_folders(access_token, folder_ids, params, *, top_
             logging.exception("Graph folder message fallback errored for folder %s", folder_id)
     return messages
 
+
+def _fetch_graph_messages_inbox_first(access_token, params, folder_ids_provider):
+    """Return matching messages quickly from Inbox, then broaden the search.
+
+    ``/me/messages`` can become slow on large mailboxes because it searches every
+    folder. Most quote requests are still in Inbox, so keep that common path to a
+    single, folder-scoped request. Only enumerate folders when both Inbox and the
+    mailbox-wide query fail to find a match.
+    """
+    import requests
+
+    extra_headers = {"ConsistencyLevel": "eventual"} if (params or {}).get('$count') else None
+    headers = graph_headers(access_token, extra=extra_headers)
+    endpoints = (
+        "https://graph.microsoft.com/v1.0/me/mailFolders/Inbox/messages",
+        "https://graph.microsoft.com/v1.0/me/messages",
+    )
+    for endpoint in endpoints:
+        resp = requests.get(endpoint, headers=headers, params=params, timeout=20)
+        if resp.status_code == 200:
+            data = resp.json() if resp.content else {}
+            messages = data.get('value', []) if isinstance(data, dict) else []
+            if messages:
+                return messages
+        else:
+            logging.debug(
+                "Graph related-email search failed at %s: %s %s",
+                endpoint,
+                resp.status_code,
+                resp.text[:200],
+            )
+
+    return _fetch_graph_messages_from_folders(
+        access_token,
+        folder_ids_provider(),
+        params,
+        top_per_folder=10,
+    )
+
 def _build_supplier_email_groups(list_id, supplier_line_emails):
     """Return every parts-list line with its recorded supplier emails attached."""
     lines = db_execute(
@@ -13600,23 +13639,9 @@ def get_related_emails_data(list_id):
                 "$orderby": "sentDateTime desc",
                 "$top": 50
             }
-            resp = requests.get(
-                "https://graph.microsoft.com/v1.0/me/messages",
-                headers=headers,
-                params=params,
-                timeout=20,
+            messages = _fetch_graph_messages_inbox_first(
+                token['access_token'], params, _folder_ids_for_fallback
             )
-            messages = []
-            if resp.status_code == 200:
-                data = resp.json()
-                messages = data.get("value", [])
-            if not messages:
-                messages = _fetch_graph_messages_from_folders(
-                    token['access_token'],
-                    _folder_ids_for_fallback(),
-                    params,
-                    top_per_folder=20,
-                )
             for msg in messages:
                 msg['_is_source'] = False
                 all_emails.append(msg)
@@ -13635,23 +13660,9 @@ def get_related_emails_data(list_id):
                 "$top": 20,
                 "$count": "true",
             }
-            resp = requests.get(
-                "https://graph.microsoft.com/v1.0/me/messages",
-                headers=graph_headers(token['access_token'], extra={"ConsistencyLevel": "eventual"}),
-                params=params,
-                timeout=20,
+            messages = _fetch_graph_messages_inbox_first(
+                token['access_token'], params, _folder_ids_for_fallback
             )
-            messages = []
-            if resp.status_code == 200:
-                data = resp.json()
-                messages = data.get("value", [])
-            if not messages:
-                messages = _fetch_graph_messages_from_folders(
-                    token['access_token'],
-                    _folder_ids_for_fallback(),
-                    params,
-                    top_per_folder=10,
-                )
             for msg in messages:
                 if not _message_matches_any_email(msg, [customer_email]):
                     continue
@@ -13729,6 +13740,7 @@ def get_related_emails_data(list_id):
                 "cc_addresses": addresses["cc_addresses"],
                 "receivedDateTime": email_msg.get("receivedDateTime") or email_msg.get("sentDateTime"),
                 "receivedDateTime_display": _format_graph_datetime_display(email_msg.get("receivedDateTime") or email_msg.get("sentDateTime")),
+                "body_preview": email_msg.get("bodyPreview") or "",
                 "is_source": bool(email_msg.get("_is_source")),
                 "is_customer_match": bool(email_msg.get("_is_customer_match")),
             })

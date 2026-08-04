@@ -2167,6 +2167,49 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    const translateMessageBtn = document.getElementById('translateEmailQuoteBtn');
+    if (translateMessageBtn && messageInput) {
+        translateMessageBtn.addEventListener('click', async function() {
+            const language = document.getElementById('emailQuoteTranslationLanguage')?.value || '';
+            const replyId = document.getElementById('emailQuoteReplySelect')?.value || '';
+            const selectedReply = replyId ? relatedReplyEmailById.get(replyId) : null;
+            if (!messageInput.value.trim()) {
+                alert('Enter a message to translate.');
+                return;
+            }
+            if (language === 'auto' && !selectedReply) {
+                alert('Select a Reply to email so the sender language can be detected.');
+                return;
+            }
+
+            const originalHtml = this.innerHTML;
+            this.disabled = true;
+            this.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Translating';
+            try {
+                const response = await fetch('/customer-quoting/customer-quote/translate-message', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: messageInput.value,
+                        language,
+                        source_context: selectedReply?.body_preview || ''
+                    })
+                });
+                const result = await response.json();
+                if (!response.ok || !result.success) {
+                    throw new Error(result.message || 'Translation failed');
+                }
+                messageInput.value = result.translated_message;
+                messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+            } catch (error) {
+                alert(error.message || 'Translation failed');
+            } finally {
+                this.disabled = false;
+                this.innerHTML = originalHtml;
+            }
+        });
+    }
+
 
     function buildAdminInternalTableHtml() {
         const rows = [];
