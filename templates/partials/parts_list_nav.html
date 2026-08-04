@@ -27,6 +27,22 @@
                         </span>
                     {% endif %}
                 </h5>
+                {% if created_date or salesperson_name %}
+                    <div class="d-flex align-items-center flex-wrap gap-2 ms-1 parts-list-meta" aria-label="Parts list details">
+                        {% if created_date %}
+                            <span class="text-muted small text-nowrap" title="Created date">
+                                <i class="bi bi-calendar3 me-1" aria-hidden="true"></i>
+                                {{ created_date.strftime('%d %b %Y') if created_date.strftime is defined else created_date }}
+                            </span>
+                        {% endif %}
+                        {% if salesperson_name %}
+                            <span class="text-muted small text-nowrap" title="Assigned salesperson">
+                                <i class="bi bi-person-badge me-1" aria-hidden="true"></i>
+                                {{ salesperson_name }}
+                            </span>
+                        {% endif %}
+                    </div>
+                {% endif %}
                 <!-- Action icons on the left -->
                 <div class="d-flex gap-1 ms-2">
                     <a href="{{ url_for('parts_list.get_related_emails', list_id=list_id) }}"
