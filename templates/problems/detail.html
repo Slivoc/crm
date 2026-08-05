@@ -11,6 +11,7 @@
             <h1 class="mt-2 mb-1">#{{ problem.id }} {{ problem.title }}</h1>
             <div class="d-flex flex-wrap gap-2 align-items-center">
                 <span class="problem-status problem-status-{{ problem.status }}">{{ status_labels[problem.status] }}</span>
+                {% if problem.is_demo %}<span class="badge bg-warning text-dark">Demo data</span>{% endif %}
                 <span class="problem-pill">{{ problem.problem_type_name }}</span>
                 <span class="text-muted small">Opened {{ problem.created_at.strftime('%d %b %Y at %H:%M') if problem.created_at else '' }}</span>
             </div>

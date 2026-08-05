@@ -13,26 +13,72 @@
         <div class="problem-card problem-metric"><div class="problem-metric-value">{{ summary.open_count or 0 }}</div><div class="problem-metric-label">Open problems</div></div>
         <div class="problem-card problem-metric"><div class="problem-metric-value">{{ summary.resolved_count or 0 }}</div><div class="problem-metric-label">Resolved problems</div></div>
         <div class="problem-card problem-metric"><div class="problem-metric-value">{{ summary.aging_count or 0 }}</div><div class="problem-metric-label">Open over 14 days</div></div>
+        <div class="problem-card problem-metric"><div class="problem-metric-value">{{ '%.1f'|format(summary.total_resolution_days or 0) }}</div><div class="problem-metric-label">Total days taken by resolved problems</div></div>
+        <div class="problem-card problem-metric"><div class="problem-metric-value">{{ '%.1f'|format(summary.total_open_age_days or 0) }}</div><div class="problem-metric-label">Accumulated age of open problems</div></div>
         <div class="problem-card problem-metric"><div class="problem-metric-value">{{ '%.1f'|format(summary.median_resolution_days or 0) }}</div><div class="problem-metric-label">Median days to resolve</div></div>
         <div class="problem-card problem-metric"><div class="problem-metric-value">{{ '%.1f'|format(summary.average_resolution_days or 0) }}</div><div class="problem-metric-label">Average days to resolve</div></div>
     </div>
 
+    <div class="alert alert-light border small text-muted">
+        <strong>Time figures are elapsed calendar days.</strong> “Days taken” totals resolved problems from opening to resolution; “open age” shows time accumulated by unresolved problems. These measure operational delay, not staff-hours.
+    </div>
+
     <div class="problem-overview-grid">
         <div class="problem-card"><div class="problem-card-header"><h5 class="mb-0">Problems by cause</h5></div><div class="problem-card-body">
-            {% for row in by_cause %}<div class="problem-bar-row"><div class="problem-bar-meta"><span>{{ row.name }}</span><span><strong>{{ row.total_count }}</strong> total · {{ row.open_count }} open{% if row.average_days is not none %} · {{ '%.1f'|format(row.average_days) }} days avg{% endif %}</span></div><div class="problem-bar-track"><div class="problem-bar-fill" style="width:{{ row.bar_percent }}%"></div></div></div>{% else %}<div class="problem-empty">No problem data yet.</div>{% endfor %}
+            {% for row in by_cause %}<div class="problem-bar-row"><div class="problem-bar-meta"><span>{{ row.name }}</span><span><strong>{{ '%.1f'|format(row.total_resolution_days or 0) }}</strong> days taken · {{ '%.1f'|format(row.open_age_days or 0) }} open age · {{ row.total_count }} problems{% if row.average_days is not none %} · {{ '%.1f'|format(row.average_days) }} avg{% endif %}</span></div><div class="problem-bar-track"><div class="problem-bar-fill" style="width:{{ row.bar_percent }}%"></div></div></div>{% else %}<div class="problem-empty">No problem data yet.</div>{% endfor %}
         </div></div>
         <div class="problem-card"><div class="problem-card-header"><h5 class="mb-0">Problems by type</h5></div><div class="problem-card-body">
-            {% for row in by_type %}<div class="problem-bar-row"><div class="problem-bar-meta"><span>{{ row.name }}</span><span><strong>{{ row.total_count }}</strong> total · {{ row.open_count }} open{% if row.average_days is not none %} · {{ '%.1f'|format(row.average_days) }} days avg{% endif %}</span></div><div class="problem-bar-track"><div class="problem-bar-fill" style="width:{{ row.bar_percent }}%"></div></div></div>{% else %}<div class="problem-empty">No problem data yet.</div>{% endfor %}
+            {% for row in by_type %}<div class="problem-bar-row"><div class="problem-bar-meta"><span>{{ row.name }}</span><span><strong>{{ '%.1f'|format(row.total_resolution_days or 0) }}</strong> days taken · {{ '%.1f'|format(row.open_age_days or 0) }} open age · {{ row.total_count }} problems{% if row.average_days is not none %} · {{ '%.1f'|format(row.average_days) }} avg{% endif %}</span></div><div class="problem-bar-track"><div class="problem-bar-fill" style="width:{{ row.bar_percent }}%"></div></div></div>{% else %}<div class="problem-empty">No problem data yet.</div>{% endfor %}
         </div></div>
         <div class="problem-card"><div class="problem-card-header"><h5 class="mb-0">Frequent responsible parties</h5></div><div class="problem-card-body p-0">
-            {% if caused_by %}<div class="table-responsive"><table class="table mb-0"><thead class="table-light"><tr><th>Party</th><th>Cause</th><th>Total</th><th>Open</th></tr></thead><tbody>{% for row in caused_by %}<tr><td class="fw-semibold">{{ row.party_name }}</td><td>{{ row.cause_name }}</td><td>{{ row.total_count }}</td><td>{{ row.open_count }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="problem-empty">No specific responsible parties recorded yet.</div>{% endif %}
+            {% if caused_by %}<div class="table-responsive"><table class="table mb-0"><thead class="table-light"><tr><th>Party</th><th>Cause</th><th>Problems</th><th>Days taken</th><th>Average</th><th>Open age</th></tr></thead><tbody>{% for row in caused_by %}<tr><td class="fw-semibold">{{ row.party_name }}</td><td>{{ row.cause_name }}</td><td>{{ row.total_count }} <span class="text-muted">({{ row.open_count }} open)</span></td><td>{{ '%.1f'|format(row.total_resolution_days or 0) }}</td><td>{{ '%.1f'|format(row.average_days or 0) }}</td><td>{{ '%.1f'|format(row.open_age_days or 0) }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="problem-empty">No specific responsible parties recorded yet.</div>{% endif %}
         </div></div>
         <div class="problem-card"><div class="problem-card-header"><div><h5 class="mb-0">Frequently related companies</h5><div class="small text-muted">Association only; these companies are not necessarily the cause.</div></div></div><div class="problem-card-body p-0">
-            {% if related_companies %}<div class="table-responsive"><table class="table mb-0"><thead class="table-light"><tr><th>Company</th><th>Relationship</th><th>Total</th><th>Open</th></tr></thead><tbody>{% for row in related_companies %}<tr><td class="fw-semibold">{{ row.company_name or 'Unknown' }}</td><td>{{ row.object_type|title }}</td><td>{{ row.total_count }}</td><td>{{ row.open_count }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="problem-empty">No related customers or suppliers recorded yet.</div>{% endif %}
+            {% if related_companies %}<div class="table-responsive"><table class="table mb-0"><thead class="table-light"><tr><th>Company</th><th>Relationship</th><th>Problems</th><th>Days taken</th><th>Open age</th></tr></thead><tbody>{% for row in related_companies %}<tr><td class="fw-semibold">{{ row.company_name or 'Unknown' }}</td><td>{{ row.object_type|title }}</td><td>{{ row.total_count }} <span class="text-muted">({{ row.open_count }} open)</span></td><td>{{ '%.1f'|format(row.total_resolution_days or 0) }}</td><td>{{ '%.1f'|format(row.open_age_days or 0) }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="problem-empty">No related customers or suppliers recorded yet.</div>{% endif %}
         </div></div>
         <div class="problem-card"><div class="problem-card-header"><h5 class="mb-0">Oldest open problems</h5></div><div class="problem-card-body p-0">
             {% if oldest %}<div class="table-responsive"><table class="table mb-0"><thead class="table-light"><tr><th>Problem</th><th>Type</th><th>Age</th></tr></thead><tbody>{% for row in oldest %}<tr><td><a class="problem-title-link" href="{{ url_for('problems.view_problem', problem_id=row.id) }}">#{{ row.id }} {{ row.title }}</a><div><span class="problem-status problem-status-{{ row.status }}">{{ status_labels[row.status] }}</span></div></td><td>{{ row.problem_type_name }}</td><td class="problem-age is-aging">{{ '%.1f'|format(row.age_days) }} days</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="problem-empty">There are no open problems.</div>{% endif %}
         </div></div>
     </div>
+
+    {% if is_admin %}
+    <div class="text-end mt-4">
+        <button class="btn btn-sm btn-link text-muted text-decoration-none" type="button" data-bs-toggle="collapse" data-bs-target="#problemDemoTools" aria-expanded="false">
+            <i class="bi bi-tools me-1"></i>Demo tools
+        </button>
+    </div>
+    <div class="collapse" id="problemDemoTools">
+        <div class="problem-card mt-2 border-warning">
+            <div class="problem-card-header">
+                <div><h5 class="mb-1">Presentation data tools</h5><div class="small text-muted">Admin only. Currently {{ summary.demo_count or 0 }} generated demonstration records.</div></div>
+            </div>
+            <div class="problem-card-body">
+                <div class="row g-4">
+                    <div class="col-lg-6">
+                        <h6>Generate example data</h6>
+                        <p class="small text-muted">Creates realistic dates, statuses, causes, updates, and relationships. User, customer, and supplier IDs are selected randomly from records available in this database at runtime.</p>
+                        <form class="d-flex gap-2 align-items-end" method="post" action="{{ url_for('problems.seed_demo_data') }}" onsubmit="return confirm('Generate demonstration problems?');">
+                            <div><label class="form-label small">Number of problems</label><input class="form-control" type="number" name="count" value="60" min="10" max="200"></div>
+                            <button class="btn btn-warning" type="submit"><i class="bi bi-magic me-1"></i>Generate demo data</button>
+                        </form>
+                        {% if summary.demo_count %}
+                        <form class="mt-3" method="post" action="{{ url_for('problems.clear_demo_data') }}" onsubmit="return confirm('Delete all generated demo problems?');">
+                            <button class="btn btn-sm btn-outline-warning" type="submit"><i class="bi bi-eraser me-1"></i>Remove demo data only</button>
+                        </form>
+                        {% endif %}
+                    </div>
+                    <div class="col-lg-6 border-start">
+                        <h6 class="text-danger">Nuke problem data</h6>
+                        <p class="small text-muted">Deletes every problem, update, relationship, and status-history record. Existing tickets, users, customers, and suppliers are left untouched.</p>
+                        <form method="post" action="{{ url_for('problems.nuke_problem_data') }}" onsubmit="return confirm('This will permanently delete ALL problem tracker data. Continue?');">
+                            <label class="form-label small">Type <strong>NUKE ALL PROBLEMS</strong> to confirm</label>
+                            <div class="d-flex gap-2"><input class="form-control" name="confirmation" autocomplete="off" required><button class="btn btn-danger text-nowrap" type="submit"><i class="bi bi-radioactive me-1"></i>Nuke all</button></div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
 </div>
 {% endblock %}

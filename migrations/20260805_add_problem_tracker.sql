@@ -25,10 +25,15 @@ CREATE TABLE IF NOT EXISTS problems (
     created_by_user_id INTEGER NOT NULL REFERENCES users(id),
     status TEXT NOT NULL DEFAULT 'open'
         CHECK (status IN ('open', 'investigating', 'waiting', 'resolved')),
+    is_demo BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     resolved_at TIMESTAMP
 );
+
+-- Keeps this migration safely re-runnable in development databases where an
+-- earlier draft of the problem tracker may already have created the table.
+ALTER TABLE problems ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS problem_objects (
     problem_id BIGINT NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
@@ -68,6 +73,7 @@ CREATE INDEX IF NOT EXISTS idx_problems_type ON problems(problem_type_id);
 CREATE INDEX IF NOT EXISTS idx_problems_cause ON problems(cause_category_id, cause_object_id);
 CREATE INDEX IF NOT EXISTS idx_problems_assignee ON problems(assigned_user_id);
 CREATE INDEX IF NOT EXISTS idx_problems_created_at ON problems(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_problems_is_demo ON problems(is_demo) WHERE is_demo = TRUE;
 CREATE INDEX IF NOT EXISTS idx_problem_objects_type_id ON problem_objects(object_type, object_id);
 CREATE INDEX IF NOT EXISTS idx_problem_updates_problem_created ON problem_updates(problem_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_problem_status_history_problem_changed ON problem_status_history(problem_id, changed_at DESC);

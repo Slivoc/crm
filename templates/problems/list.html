@@ -79,7 +79,7 @@
                 <tbody>
                 {% for problem in problems %}
                     <tr>
-                        <td><a class="problem-title-link" href="{{ url_for('problems.view_problem', problem_id=problem.id) }}">#{{ problem.id }} {{ problem.title }}</a><div class="small text-muted">{{ problem.created_at.strftime('%d %b %Y') if problem.created_at else '' }}</div></td>
+                        <td><a class="problem-title-link" href="{{ url_for('problems.view_problem', problem_id=problem.id) }}">#{{ problem.id }} {{ problem.title }}</a>{% if problem.is_demo %}<span class="badge bg-warning text-dark ms-1">Demo</span>{% endif %}<div class="small text-muted">{{ problem.created_at.strftime('%d %b %Y') if problem.created_at else '' }}</div></td>
                         <td>{{ problem.problem_type_name }}</td>
                         <td><div>{{ problem.cause_category_name }}</div>{% if problem.cause_object_name %}<div class="small text-muted">{{ problem.cause_object_name }}</div>{% endif %}</td>
                         <td>
