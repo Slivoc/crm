@@ -370,6 +370,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 displayPartNumber: row.querySelector('[data-field="display_part_number"]'),
                 standardCondition: detailRow ? detailRow.querySelector('[data-field="standard_condition"]') : null,
                 standardCerts: detailRow ? detailRow.querySelector('[data-field="standard_certs"]') : null,
+                cageCode: detailRow ? detailRow.querySelector('[data-field="cage_code"]') : null,
+                testCerts: detailRow ? detailRow.querySelector('[data-field="test_certs"]') : null,
                 calcBaseBtn: row.querySelector('.line-calc-btn[data-calc="base"]'),
                 calcDeliveryBtn: row.querySelector('.line-calc-btn[data-calc="delivery"]'),
                 calcMarginBtn: row.querySelector('.line-calc-btn[data-calc="margin"]'),
@@ -977,6 +979,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 <td class="text-center">${offer.lead_time_days ? `${escapeHtml(offer.lead_time_days)}d` : '-'}</td>
                 <td>${escapeHtml(offer.condition_code || '-')}</td>
                 <td>${escapeHtml(offer.certifications || '-')}</td>
+                <td>${escapeHtml(offer.cage_code || '-')}</td>
+                <td>${escapeHtml(offer.test_certs || '-')}</td>
                 <td class="text-end"><button type="button" class="btn btn-sm btn-primary" ${isUsable ? '' : 'disabled'}>${offer.is_no_bid ? 'No bid' : 'Use offer'}</button></td>`;
             if (isUsable) {
                 const useButton = tr.querySelector('button');
@@ -1024,6 +1028,8 @@ document.addEventListener('DOMContentLoaded', function() {
             cached.lineData.supplier_manufacturer = offer.manufacturer || '';
             cached.lineData.supplier_condition_code = offer.condition_code || '';
             cached.lineData.supplier_certifications = offer.certifications || '';
+            cached.lineData.supplier_cage_code = offer.cage_code || '';
+            cached.lineData.supplier_test_certs = offer.test_certs || '';
             cached.lineData.supplier_revision = offer.revision || '';
             cached.lineData.base_cost_gbp = calculateResult.base_cost_gbp;
             if (cached.elements.chosenQty && selectedQty) cached.elements.chosenQty.value = selectedQty;
@@ -1031,6 +1037,8 @@ document.addEventListener('DOMContentLoaded', function() {
             if (cached.elements.manufacturer && offer.manufacturer) cached.elements.manufacturer.value = offer.manufacturer;
             if (cached.elements.standardCondition && offer.condition_code) cached.elements.standardCondition.value = offer.condition_code;
             if (cached.elements.standardCerts && offer.certifications) cached.elements.standardCerts.value = offer.certifications;
+            if (cached.elements.cageCode) cached.elements.cageCode.value = offer.cage_code || '';
+            if (cached.elements.testCerts) cached.elements.testCerts.value = offer.test_certs || '';
             updateBaseCostCell(cached.elements, calculateResult.base_cost_gbp);
             row.querySelector('.chosen-supplier-name').textContent = offer.supplier_name || '-';
             row.querySelector('.chosen-cost-value').textContent = Number.parseFloat(offer.unit_price).toFixed(2);
@@ -1359,6 +1367,8 @@ document.addEventListener('DOMContentLoaded', function() {
         if (selectedCols.manufacturer) headers += `<th align="left" style="${hStyle}">Mfr</th>`;
         if (selectedCols.condition) headers += `<th align="left" style="${hStyle}">Condition</th>`;
         if (selectedCols.certs) headers += `<th align="left" style="${hStyle}">Certs</th>`;
+        if (selectedCols.cage_code) headers += `<th align="left" style="${hStyle}">CAGE</th>`;
+        if (selectedCols.test_certs) headers += `<th align="left" style="${hStyle}">Test Certs</th>`;
         if (selectedCols.notes) headers += `<th align="left" style="${hStyle}">Notes</th>`;
 
         // 3. Start Table HTML
@@ -1416,6 +1426,8 @@ document.addEventListener('DOMContentLoaded', function() {
             const isQtyDifferent = !lastIsNoBid && (effectiveQty !== requestedQty);
             const conditionValue = elements.standardCondition ? elements.standardCondition.value.trim() : '';
             const certsValue = elements.standardCerts ? elements.standardCerts.value.trim() : '';
+            const cageCodeValue = elements.cageCode ? elements.cageCode.value.trim() : '';
+            const testCertsValue = elements.testCerts ? elements.testCerts.value.trim() : '';
 
             const highlightStyle = isPNDifferent ? `${rowStyle}background-color:#fff3cd;font-weight:600;` : rowStyle;
             const qtyHighlightStyle = isQtyDifferent ? `${rowStyle}background-color:#e3f2fd;font-weight:600;` : rowStyle;
@@ -1437,6 +1449,8 @@ document.addEventListener('DOMContentLoaded', function() {
             if (selectedCols.manufacturer) html += `<td align="left" style="${rowStyle}">${manufacturerVal}</td>`;
             if (selectedCols.condition) html += `<td align="left" style="${rowStyle}">${conditionValue || ''}</td>`;
             if (selectedCols.certs) html += `<td align="left" style="${rowStyle}">${certsValue || ''}</td>`;
+            if (selectedCols.cage_code) html += `<td align="left" style="${rowStyle}">${cageCodeValue || ''}</td>`;
+            if (selectedCols.test_certs) html += `<td align="left" style="${rowStyle}">${testCertsValue || ''}</td>`;
             if (selectedCols.notes) html += `<td align="left" style="${rowStyle}">${elements.lineNotes ? elements.lineNotes.value : ''}</td>`;
             html += '</tr>';
         });
@@ -1478,7 +1492,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 quoted_status: row.dataset.status,
                 line_notes: elements.lineNotes ? elements.lineNotes.value : '',
                 standard_condition: elements.standardCondition ? elements.standardCondition.value : '',
-                standard_certs: elements.standardCerts ? elements.standardCerts.value : ''
+                standard_certs: elements.standardCerts ? elements.standardCerts.value : '',
+                cage_code: elements.cageCode ? elements.cageCode.value : '',
+                test_certs: elements.testCerts ? elements.testCerts.value : ''
             });
         });
 

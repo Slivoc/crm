@@ -210,11 +210,12 @@
                 <table class="table table-hover align-middle mb-0">
 <thead class="table-light">
     <tr>
-        <th width="25%">Customer</th>
-        <th width="15%">Trend</th>
-        <th width="15%">Calculation Logic</th>
-        <th width="20%" class="text-end">Actual / Target (£)</th>
-        <th width="25%">Next Action / Comments / Response</th>
+        <th width="21%">Customer</th>
+        <th width="13%">Trend</th>
+        <th width="14%">Calculation Logic</th>
+        <th width="14%" class="text-end">Pinned Forecast</th>
+        <th width="18%" class="text-end">Actual / Target (£)</th>
+        <th width="20%">Next Action / Comments / Response</th>
     </tr>
 </thead>
                     <tbody id="opportunitiesTableBody"></tbody>
@@ -233,11 +234,12 @@
                 <table class="table table-hover align-middle mb-0">
 <thead class="table-light">
     <tr>
-        <th width="25%">Customer</th>
-        <th width="15%">Recent Trend</th>
-        <th width="15%">First Order</th>
-        <th width="20%" class="text-end">Actual / Target (£)</th>
-        <th width="25%">Next Action / Comments / Response</th>
+        <th width="21%">Customer</th>
+        <th width="13%">Recent Trend</th>
+        <th width="14%">First Order</th>
+        <th width="14%" class="text-end">Pinned Forecast</th>
+        <th width="18%" class="text-end">Actual / Target (£)</th>
+        <th width="20%">Next Action / Comments / Response</th>
     </tr>
 </thead>
                     <tbody id="newCustomersTableBody"></tbody>
@@ -260,11 +262,12 @@
                 <table class="table table-hover align-middle mb-0">
 <thead class="table-light">
     <tr>
-        <th width="25%">Customer</th>
-        <th width="15%">2-Year Trend</th>
-        <th width="15%">Risk Factor</th>
-        <th width="20%" class="text-end">Actual / Target (£)</th>
-        <th width="25%">Next Action / Comments / Response</th>
+        <th width="21%">Customer</th>
+        <th width="13%">2-Year Trend</th>
+        <th width="14%">Risk Factor</th>
+        <th width="14%" class="text-end">Pinned Forecast</th>
+        <th width="18%" class="text-end">Actual / Target (£)</th>
+        <th width="20%">Next Action / Comments / Response</th>
     </tr>
 </thead>
                     <tbody id="recoveryTableBody"></tbody>
@@ -592,6 +595,9 @@ function renderPlanner(data) {
         </td>
         <td>${logicHtml}</td>
         <td class="text-end">
+            ${renderPinnedForecast(customer)}
+        </td>
+        <td class="text-end">
             <div class="mb-2">
                 <span class="${actualClass}">${formatCurrency(customer.actual_sales)}</span>
                 ${customer.target > 0 ? `<span class="text-muted ms-1" style="font-size: 0.75rem;">(${Math.round((customer.actual_sales/customer.target)*100)}%)</span>` : ''}
@@ -646,6 +652,24 @@ function renderPlanner(data) {
     `;
     return row;
 }
+
+    function renderPinnedForecast(customer) {
+        const amount = Number(customer.pinned_expected_amount || 0);
+        const count = Number(customer.pinned_list_count || 0);
+
+        if (count === 0) {
+            return '<span class="text-muted">—</span>';
+        }
+
+        const listLabel = `${count} pinned list${count === 1 ? '' : 's'}`;
+        return `
+            <span class="fw-semibold"
+                  title="${listLabel} expected in the selected month">
+                ${formatCurrency(amount)}
+            </span>
+            <small class="text-muted d-block">${listLabel}</small>
+        `;
+    }
 
     function getLogicBadge(customer) {
         if(customer.is_locked) return `<span class="calc-badge manual"><i class="bi bi-lock-fill me-1"></i>Manual Override</span>`;

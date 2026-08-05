@@ -6137,6 +6137,7 @@ def get_planner_data(salesperson_id):
         relevant_customer_ids = consolidated_ids | saved_target_ids
         recent_orders_30d_map = {}
         recent_quotes_30d_map = {}
+        pinned_forecast_map = {}
         first_order_map = {}
         if relevant_customer_ids:
             placeholders = ','.join(['?' for _ in relevant_customer_ids])
@@ -6202,6 +6203,33 @@ def get_planner_data(salesperson_id):
                     'count': int(row['recent_quote_count'] or 0)
                 }
                 for row in recent_quote_rows
+            }
+
+            forecast_month_end = target_date + relativedelta(months=1)
+            pinned_forecast_query = f"""
+                SELECT
+                    customer_id,
+                    COUNT(*) AS pinned_list_count,
+                    COALESCE(SUM(expected_amount_gbp), 0) AS expected_amount_gbp
+                FROM parts_lists
+                WHERE salesperson_id = ?
+                  AND customer_id IN ({placeholders})
+                  AND COALESCE(is_pinned, FALSE) = TRUE
+                  AND expected_date >= ?
+                  AND expected_date < ?
+                GROUP BY customer_id
+            """
+            pinned_forecast_rows = db_execute(
+                pinned_forecast_query,
+                [salesperson_id, *relevant_customer_ids, target_date, forecast_month_end],
+                fetch='all'
+            ) or []
+            pinned_forecast_map = {
+                row['customer_id']: {
+                    'amount': float(row['expected_amount_gbp'] or 0),
+                    'count': int(row['pinned_list_count'] or 0)
+                }
+                for row in pinned_forecast_rows
             }
         else:
             first_order_rows = []
@@ -6297,6 +6325,8 @@ def get_planner_data(salesperson_id):
             recent_orders_count_30d = sum((recent_orders_30d_map.get(sub_id) or {}).get('count', 0) for sub_id in all_ids)
             recent_quotes_30d = sum((recent_quotes_30d_map.get(sub_id) or {}).get('value', 0) for sub_id in all_ids)
             recent_quotes_count_30d = sum((recent_quotes_30d_map.get(sub_id) or {}).get('count', 0) for sub_id in all_ids)
+            pinned_expected_amount = sum((pinned_forecast_map.get(sub_id) or {}).get('amount', 0) for sub_id in all_ids)
+            pinned_list_count = sum((pinned_forecast_map.get(sub_id) or {}).get('count', 0) for sub_id in all_ids)
             conversion_pct_30d = None
             if recent_quotes_30d > 0:
                 conversion_pct_30d = round((recent_orders_30d / recent_quotes_30d) * 100, 1)
@@ -6352,12 +6382,15 @@ def get_planner_data(salesperson_id):
                 elif previous_active_total > 0:
                     suggested_target = round((previous_active_total / 9), -1)
                     calc_method = "Re-engagement"
+                elif pinned_list_count > 0:
+                    suggested_target = 0
+                    calc_method = "Pinned Forecast"
                 else:
                     suggested_target = 0
                     calc_method = "No Activity"
 
             # Filter Logic
-            if not is_saved and suggested_target < 100 and actual_sales < 100 and previous_active_total < 500:
+            if not is_saved and pinned_list_count == 0 and suggested_target < 100 and actual_sales < 100 and previous_active_total < 500:
                 continue
 
             customer_obj = {
@@ -6378,13 +6411,17 @@ def get_planner_data(salesperson_id):
                 'recent_orders_count_30d': recent_orders_count_30d,
                 'recent_quotes_30d': recent_quotes_30d,
                 'recent_quotes_count_30d': recent_quotes_count_30d,
-                'conversion_pct_30d': conversion_pct_30d
+                'conversion_pct_30d': conversion_pct_30d,
+                'pinned_expected_amount': pinned_expected_amount,
+                'pinned_list_count': pinned_list_count
             }
 
             # Categorize
             if is_new_business:
                 new_customers.append(customer_obj)
             elif is_locked:
+                opportunities.append(customer_obj)
+            elif pinned_list_count > 0:
                 opportunities.append(customer_obj)
             elif recent_average > 0:
                 opportunities.append(customer_obj)
@@ -6439,6 +6476,8 @@ def get_planner_data(salesperson_id):
                     'recent_orders_count_30d': ((recent_orders_30d_map.get(miss_int) or {}).get('count', 0) if miss_int is not None else 0),
                     'recent_quotes_30d': ((recent_quotes_30d_map.get(miss_int) or {}).get('value', 0) if miss_int is not None else 0),
                     'recent_quotes_count_30d': ((recent_quotes_30d_map.get(miss_int) or {}).get('count', 0) if miss_int is not None else 0),
+                    'pinned_expected_amount': ((pinned_forecast_map.get(miss_int) or {}).get('amount', 0) if miss_int is not None else 0),
+                    'pinned_list_count': ((pinned_forecast_map.get(miss_int) or {}).get('count', 0) if miss_int is not None else 0),
                     'conversion_pct_30d': (
                         round((((recent_orders_30d_map.get(miss_int) or {}).get('value', 0)) / ((recent_quotes_30d_map.get(miss_int) or {}).get('value', 0))) * 100, 1)
                         if miss_int is not None and ((recent_quotes_30d_map.get(miss_int) or {}).get('value', 0) > 0) else None

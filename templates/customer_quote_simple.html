@@ -1116,14 +1116,36 @@
                     {% endif %}
                 </div>
                 <div class="detail-field">
-                    <label>Certifications</label>
+                    <label>Manufacturer Certs</label>
                     <input type="text" class="form-control form-control-sm editable-field"
                            data-field="standard_certs"
                            data-line-id="{{ line.id }}"
                            value="{{ line.standard_certs or '' }}"
-                           placeholder="e.g. man certs">
+                           placeholder="e.g. OEM certs, 8130-3">
                     {% if line.supplier_certifications %}
                     <div class="supplier-info">Supplier: {{ line.supplier_certifications }}</div>
+                    {% endif %}
+                </div>
+                <div class="detail-field">
+                    <label>CAGE Code</label>
+                    <input type="text" class="form-control form-control-sm editable-field"
+                           data-field="cage_code"
+                           data-line-id="{{ line.id }}"
+                           value="{{ line.cage_code or '' }}"
+                           placeholder="e.g. 12345">
+                    {% if line.supplier_cage_code %}
+                    <div class="supplier-info">Supplier: {{ line.supplier_cage_code }}</div>
+                    {% endif %}
+                </div>
+                <div class="detail-field">
+                    <label>Test Certs</label>
+                    <input type="text" class="form-control form-control-sm editable-field"
+                           data-field="test_certs"
+                           data-line-id="{{ line.id }}"
+                           value="{{ line.test_certs or '' }}"
+                           placeholder="e.g. chemical test">
+                    {% if line.supplier_test_certs %}
+                    <div class="supplier-info">Supplier: {{ line.supplier_test_certs }}</div>
                     {% endif %}
                 </div>
                 <div class="detail-field">
@@ -1187,7 +1209,7 @@
                             <tr>
                                 <th>Supplier</th><th>Quoted P/N</th><th>Manufacturer</th><th class="text-end">Qty</th>
                                 <th class="text-end">Available</th><th class="text-end">Unit price</th><th>Currency</th>
-                                <th class="text-center">Lead</th><th>Condition</th><th>Certs</th><th></th>
+                                <th class="text-center">Lead</th><th>Condition</th><th>Man Certs</th><th>CAGE</th><th>Test Certs</th><th></th>
                             </tr>
                         </thead>
                         <tbody id="simple-offers-table-body"></tbody>

@@ -79,6 +79,44 @@ def _safe_int(val):
         return None
 
 
+def _get_po_check_currencies():
+    """Return currencies in the same shape/rate convention as customer quoting."""
+    rows = db_execute(
+        """
+        SELECT id, currency_code, symbol, exchange_rate_to_base AS exchange_rate
+        FROM currencies
+        ORDER BY id
+        """,
+        fetch='all'
+    ) or []
+    return [dict(row) for row in rows]
+
+
+def _normalise_check_currency(currency_code, currencies):
+    requested = str(currency_code or '').strip().upper()
+    available = {
+        str(currency.get('currency_code') or '').upper()
+        for currency in currencies
+    }
+    return requested if requested in available else 'GBP'
+
+
+def _convert_quote_price_from_gbp(amount, currency_code, currencies):
+    """Convert a stored GBP quote price using the CRM's base-relative rates."""
+    if amount is None:
+        return None
+
+    rates = {
+        str(currency.get('currency_code') or '').upper(): _safe_float(currency.get('exchange_rate'))
+        for currency in currencies
+    }
+    gbp_rate = rates.get('GBP')
+    target_rate = rates.get(str(currency_code or '').upper())
+    if not gbp_rate or not target_rate:
+        return float(amount)
+    return float(amount) * (target_rate / gbp_rate)
+
+
 def _normalize_parts_list_line_part_number(line):
     """Return a normalized base part number from a parts list line row."""
     if not line:
@@ -277,7 +315,7 @@ Return a JSON object with customer_name, po_reference, po_date, currency, incote
         }
 
 
-def match_po_lines_to_parts_lists(customer_id, po_lines):
+def match_po_lines_to_parts_lists(customer_id, po_lines, check_currency_code='GBP', currencies=None):
     """
     Match PO lines to existing parts list lines for the given customer.
 
@@ -290,6 +328,8 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
     - match_confidence: 'exact', 'partial', or 'none'
     """
     results = []
+    currencies = currencies if currencies is not None else _get_po_check_currencies()
+    check_currency_code = _normalise_check_currency(check_currency_code, currencies)
 
     if not po_lines:
         return results
@@ -421,6 +461,11 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
                 # Prefer customer_quote_lines data (actual quoted price to customer)
                 if best_match.get('quote_price_gbp'):
                     quoted_price = float(best_match['quote_price_gbp'])
+                check_price = _convert_quote_price_from_gbp(
+                    quoted_price,
+                    check_currency_code,
+                    currencies
+                )
 
                 if best_match.get('quoted_lead_days'):
                     quoted_lead_days = best_match['quoted_lead_days']
@@ -437,6 +482,8 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
                     'required_quantity': best_match['quantity'],
                     'quantity': best_match['chosen_qty'] or best_match['quantity'],
                     'price': quoted_price,  # Customer quoted price from customer_quote_lines
+                    'check_price': check_price,
+                    'check_currency': check_currency_code,
                     'lead_days': quoted_lead_days,  # Lead days from customer_quote_lines
                     'quote_status': quote_status,
                     'is_no_bid': best_match.get('is_no_bid', False),
@@ -485,11 +532,12 @@ def match_po_lines_to_parts_lists(customer_id, po_lines):
                         match_result['discrepancies'].append(f"Qty: PO has {po_qty}, quoted {matched_qty} ({diff})")
 
                 # Compare PO price to our quoted price (from customer_quote_lines)
-                if po_price and quoted_price:
-                    if abs(po_price - quoted_price) > 0.01:
-                        diff = po_price - quoted_price
+                if po_price and check_price:
+                    if abs(po_price - check_price) > 0.01:
+                        diff = po_price - check_price
                         match_result['discrepancies'].append(
-                            f"Price: PO has {po_price:.2f}, quoted {quoted_price:.2f} ({diff:+.2f})"
+                            f"Price ({check_currency_code}): PO has {po_price:.2f}, "
+                            f"quoted {check_price:.2f} ({diff:+.2f})"
                         )
 
                 # Set confidence level
@@ -633,7 +681,8 @@ def po_check_page():
 
     return render_template(
         'parts_list_po_check.html',
-        preselected_customer=preselected_customer
+        preselected_customer=preselected_customer,
+        currencies=_get_po_check_currencies()
     )
 
 
@@ -720,6 +769,9 @@ def match_po():
         return jsonify(success=False, message="No PO lines to match"), 400
 
     try:
+        currencies = _get_po_check_currencies()
+        check_currency = _normalise_check_currency(data.get('check_currency'), currencies)
+
         # Verify customer exists
         customer = db_execute(
             "SELECT id, name FROM customers WHERE id = ?",
@@ -731,7 +783,12 @@ def match_po():
             return jsonify(success=False, message="Customer not found"), 404
 
         # Run matching algorithm
-        matches = match_po_lines_to_parts_lists(customer_id, po_lines)
+        matches = match_po_lines_to_parts_lists(
+            customer_id,
+            po_lines,
+            check_currency_code=check_currency,
+            currencies=currencies
+        )
 
         # Collect summary stats
         matched_count = sum(1 for m in matches if m['match_confidence'] != 'none')
@@ -750,6 +807,7 @@ def match_po():
         return jsonify(
             success=True,
             customer={'id': customer['id'], 'name': customer['name']},
+            check_currency=check_currency,
             matches=matches,
             summary={
                 'total_lines': len(po_lines),

@@ -625,8 +625,16 @@
 
         <!-- Matching Results Section -->
         <div class="card mb-4">
-            <div class="card-header py-2" style="background: var(--primary, #5ebc67); color: white;">
+            <div class="card-header py-2 d-flex flex-wrap justify-content-between align-items-center gap-2" style="background: var(--primary, #5ebc67); color: white;">
                 <h6 class="mb-0"><i class="bi bi-check2-square me-2"></i>Quote Matching Results</h6>
+                <div class="d-flex align-items-center gap-2">
+                    <label for="checkCurrencySelect" class="small mb-0">Price check currency</label>
+                    <select id="checkCurrencySelect" class="form-select form-select-sm" style="width: auto;">
+                        {% for currency in currencies %}
+                        <option value="{{ currency.currency_code }}" {% if currency.currency_code == 'GBP' %}selected{% endif %}>{{ currency.currency_code }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
             </div>
 
             <!-- Summary Stats -->
@@ -753,11 +761,11 @@
                             <th class="text-end border-end">Price</th>
                             <th class="text-center" style="width: 120px;">Lead/Delivery</th>
                             <th class="text-center" style="width: 70px;">Qty</th>
-                            <th class="text-center border-end" style="width: 80px;">Price</th>
+                            <th class="text-center border-end" style="width: 80px;">Price <span id="checkPriceCurrencyLabel">(GBP)</span></th>
                             <th class="text-center quote-col" style="background: #f0f8f0;">Lead</th>
                             <th class="text-center quote-col" style="background: #f0f8f0;">Req Qty</th>
                             <th class="text-center quote-col" style="background: #f0f8f0;">Qty</th>
-                            <th class="text-end border-end quote-col" style="background: #f0f8f0;">Price</th>
+                            <th class="text-end border-end quote-col" style="background: #f0f8f0;">Price <span id="quotePriceCurrencyLabel">(GBP)</span></th>
                             <th class="text-center supplier-col" style="background: #f0f4f8;">Lead</th>
                             <th class="text-center supplier-col" style="background: #f0f4f8;">Qty</th>
                             <th class="text-end supplier-col" style="background: #f0f4f8;">Price</th>
@@ -895,6 +903,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let visibleRowIndices = [];
     let activeRowIndex = null;
     const completedLineIndices = new Set();
+    const CURRENCIES = {{ currencies | tojson }};
 
     // Elements
     const customerSelect = document.getElementById('customerSelect');
@@ -922,6 +931,25 @@ document.addEventListener('DOMContentLoaded', function() {
     const focusNextBtn = document.getElementById('focusNextBtn');
     const focusCompleteBtn = document.getElementById('focusCompleteBtn');
     const showAllMatchesBtn = document.getElementById('showAllMatchesBtn');
+    const checkCurrencySelect = document.getElementById('checkCurrencySelect');
+
+    function getSelectedCheckCurrency() {
+        return (checkCurrencySelect?.value || 'GBP').toUpperCase();
+    }
+
+    function selectDetectedCurrency(currencyCode) {
+        const requested = String(currencyCode || '').toUpperCase();
+        if (requested && Array.from(checkCurrencySelect.options).some(option => option.value === requested)) {
+            checkCurrencySelect.value = requested;
+        }
+        updateCheckCurrencyLabels();
+    }
+
+    function updateCheckCurrencyLabels() {
+        const code = getSelectedCheckCurrency();
+        document.getElementById('checkPriceCurrencyLabel').textContent = `(${code})`;
+        document.getElementById('quotePriceCurrencyLabel').textContent = `(${code})`;
+    }
 
     // Initialize Select2 for customer dropdown
     $(customerSelect).select2({
@@ -942,6 +970,39 @@ document.addEventListener('DOMContentLoaded', function() {
                 };
             },
             cache: true
+        }
+    });
+
+    updateCheckCurrencyLabels();
+    checkCurrencySelect.addEventListener('change', async function() {
+        updateCheckCurrencyLabels();
+        const customerId = $(customerSelect).val();
+        if (!matchResults || !extractedData?.lines?.length || !customerId) {
+            return;
+        }
+
+        showLoading(`Rechecking prices in ${getSelectedCheckCurrency()}...`);
+        try {
+            const response = await fetch('{{ url_for("parts_list_po_check.match_po") }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    customer_id: customerId,
+                    lines: extractedData.lines,
+                    check_currency: getSelectedCheckCurrency()
+                })
+            });
+            const result = await response.json();
+            if (!response.ok || !result.success) {
+                throw new Error(result.message || 'Price recheck failed');
+            }
+            matchResults = result;
+            displayResults();
+        } catch (error) {
+            alert('Error: ' + error.message);
+            console.error(error);
+        } finally {
+            hideLoading();
         }
     });
 
@@ -974,6 +1035,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 // Update PO details display
                 updatePODisplay(extractedData);
+                selectDetectedCurrency(extractedData.currency);
 
                 // If customer is set, auto-run matching
                 if (result.customer && extractedData.lines && extractedData.lines.length > 0) {
@@ -984,7 +1046,8 @@ document.addEventListener('DOMContentLoaded', function() {
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
                                 customer_id: result.customer.id,
-                                lines: extractedData.lines
+                                lines: extractedData.lines,
+                                check_currency: getSelectedCheckCurrency()
                             })
                         });
 
@@ -1146,7 +1209,11 @@ document.addEventListener('DOMContentLoaded', function() {
             const response = await fetch('{{ url_for("parts_list_po_check.match_po") }}', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ customer_id: customerId, lines: parsed })
+                body: JSON.stringify({
+                    customer_id: customerId,
+                    lines: parsed,
+                    check_currency: getSelectedCheckCurrency()
+                })
             });
             const result = await response.json();
             if (!response.ok || !result.success) throw new Error(result.message || 'Matching failed');
@@ -1191,6 +1258,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             // Update PO details display
             updatePODisplay(extractedData);
+            selectDetectedCurrency(extractedData.currency);
 
             // Step 2: Match lines
             showLoading('Matching PO lines to parts lists...');
@@ -1200,7 +1268,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     customer_id: customerId,
-                    lines: extractedData.lines
+                    lines: extractedData.lines,
+                    check_currency: getSelectedCheckCurrency()
                 })
             });
 
@@ -1384,8 +1453,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 formatter: formatQuantity,
                 tolerance: 0
             });
-            const priceCheck = getValueMatch(po.unit_price, m ? m.price : null, {
-                formatter: formatCurrency,
+            const checkCurrency = getSelectedCheckCurrency();
+            const displayedQuotePrice = m ? convertFromGbp(m.price, checkCurrency) : null;
+            const priceCheck = getValueMatch(po.unit_price, displayedQuotePrice, {
+                formatter: value => formatCurrencyWithCode(value, checkCurrency),
                 tolerance: 0.01
             });
 
@@ -1451,7 +1522,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     ${m ? (m.quantity || '-') : '-'}
                 </td>
                 <td class="text-end border-end quote-col" style="background: #f8fcf8;">
-                    ${m && m.price ? formatCurrency(m.price) : '-'}
+                    ${displayedQuotePrice ? formatCurrencyWithCode(displayedQuotePrice, checkCurrency) : '-'}
                 </td>
 
                 <td class="text-center supplier-col" style="background: #f8fafc;">
@@ -1965,7 +2036,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         <div class="small text-muted">
                             PL #${match.parts_list_id}${match.line_number ? ` · Line ${match.line_number}` : ''} · Qty: ${formatQuantity(match.quantity)}
                             ${match.required_quantity ? ` · Req ${formatQuantity(match.required_quantity)}` : ''}
-                            ${match.price ? ` · Price: ${formatCurrency(match.price)}` : ''}
+                            ${match.price ? ` · Price: ${formatCurrencyWithCode(convertFromGbp(match.price, getSelectedCheckCurrency()), getSelectedCheckCurrency())}` : ''}
                         </div>
                         ${match.supplier_name ? `<div class="small text-muted">Supplier: ${escapeHtml(match.supplier_name)}</div>` : ''}
                     </div>
@@ -2025,9 +2096,11 @@ document.addEventListener('DOMContentLoaded', function() {
             const diff = poLine.quantity - match.quantity;
             matchResult.discrepancies.push(`Qty: PO has ${poLine.quantity}, quoted ${match.quantity} (${diff > 0 ? '+' : ''}${diff})`);
         }
-        if (poLine.unit_price && match.price && Math.abs(poLine.unit_price - match.price) > 0.01) {
-            const diff = poLine.unit_price - match.price;
-            matchResult.discrepancies.push(`Price: PO has ${poLine.unit_price.toFixed(2)}, quoted ${match.price.toFixed(2)} (${diff > 0 ? '+' : ''}${diff.toFixed(2)})`);
+        const selectedCurrency = getSelectedCheckCurrency();
+        const displayedMatchPrice = convertFromGbp(match.price, selectedCurrency);
+        if (poLine.unit_price && displayedMatchPrice && Math.abs(poLine.unit_price - displayedMatchPrice) > 0.01) {
+            const diff = poLine.unit_price - displayedMatchPrice;
+            matchResult.discrepancies.push(`Price (${selectedCurrency}): PO has ${poLine.unit_price.toFixed(2)}, quoted ${displayedMatchPrice.toFixed(2)} (${diff > 0 ? '+' : ''}${diff.toFixed(2)})`);
         }
         if (match.match_basis === 'requested' &&
             match.quoted_part_number &&
@@ -2127,6 +2200,18 @@ document.addEventListener('DOMContentLoaded', function() {
         const base = formatCurrency(value);
         if (base === '-') return '-';
         return currencyCode ? `${base} ${escapeHtml(currencyCode)}` : base;
+    }
+
+    function convertFromGbp(value, currencyCode) {
+        if (value === null || value === undefined) return null;
+        const gbp = CURRENCIES.find(currency => String(currency.currency_code || '').toUpperCase() === 'GBP');
+        const target = CURRENCIES.find(currency => String(currency.currency_code || '').toUpperCase() === String(currencyCode || '').toUpperCase());
+        const gbpRate = Number(gbp?.exchange_rate);
+        const targetRate = Number(target?.exchange_rate);
+        const amount = Number(value);
+        if (!Number.isFinite(amount)) return null;
+        if (!(gbpRate > 0) || !(targetRate > 0)) return amount;
+        return amount * (targetRate / gbpRate);
     }
 
     function normalizePartNumberClient(value) {

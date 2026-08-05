@@ -191,12 +191,14 @@ def _get_supplier_quote_metadata(cur, parts_list_line_id, supplier_id, source_ty
     condition = None
     certs = None
     manufacturer = None
+    cage_code = None
+    test_certs = None
 
     explicit_quote = None
     source_type_value = (source_type or '').strip().lower()
     if source_type_value == 'quote' and source_reference is not None:
         explicit_quote = _execute_with_cursor(cur, """
-            SELECT sql.condition_code, sql.certifications, sql.manufacturer
+            SELECT sql.condition_code, sql.certifications, sql.manufacturer, sql.cage_code, sql.test_certs
             FROM parts_list_supplier_quote_lines sql
             JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
             WHERE sql.parts_list_line_id = ?
@@ -210,6 +212,8 @@ def _get_supplier_quote_metadata(cur, parts_list_line_id, supplier_id, source_ty
         condition = (explicit_quote['condition_code'] or '').strip() or None
         certs = (explicit_quote['certifications'] or '').strip() or None
         manufacturer = (explicit_quote['manufacturer'] or '').strip() or None
+        cage_code = (explicit_quote['cage_code'] or '').strip() or None
+        test_certs = (explicit_quote['test_certs'] or '').strip() or None
 
     if supplier_id and (not condition or not certs):
         supplier_defaults = _execute_with_cursor(
@@ -227,7 +231,9 @@ def _get_supplier_quote_metadata(cur, parts_list_line_id, supplier_id, source_ty
     return {
         'condition': condition or '',
         'certs': certs or '',
-        'manufacturer': manufacturer or ''
+        'manufacturer': manufacturer or '',
+        'cage_code': cage_code or '',
+        'test_certs': test_certs or '',
     }
 
 
@@ -844,9 +850,13 @@ def calculate_base_cost_line(list_id, line_id):
                 _execute_with_cursor(cur, """
                     INSERT INTO customer_quote_lines 
                     (parts_list_line_id, base_cost_gbp, delivery_per_unit, delivery_per_line,
-                     margin_percent, quote_price_gbp, quoted_status, standard_condition, standard_certs)
-                    VALUES (?, ?, 0, 0, 0, ?, 'created', ?, ?)
-                """, (line_id, base_cost_gbp, base_cost_gbp, condition, certs))
+                     margin_percent, quote_price_gbp, quoted_status, standard_condition, standard_certs,
+                     manufacturer, cage_code, test_certs)
+                    VALUES (?, ?, 0, 0, 0, ?, 'created', ?, ?, ?, ?, ?)
+                """, (
+                    line_id, base_cost_gbp, base_cost_gbp, condition, certs,
+                    metadata['manufacturer'], metadata['cage_code'], metadata['test_certs']
+                ))
                 quote_price = base_cost_gbp
                 margin_percent = 0
                 delivery_per_line = 0
@@ -1298,7 +1308,7 @@ def bulk_update_quote_lines(list_id):
                     set_field("lead_days", int(update['lead_days'] or 0))
                     logging.debug(f"Line {parts_list_line_id}: lead_days = {update['lead_days']}")
 
-                for field in ['display_part_number', 'quoted_part_number', 'line_notes', 'standard_condition', 'standard_certs']:
+                for field in ['display_part_number', 'quoted_part_number', 'line_notes', 'standard_condition', 'standard_certs', 'cage_code', 'test_certs']:
                     if field in update:
                         set_field(field, update[field])
                 if 'manufacturer' in update:
@@ -2172,6 +2182,8 @@ def customer_quote_simple(list_id):
                     cql.line_notes,
                     cql.standard_condition,
                     cql.standard_certs,
+                    cql.cage_code,
+                    cql.test_certs,
                     CASE
                         WHEN pll.chosen_source_type = 'quote'
                              AND pll.chosen_source_reference IS NOT NULL THEN (
@@ -2198,6 +2210,20 @@ def customer_quote_simple(list_id):
                         )
                         ELSE NULL
                     END AS chosen_quote_certifications,
+                    CASE
+                        WHEN pll.chosen_source_type = 'quote' AND pll.chosen_source_reference IS NOT NULL THEN (
+                            SELECT sql.cage_code FROM parts_list_supplier_quote_lines sql
+                            WHERE CAST(sql.id AS TEXT) = pll.chosen_source_reference AND sql.is_no_bid = FALSE
+                            LIMIT 1
+                        ) ELSE NULL
+                    END AS supplier_cage_code,
+                    CASE
+                        WHEN pll.chosen_source_type = 'quote' AND pll.chosen_source_reference IS NOT NULL THEN (
+                            SELECT sql.test_certs FROM parts_list_supplier_quote_lines sql
+                            WHERE CAST(sql.id AS TEXT) = pll.chosen_source_reference AND sql.is_no_bid = FALSE
+                            LIMIT 1
+                        ) ELSE NULL
+                    END AS supplier_test_certs,
                     CASE
                         WHEN pll.chosen_source_type = 'quote'
                              AND pll.chosen_source_reference IS NOT NULL THEN (
@@ -2529,6 +2555,8 @@ def customer_quote_simple(list_id):
                     line_dict['standard_condition'] = (line_dict.get('standard_condition') or '').strip()
                     line_dict['standard_certs'] = (line_dict.get('standard_certs') or '').strip()
                     line_dict['manufacturer'] = (line_dict.get('manufacturer') or '').strip()
+                    line_dict['cage_code'] = (line_dict.get('cage_code') or '').strip()
+                    line_dict['test_certs'] = (line_dict.get('test_certs') or '').strip()
                 else:
                     line_dict['standard_condition'] = (
                         (line_dict.get('supplier_condition_code') or '').strip()
@@ -2539,6 +2567,8 @@ def customer_quote_simple(list_id):
                         or (line_dict.get('supplier_standard_certs') or '').strip()
                     )
                     line_dict['manufacturer'] = (line_dict.get('supplier_manufacturer') or '').strip()
+                    line_dict['cage_code'] = (line_dict.get('supplier_cage_code') or '').strip()
+                    line_dict['test_certs'] = (line_dict.get('supplier_test_certs') or '').strip()
 
                 corrected_customer_part = (line_dict.get('customer_part_number') or '').strip()
                 requested_part = (line_dict.get('requested_part_number') or '').strip()

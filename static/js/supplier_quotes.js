@@ -11,6 +11,7 @@ let activePdfPreviewUrl = null;
 let activeSupplierQuoteListId = null;
 let latestExtractionMatchDebug = null;
 let supplierMetaById = {};
+let currentSourceArtifact = null;
 
 function ensureSupplierQuoteGridStyles() {
     if (document.getElementById('supplier-quote-grid-styles')) return;
@@ -771,6 +772,9 @@ function uploadAndExtractQuoteFile(file, config) {
         if (data.raw_text) {
             document.getElementById('supplier-response-text').value = data.raw_text;
         }
+        if (data.source_artifact) {
+            currentSourceArtifact = data.source_artifact;
+        }
 
         const extractedLines =
             data.extracted_lines ||
@@ -855,6 +859,7 @@ function displayQuotesList(quotes) {
                     <div class="text-end">
                         <span class="badge bg-primary">${quote.line_count} lines</span>
                         ${quote.no_bid_count > 0 ? `<span class="badge bg-warning ms-1">${quote.no_bid_count} no-bids</span>` : ''}
+                        ${quote.source_artifact_filename ? `<a class="btn btn-sm btn-outline-secondary ms-2 quote-source-link" href="/parts_list/parts-lists/${getActiveSupplierQuoteListId()}/supplier-quotes/${quote.id}/source" title="Download saved extraction source"><i class="bi bi-paperclip"></i> Source</a>` : ''}
                     </div>
                 </div>
             </div>
@@ -870,11 +875,15 @@ function displayQuotesList(quotes) {
             loadQuoteForEditing(quoteId);
         });
     });
+    container.querySelectorAll('.quote-source-link').forEach(link => {
+        link.addEventListener('click', event => event.stopPropagation());
+    });
 }
 
 function showQuoteInputView(quoteId = null) {
     currentQuoteId = quoteId;
     currentSupplierId = window.PRESELECTED_SUPPLIER_ID || null;
+    currentSourceArtifact = null;
     showSentOnly = false;
     showIlsOnly = false;
     partNumberFilterValue = '';
@@ -1329,6 +1338,8 @@ function initializeEmptyQuoteLines(supplierId = null) {
                     lead_time_days: null,
                     condition_code: '',
                     certifications: '',
+                    cage_code: '',
+                    test_certs: '',
                     is_no_bid: false,
                     line_notes: '',
                     other_quotes_count: 0,
@@ -1379,7 +1390,9 @@ function initializeQuoteLinesTable(lines) {
         line.line_notes,
         line.other_quotes_count || 0,
         !!line.quote_requested,
-        false  // split_line - column 21
+        false,  // split_line - column 21
+        line.cage_code || '',
+        line.test_certs || ''
     ]);
 
     quoteLinesTable = new Handsontable(container, {
@@ -1396,7 +1409,7 @@ function initializeQuoteLinesTable(lines) {
             'Increment',
             'MOQ',
             'Unit Price (ea)',
-            'Certifications',
+            'Man Certs',
             'Lead Days',
             'Lbs',
             'LB Price',
@@ -1406,7 +1419,9 @@ function initializeQuoteLinesTable(lines) {
             'Notes',
             'Other Quotes',
             'Sent?',
-            'Split'
+            'Split',
+            'CAGE Code',
+            'Test Certs'
         ],
         columns: [
             { data: 0, type: 'numeric', readOnly: true, className: 'htCenter htMiddle' },
@@ -1442,7 +1457,9 @@ function initializeQuoteLinesTable(lines) {
                 renderer: splitLineCheckboxRenderer,
                 readOnly: false,
                 className: 'htCenter'
-            }
+            },
+            { data: 22, type: 'text' },
+            { data: 23, type: 'text' }
         ],
         rowHeaders: true,
         height: 500,
@@ -1488,7 +1505,7 @@ function initializeQuoteLinesTable(lines) {
                 TH.title = 'Check to create a new line (e.g., 1.1, 1.2) for this partial quote';
             }
             if (col === 11) {
-                TH.title = 'Supplier certifications for this quoted line.';
+                TH.title = 'Manufacturer/trace certifications for this quoted line.';
             }
             if (col === 12) {
                 TH.title = 'Supplier lead time in days.';
@@ -1603,6 +1620,9 @@ function extractQuoteData() {
 
         if (data.mov !== undefined) {
             setSupplierMovInput(data.mov);
+        }
+        if (data.source_artifact) {
+            currentSourceArtifact = data.source_artifact;
         }
 
         if (data.success && Array.isArray(extractedLines) && extractedLines.length > 0) {
@@ -1741,7 +1761,9 @@ function applyExtractedDataToTable(extractedLines) {
                 [bestIndex, 12, extracted.lead_time_days],
                 [bestIndex, 16, extracted.condition],
                 [bestIndex, 17, !!extracted.is_no_bid],
-                [bestIndex, 18, extracted.notes]
+                [bestIndex, 18, extracted.notes],
+                [bestIndex, 22, extracted.cage_code],
+                [bestIndex, 23, extracted.test_certs]
             ]);
         } else {
             console.warn(`No strong match for extracted PN "${matchPN}", bestScore=${bestScore.toFixed(2)}`);
@@ -1800,6 +1822,9 @@ function saveSupplierQuote() {
         email_message_id: window.EMAIL_MESSAGE_ID || null,
         email_conversation_id: window.EMAIL_CONVERSATION_ID || null
     };
+    if (currentSourceArtifact) {
+        quoteData.source_artifact = currentSourceArtifact;
+    }
 
     const lbInputErrors = validateLbPriceRows();
     if (lbInputErrors.length > 0) {
@@ -1910,6 +1935,8 @@ function saveQuoteLines(quoteId) {
             is_no_bid: !!tableData[index][17],
             line_notes: tableData[index][18],
             split_line: !!tableData[index][21],  // New: split line flag
+            cage_code: tableData[index][22],
+            test_certs: tableData[index][23],
             per_lb_quantity_converted: priceEnteredAsLb
         };
     });
