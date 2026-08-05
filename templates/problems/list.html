@@ -16,6 +16,20 @@
         </div>
     </div>
 
+    <form class="problem-card problem-company-quick-find" method="get">
+        <div class="problem-company-quick-find-copy">
+            <label class="form-label mb-0" for="problemCompanyQuickFind"><i class="bi bi-search me-1"></i>Quick find by company</label>
+            <div class="small text-muted">Search customers and suppliers together. Selecting one immediately shows every problem where it was responsible or related.</div>
+        </div>
+        <div class="position-relative flex-grow-1" data-company-quick-find>
+            <input class="form-control" id="problemCompanyQuickFind" value="{{ filters.company_name or '' }}" data-lookup-input autocomplete="off" placeholder="Start typing a customer or supplier...">
+            <input type="hidden" name="company_type" value="{{ filters.company_type or '' }}" data-company-type>
+            <input type="hidden" name="company_id" value="{{ filters.company_id or '' }}" data-company-id>
+            <div class="problem-lookup-results list-group d-none" data-lookup-results></div>
+        </div>
+        {% if filters.company_id %}<a class="btn btn-outline-secondary text-nowrap" href="{{ url_for('problems.list_problems') }}"><i class="bi bi-x-lg me-1"></i>Clear</a>{% endif %}
+    </form>
+
     <form class="problem-card problem-filters" method="get">
         <div class="row g-3 align-items-end">
             <div class="col-lg-3 col-md-6">

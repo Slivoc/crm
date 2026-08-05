@@ -3,7 +3,15 @@
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'list-group-item list-group-item-action';
-        button.textContent = item.name;
+        const name = document.createElement('span');
+        name.textContent = item.name;
+        button.appendChild(name);
+        if (item.object_type) {
+            const type = document.createElement('span');
+            type.className = 'badge text-bg-light ms-2';
+            type.textContent = item.object_type === 'customer' ? 'Customer' : 'Supplier';
+            button.appendChild(type);
+        }
         button.addEventListener('click', () => onClick(item));
         return button;
     }
@@ -86,6 +94,7 @@
             chips.appendChild(chip);
             input.value = '';
         };
+        root._addProblemItem = add;
         chips.querySelectorAll('.problem-selected-chip').forEach(chip => {
             chip.querySelector('button')?.addEventListener('click', () => chip.remove());
         });
@@ -146,6 +155,7 @@
             search(input, results, type, item => {
                 input.value = item.name;
                 hidden.value = item.id;
+                root.querySelector(`.problem-multi-lookup[data-lookup-type="${type}"]`)?._addProblemItem?.(item);
             });
         });
         typeInput?.addEventListener('input', () => {
@@ -189,7 +199,30 @@
         updateTypeAvailability(false);
     }
 
+    function initCompanyQuickFind(root) {
+        const form = root.closest('form');
+        const input = root.querySelector('[data-lookup-input]');
+        const results = root.querySelector('[data-lookup-results]');
+        const typeField = root.querySelector('[data-company-type]');
+        const idField = root.querySelector('[data-company-id]');
+        if (!form || !input || !results || !typeField || !idField) return;
+        input.addEventListener('input', () => {
+            typeField.value = '';
+            idField.value = '';
+        });
+        form.addEventListener('submit', event => {
+            if (!typeField.value || !idField.value) event.preventDefault();
+        });
+        search(input, results, 'company', item => {
+            input.value = item.name;
+            typeField.value = item.object_type;
+            idField.value = item.id;
+            form.submit();
+        });
+    }
+
     document.querySelectorAll('.problem-single-lookup').forEach(initSingle);
     document.querySelectorAll('.problem-multi-lookup').forEach(initMulti);
     document.querySelectorAll('.problem-form').forEach(initCause);
+    document.querySelectorAll('[data-company-quick-find]').forEach(initCompanyQuickFind);
 })();

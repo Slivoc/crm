@@ -32,6 +32,20 @@
 }
 .problem-card-body { padding: 1.25rem; }
 .problem-filters { padding: 1rem 1.25rem; margin-bottom: 1rem; }
+.problem-company-quick-find {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1rem;
+    border-color: #99f6e4;
+    background: linear-gradient(135deg, #f0fdfa 0%, #fff 70%);
+}
+.problem-company-quick-find-copy { min-width: 260px; }
+@media (max-width: 767.98px) {
+    .problem-company-quick-find { align-items: stretch; flex-direction: column; }
+    .problem-company-quick-find-copy { min-width: 0; }
+}
 .problem-status {
     display: inline-flex;
     align-items: center;

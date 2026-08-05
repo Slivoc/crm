@@ -27,7 +27,7 @@
         <div class="problem-card-header problem-responsibility-header">
             <div>
                 <h5 class="mb-1">What is taking time, by responsibility</h5>
-                <div class="small text-muted">Each slice is a cause-specific problem type, so the same wording under different causes is never bundled together.</div>
+                <div class="small text-muted">Each slice is a cause-specific problem type, so the same wording under different causes is never bundled together. Tiny or zero-time categories retain a narrow visible slice; tooltips show the true value.</div>
             </div>
             <div class="btn-group btn-group-sm" role="group" aria-label="Responsibility chart measure">
                 <button class="btn btn-primary active" type="button" data-problem-chart-metric="time">Time burden</button>
@@ -146,6 +146,15 @@ document.addEventListener('DOMContentLoaded', function () {
         return items.map(item => metric === 'count' ? item.total_count : item.time_burden_days);
     }
 
+    function visibleValuesFor(items, metric) {
+        const values = valuesFor(items, metric);
+        if (metric !== 'time' || values.length < 2) return values;
+        const total = values.reduce((sum, value) => sum + value, 0);
+        if (total <= 0) return items.map(() => 1);
+        const minimumVisibleSlice = total * 0.02;
+        return values.map(value => Math.max(value, minimumVisibleSlice));
+    }
+
     function renderChart(key) {
         const bucket = responsibilityData[key];
         const canvasId = `problemResponsibilityChart${key.charAt(0).toUpperCase()}${key.slice(1)}`;
@@ -157,7 +166,7 @@ document.addEventListener('DOMContentLoaded', function () {
             data: {
                 labels: items.map(item => item.display_name),
                 datasets: [{
-                    data: valuesFor(items, activeMetric),
+                    data: visibleValuesFor(items, activeMetric),
                     backgroundColor: items.map(item => colourByType[item.display_name]),
                     borderColor: '#ffffff', borderWidth: 2, hoverOffset: 6
                 }]
@@ -188,7 +197,7 @@ document.addEventListener('DOMContentLoaded', function () {
             candidate.classList.toggle('btn-outline-primary', !active);
         });
         Object.values(charts).forEach(chart => {
-            chart.data.datasets[0].data = valuesFor(chart._problemItems, activeMetric);
+            chart.data.datasets[0].data = visibleValuesFor(chart._problemItems, activeMetric);
             chart.update();
         });
     }));
