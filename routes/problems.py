@@ -1093,7 +1093,138 @@ def settings():
         sort_order = _parse_sort_order(request.form.get('sort_order'))
         is_active = request.form.get('is_active') == 'on'
 
-        if entity == 'type':
+        if entity == 'types_bulk':
+            type_ids = _parse_id_list(request.form.getlist('type_ids'))
+            if not type_ids:
+                flash('There are no problem types to save.', 'info')
+                return redirect(url_for('problems.settings'))
+
+            placeholders = ', '.join(['?'] * len(type_ids))
+            existing_rows = db_execute(
+                f"""
+                SELECT pt.id, pt.cause_category_id,
+                       COUNT(p.id) AS usage_count
+                FROM problem_types pt
+                LEFT JOIN problems p ON p.problem_type_id = pt.id
+                WHERE pt.id IN ({placeholders})
+                GROUP BY pt.id, pt.cause_category_id
+                """,
+                type_ids,
+                fetch='all',
+            ) or []
+            existing_by_id = {int(row['id']): dict(row) for row in existing_rows}
+            if len(existing_by_id) != len(type_ids):
+                flash('Some problem types changed while this page was open. Refresh and try again.', 'error')
+                return redirect(url_for('problems.settings'))
+
+            cause_ids = {
+                int(row['id']) for row in (db_execute(
+                    'SELECT id FROM problem_cause_categories', fetch='all'
+                ) or [])
+            }
+            updates = []
+            submitted_names = set()
+            for type_id in type_ids:
+                type_name = re.sub(r'\s+', ' ', (request.form.get(f'name_{type_id}') or '').strip())
+                cause_category_id = _parse_id(request.form.get(f'cause_category_id_{type_id}'))
+                if not type_name:
+                    flash('Every problem type needs a name.', 'error')
+                    return redirect(url_for('problems.settings'))
+                if len(type_name) > 120:
+                    flash(f'Problem type “{type_name[:40]}…” must be 120 characters or fewer.', 'error')
+                    return redirect(url_for('problems.settings'))
+                if cause_category_id not in cause_ids:
+                    flash(f'Choose a valid cause for “{type_name}”.', 'error')
+                    return redirect(url_for('problems.settings'))
+
+                uniqueness_key = (cause_category_id, type_name.casefold())
+                if uniqueness_key in submitted_names:
+                    flash(f'“{type_name}” appears more than once under the same cause.', 'error')
+                    return redirect(url_for('problems.settings'))
+                submitted_names.add(uniqueness_key)
+
+                current = existing_by_id[type_id]
+                if int(current.get('usage_count') or 0) and current.get('cause_category_id') != cause_category_id:
+                    flash(f'“{type_name}” cannot be moved because it has already been used.', 'error')
+                    return redirect(url_for('problems.settings'))
+                duplicate = db_execute(
+                    """
+                    SELECT id FROM problem_types
+                    WHERE cause_category_id = ? AND LOWER(name) = LOWER(?)
+                      AND id NOT IN ({})
+                    """.format(placeholders),
+                    [cause_category_id, type_name] + type_ids,
+                    fetch='one',
+                )
+                if duplicate:
+                    flash(f'“{type_name}” already exists under that cause.', 'error')
+                    return redirect(url_for('problems.settings'))
+
+                updates.append((
+                    type_name,
+                    cause_category_id,
+                    _parse_sort_order(request.form.get(f'sort_order_{type_id}')),
+                    request.form.get(f'is_active_{type_id}') == 'on',
+                    type_id,
+                ))
+
+            # Temporary names allow two unused rows to swap names or causes in
+            # one save without tripping the scoped unique index mid-update.
+            bulk_token = datetime.now().strftime('%Y%m%d%H%M%S%f')
+            with db_cursor(commit=True) as cur:
+                for type_id in type_ids:
+                    cur.execute(
+                        'UPDATE problem_types SET name = ? WHERE id = ?',
+                        (f'__bulk_{bulk_token}_{type_id}', type_id),
+                    )
+                cur.executemany(
+                    """
+                    UPDATE problem_types
+                    SET name = ?, cause_category_id = ?, sort_order = ?, is_active = ?
+                    WHERE id = ?
+                    """,
+                    updates,
+                )
+            flash(f'Saved {len(updates)} problem types.', 'success')
+
+        elif entity == 'type_delete':
+            if not record_id:
+                abort(400)
+            current = db_execute(
+                """
+                SELECT pt.name, COUNT(p.id) AS usage_count
+                FROM problem_types pt
+                LEFT JOIN problems p ON p.problem_type_id = pt.id
+                WHERE pt.id = ?
+                GROUP BY pt.id, pt.name
+                """,
+                (record_id,),
+                fetch='one',
+            )
+            if not current:
+                abort(404)
+            if int(current.get('usage_count') or 0):
+                flash('That problem type cannot be deleted because it is used by existing problems. Disable it instead.', 'error')
+                return redirect(url_for('problems.settings'))
+            deleted = db_execute(
+                """
+                DELETE FROM problem_types pt
+                WHERE pt.id = ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM problems p WHERE p.problem_type_id = pt.id
+                  )
+                RETURNING name
+                """,
+                (record_id,),
+                fetch='one',
+                commit=True,
+            )
+            if not deleted:
+                flash('That problem type was used before it could be deleted. Disable it instead.', 'error')
+                return redirect(url_for('problems.settings'))
+            flash(f'Problem type “{deleted["name"]}” deleted.', 'success')
+
+        elif entity == 'type':
             cause_category_id = _parse_id(request.form.get('cause_category_id'))
             if not name:
                 flash('Problem type name is required.', 'error')
