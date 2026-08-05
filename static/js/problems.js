@@ -199,30 +199,31 @@
         updateTypeAvailability(false);
     }
 
-    function initCompanyQuickFind(root) {
-        const form = root.closest('form');
-        const input = root.querySelector('[data-lookup-input]');
-        const results = root.querySelector('[data-lookup-results]');
-        const typeField = root.querySelector('[data-company-type]');
-        const idField = root.querySelector('[data-company-id]');
-        if (!form || !input || !results || !typeField || !idField) return;
-        input.addEventListener('input', () => {
-            typeField.value = '';
-            idField.value = '';
-        });
-        form.addEventListener('submit', event => {
-            if (!typeField.value || !idField.value) event.preventDefault();
-        });
-        search(input, results, 'company', item => {
-            input.value = item.name;
-            typeField.value = item.object_type;
-            idField.value = item.id;
-            form.submit();
-        });
+    function initCompanyTableFilter(input) {
+        const rows = Array.from(document.querySelectorAll('[data-problem-row]'));
+        const noResults = document.querySelector('[data-problem-company-no-results]');
+        const count = document.querySelector('[data-problem-company-filter-count]');
+        if (!rows.length) return;
+
+        const update = () => {
+            const query = input.value.trim().toLocaleLowerCase();
+            let visible = 0;
+            rows.forEach(row => {
+                const matches = !query || (row.dataset.companyNames || '').toLocaleLowerCase().includes(query);
+                row.classList.toggle('d-none', !matches);
+                if (matches) visible += 1;
+            });
+            noResults?.classList.toggle('d-none', visible > 0);
+            if (count) count.textContent = query
+                ? `${visible} of ${rows.length} problems shown`
+                : `${rows.length} problems available`;
+        };
+        input.addEventListener('input', update);
+        update();
     }
 
     document.querySelectorAll('.problem-single-lookup').forEach(initSingle);
     document.querySelectorAll('.problem-multi-lookup').forEach(initMulti);
     document.querySelectorAll('.problem-form').forEach(initCause);
-    document.querySelectorAll('[data-company-quick-find]').forEach(initCompanyQuickFind);
+    document.querySelectorAll('[data-problem-company-table-filter]').forEach(initCompanyTableFilter);
 })();

@@ -419,11 +419,6 @@ def list_problems():
     assigned_user_id = _parse_id(request.args.get("assigned_user_id"))
     customer_id = _parse_id(request.args.get("customer_id"))
     supplier_id = _parse_id(request.args.get("supplier_id"))
-    company_type = (request.args.get("company_type") or "").strip().lower()
-    company_id = _parse_id(request.args.get("company_id"))
-    if company_type not in ("customer", "supplier"):
-        company_type = None
-        company_id = None
     query = (request.args.get("q") or "").strip()
 
     clauses = []
@@ -448,17 +443,6 @@ def list_problems():
     if supplier_id:
         clauses.append("(EXISTS (SELECT 1 FROM problem_objects po WHERE po.problem_id = p.id AND po.object_type = 'supplier' AND po.object_id = ?) OR (pc.party_type = 'supplier' AND p.cause_object_id = ?))")
         params.extend([supplier_id, supplier_id])
-    if company_type and company_id:
-        clauses.append(
-            """(
-                EXISTS (
-                    SELECT 1 FROM problem_objects po
-                    WHERE po.problem_id = p.id AND po.object_type = ? AND po.object_id = ?
-                )
-                OR (pc.party_type = ? AND p.cause_object_id = ?)
-            )"""
-        )
-        params.extend([company_type, company_id, company_type, company_id])
     if query:
         clauses.append("(p.title ILIKE ? OR p.description ILIKE ?)")
         params.extend([f"%{query}%", f"%{query}%"])
@@ -497,6 +481,11 @@ def list_problems():
     objects = _fetch_objects_for_problems([problem["id"] for problem in problems])
     for problem in problems:
         problem["linked_objects"] = objects.get(problem["id"], [])
+        company_names = [problem.get("cause_object_name") or ""]
+        company_names.extend(
+            obj.get("object_name") or "" for obj in problem["linked_objects"]
+        )
+        problem["company_search_text"] = " ".join(company_names).casefold()
 
     return render_template(
         "problems/list.html",
@@ -512,8 +501,6 @@ def list_problems():
             "customer_id": customer_id, "supplier_id": supplier_id, "q": query,
             "customer_name": _object_name("customer", customer_id),
             "supplier_name": _object_name("supplier", supplier_id),
-            "company_type": company_type, "company_id": company_id,
-            "company_name": _object_name(company_type, company_id) if company_type else None,
         },
     )
 
@@ -1665,22 +1652,6 @@ def lookup(object_type):
     query = (request.args.get("q") or "").strip()
     if len(query) < 2:
         return jsonify([])
-    if object_type == "company":
-        rows = db_execute(
-            """
-            SELECT id, name, object_type
-            FROM (
-                SELECT id, name, 'customer' AS object_type FROM customers WHERE name ILIKE ?
-                UNION ALL
-                SELECT id, name, 'supplier' AS object_type FROM suppliers WHERE name ILIKE ?
-            ) companies
-            ORDER BY name, object_type
-            LIMIT 16
-            """,
-            (f"%{query}%", f"%{query}%"),
-            fetch="all",
-        ) or []
-        return jsonify([dict(row) for row in rows])
     if object_type not in config:
         abort(404)
     table, name_column = config[object_type]

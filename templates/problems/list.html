@@ -16,19 +16,16 @@
         </div>
     </div>
 
-    <form class="problem-card problem-company-quick-find" method="get">
+    <div class="problem-card problem-company-quick-find">
         <div class="problem-company-quick-find-copy">
             <label class="form-label mb-0" for="problemCompanyQuickFind"><i class="bi bi-search me-1"></i>Quick find by company</label>
-            <div class="small text-muted">Search customers and suppliers together. Selecting one immediately shows every problem where it was responsible or related.</div>
+            <div class="small text-muted">Type any part of a customer or supplier name to filter the table instantly.</div>
         </div>
-        <div class="position-relative flex-grow-1" data-company-quick-find>
-            <input class="form-control" id="problemCompanyQuickFind" value="{{ filters.company_name or '' }}" data-lookup-input autocomplete="off" placeholder="Start typing a customer or supplier...">
-            <input type="hidden" name="company_type" value="{{ filters.company_type or '' }}" data-company-type>
-            <input type="hidden" name="company_id" value="{{ filters.company_id or '' }}" data-company-id>
-            <div class="problem-lookup-results list-group d-none" data-lookup-results></div>
+        <div class="flex-grow-1">
+            <input class="form-control" id="problemCompanyQuickFind" data-problem-company-table-filter autocomplete="off" placeholder="e.g. Boeing, Aero, Components...">
+            <div class="small text-muted mt-1" data-problem-company-filter-count></div>
         </div>
-        {% if filters.company_id %}<a class="btn btn-outline-secondary text-nowrap" href="{{ url_for('problems.list_problems') }}"><i class="bi bi-x-lg me-1"></i>Clear</a>{% endif %}
-    </form>
+    </div>
 
     <form class="problem-card problem-filters" method="get">
         <div class="row g-3 align-items-end">
@@ -91,9 +88,9 @@
         <div class="table-responsive">
             <table class="table table-hover problem-table mb-0">
                 <thead class="table-light"><tr><th>Problem</th><th>Type</th><th>Cause</th><th>Related</th><th>Owner</th><th>Status</th><th>Age</th></tr></thead>
-                <tbody>
+                <tbody data-problem-table-body>
                 {% for problem in problems %}
-                    <tr>
+                    <tr data-problem-row data-company-names="{{ problem.company_search_text }}">
                         <td><a class="problem-title-link" href="{{ url_for('problems.view_problem', problem_id=problem.id) }}">#{{ problem.id }} {{ problem.title }}</a>{% if problem.is_demo %}<span class="badge bg-warning text-dark ms-1">Demo</span>{% endif %}<div class="small text-muted">{{ problem.created_at.strftime('%d %b %Y') if problem.created_at else '' }}</div></td>
                         <td>{{ problem.problem_type_name }}</td>
                         <td><div>{{ problem.cause_category_name }}</div>{% if problem.cause_object_name %}<div class="small text-muted">{{ problem.cause_object_name }}</div>{% endif %}</td>
@@ -107,6 +104,7 @@
                         <td class="problem-age {% if problem.status != 'resolved' and problem.age_days >= 14 %}is-aging{% endif %}">{{ '%.1f'|format(problem.age_days or 0) }} days</td>
                     </tr>
                 {% endfor %}
+                    <tr class="d-none" data-problem-company-no-results><td colspan="7"><div class="problem-empty py-4"><i class="bi bi-search me-1"></i>No visible problems contain that company name.</div></td></tr>
                 </tbody>
             </table>
         </div>
