@@ -770,6 +770,97 @@ def overview():
         """,
         fetch="all",
     ) or [])]
+    by_responsibility_type = [dict(row) for row in (db_execute(
+        """
+        SELECT
+            CASE
+                WHEN pc.party_type = 'customer' THEN 'customer'
+                WHEN pc.party_type = 'supplier' THEN 'supplier'
+                WHEN pc.party_type = 'user'
+                     OR pc.code IN ('internal_process', 'system_error') THEN 'internal'
+                ELSE 'other'
+            END AS responsibility,
+            pt.id AS problem_type_id,
+            pt.name AS problem_type_name,
+            pt.sort_order AS problem_type_sort_order,
+            COUNT(*) AS total_count,
+            COUNT(*) FILTER (WHERE p.status != 'resolved') AS open_count,
+            COALESCE(SUM(EXTRACT(EPOCH FROM (p.resolved_at - p.created_at)) / 86400.0)
+                FILTER (WHERE p.resolved_at IS NOT NULL), 0) AS total_resolution_days,
+            COALESCE(SUM(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - p.created_at)) / 86400.0)
+                FILTER (WHERE p.status != 'resolved'), 0) AS open_age_days
+        FROM problems p
+        JOIN problem_types pt ON pt.id = p.problem_type_id
+        JOIN problem_cause_categories pc ON pc.id = p.cause_category_id
+        GROUP BY responsibility, pt.id, pt.name, pt.sort_order
+        ORDER BY responsibility, pt.sort_order, pt.name
+        """,
+        fetch="all",
+    ) or [])]
+
+    responsibility_keys = ('internal', 'supplier', 'customer', 'other')
+    responsibility_labels = {
+        'internal': 'Internal responsibility',
+        'supplier': 'Supplier responsibility',
+        'customer': 'Customer responsibility',
+        'other': 'Other / unknown',
+    }
+    responsibility_chart_data = {
+        key: {
+            'key': key,
+            'label': responsibility_labels[key],
+            'total_count': 0,
+            'time_burden_days': 0.0,
+            'items': [],
+        }
+        for key in responsibility_keys
+    }
+    responsibility_matrix_by_type = {}
+    for row in by_responsibility_type:
+        key = row['responsibility']
+        resolution_days = float(row.get('total_resolution_days') or 0)
+        open_age_days = float(row.get('open_age_days') or 0)
+        time_burden_days = resolution_days + open_age_days
+        item = {
+            'problem_type_id': row['problem_type_id'],
+            'problem_type_name': row['problem_type_name'],
+            'problem_type_sort_order': row['problem_type_sort_order'],
+            'total_count': int(row.get('total_count') or 0),
+            'open_count': int(row.get('open_count') or 0),
+            'total_resolution_days': resolution_days,
+            'open_age_days': open_age_days,
+            'time_burden_days': time_burden_days,
+        }
+        bucket = responsibility_chart_data[key]
+        bucket['items'].append(item)
+        bucket['total_count'] += item['total_count']
+        bucket['time_burden_days'] += time_burden_days
+
+        matrix_row = responsibility_matrix_by_type.setdefault(
+            row['problem_type_id'],
+            {
+                'problem_type_id': row['problem_type_id'],
+                'problem_type_name': row['problem_type_name'],
+                'problem_type_sort_order': row['problem_type_sort_order'],
+                'total_count': 0,
+                'time_burden_days': 0.0,
+                'responsibilities': {
+                    responsibility_key: {'total_count': 0, 'time_burden_days': 0.0}
+                    for responsibility_key in responsibility_keys
+                },
+            },
+        )
+        matrix_row['responsibilities'][key] = {
+            'total_count': item['total_count'],
+            'time_burden_days': time_burden_days,
+        }
+        matrix_row['total_count'] += item['total_count']
+        matrix_row['time_burden_days'] += time_burden_days
+
+    responsibility_matrix = sorted(
+        responsibility_matrix_by_type.values(),
+        key=lambda row: (-row['time_burden_days'], row['problem_type_sort_order'], row['problem_type_name']),
+    )
     caused_by = [dict(row) for row in (db_execute(
         """
         SELECT
@@ -854,6 +945,10 @@ def overview():
         summary=summary,
         by_cause=by_cause,
         by_type=by_type,
+        responsibility_chart_data=responsibility_chart_data,
+        responsibility_matrix=responsibility_matrix,
+        responsibility_keys=responsibility_keys,
+        responsibility_labels=responsibility_labels,
         caused_by=caused_by,
         related_companies=related_companies,
         oldest=oldest,

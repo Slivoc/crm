@@ -23,6 +23,48 @@
         <strong>Time figures are elapsed calendar days.</strong> “Days taken” totals resolved problems from opening to resolution; “open age” shows time accumulated by unresolved problems. These measure operational delay, not staff-hours.
     </div>
 
+    <section class="problem-responsibility-section problem-card mb-4">
+        <div class="problem-card-header problem-responsibility-header">
+            <div>
+                <h5 class="mb-1">What is taking time, by responsibility</h5>
+                <div class="small text-muted">Each chart splits that party's burden by problem type, so revision, pricing, quality, and other issues are not bundled across different causes.</div>
+            </div>
+            <div class="btn-group btn-group-sm" role="group" aria-label="Responsibility chart measure">
+                <button class="btn btn-primary active" type="button" data-problem-chart-metric="time">Time burden</button>
+                <button class="btn btn-outline-primary" type="button" data-problem-chart-metric="count">Problem count</button>
+            </div>
+        </div>
+        <div class="problem-card-body">
+            <div class="problem-responsibility-charts">
+                {% for responsibility_key in ('internal', 'supplier', 'customer') %}
+                {% set chart = responsibility_chart_data[responsibility_key] %}
+                <article class="problem-responsibility-chart-card problem-responsibility-{{ responsibility_key }}">
+                    <div class="problem-responsibility-chart-heading">
+                        <div><h6>{{ chart.label }}</h6><div class="small text-muted">{{ chart.total_count }} problems · {{ '%.1f'|format(chart.time_burden_days) }} burden days</div></div>
+                        <span class="problem-responsibility-dot" aria-hidden="true"></span>
+                    </div>
+                    {% if chart.items %}<div class="problem-chart-canvas-wrap"><canvas id="problemResponsibilityChart{{ responsibility_key|title }}"></canvas></div>
+                    {% else %}<div class="problem-empty">No {{ responsibility_key }} responsibility data yet.</div>{% endif %}
+                </article>
+                {% endfor %}
+            </div>
+
+            <div class="problem-responsibility-matrix-wrap mt-4">
+                <div class="mb-2"><h6 class="mb-1">Problem type × responsibility</h6><div class="small text-muted">Burden days, with number of problems underneath. Other includes carrier, external, and unknown causes.</div></div>
+                {% if responsibility_matrix %}
+                <div class="table-responsive"><table class="table table-sm problem-responsibility-matrix mb-0">
+                    <thead><tr><th>Problem type</th>{% for key in responsibility_keys %}<th class="text-end">{{ responsibility_labels[key] }}</th>{% endfor %}<th class="text-end">Total</th></tr></thead>
+                    <tbody>{% for row in responsibility_matrix %}<tr>
+                        <th scope="row">{{ row.problem_type_name }}</th>
+                        {% for key in responsibility_keys %}{% set cell = row.responsibilities[key] %}<td class="text-end {% if cell.total_count %}has-problems responsibility-{{ key }}{% endif %}">{% if cell.total_count %}<strong>{{ '%.1f'|format(cell.time_burden_days) }}d</strong><small>{{ cell.total_count }} problem{% if cell.total_count != 1 %}s{% endif %}</small>{% else %}<span class="text-muted">—</span>{% endif %}</td>{% endfor %}
+                        <td class="text-end responsibility-total"><strong>{{ '%.1f'|format(row.time_burden_days) }}d</strong><small>{{ row.total_count }} problems</small></td>
+                    </tr>{% endfor %}</tbody>
+                </table></div>
+                {% else %}<div class="problem-empty">No responsibility data yet.</div>{% endif %}
+            </div>
+        </div>
+    </section>
+
     <div class="problem-overview-grid">
         <div class="problem-card"><div class="problem-card-header"><h5 class="mb-0">Problems by cause</h5></div><div class="problem-card-body">
             {% for row in by_cause %}<div class="problem-bar-row"><div class="problem-bar-meta"><span>{{ row.name }}</span><span><strong>{{ '%.1f'|format(row.total_resolution_days or 0) }}</strong> days taken · {{ '%.1f'|format(row.open_age_days or 0) }} open age · {{ row.total_count }} problems{% if row.average_days is not none %} · {{ '%.1f'|format(row.average_days) }} avg{% endif %}</span></div><div class="problem-bar-track"><div class="problem-bar-fill" style="width:{{ row.bar_percent }}%"></div></div></div>{% else %}<div class="problem-empty">No problem data yet.</div>{% endfor %}
@@ -81,4 +123,75 @@
     </div>
     {% endif %}
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const responsibilityData = {{ responsibility_chart_data | tojson }};
+    if (typeof Chart === 'undefined') return;
+
+    const coreKeys = ['internal', 'supplier', 'customer'];
+    const typeColours = ['#0f766e', '#2563eb', '#d97706', '#7c3aed', '#dc2626', '#0891b2', '#65a30d', '#db2777', '#475569', '#9333ea', '#ea580c', '#4f46e5'];
+    const allTypes = [];
+    coreKeys.forEach(key => (responsibilityData[key]?.items || []).forEach(item => {
+        if (!allTypes.includes(item.problem_type_name)) allTypes.push(item.problem_type_name);
+    }));
+    const colourByType = Object.fromEntries(allTypes.map((name, index) => [name, typeColours[index % typeColours.length]]));
+    const charts = {};
+    let activeMetric = 'time';
+
+    function valuesFor(items, metric) {
+        return items.map(item => metric === 'count' ? item.total_count : item.time_burden_days);
+    }
+
+    function renderChart(key) {
+        const bucket = responsibilityData[key];
+        const canvasId = `problemResponsibilityChart${key.charAt(0).toUpperCase()}${key.slice(1)}`;
+        const canvas = document.getElementById(canvasId);
+        if (!canvas || !bucket?.items?.length) return;
+        const items = bucket.items.slice().sort((a, b) => b.time_burden_days - a.time_burden_days);
+        charts[key] = new Chart(canvas, {
+            type: 'doughnut',
+            data: {
+                labels: items.map(item => item.problem_type_name),
+                datasets: [{
+                    data: valuesFor(items, activeMetric),
+                    backgroundColor: items.map(item => colourByType[item.problem_type_name]),
+                    borderColor: '#ffffff', borderWidth: 2, hoverOffset: 6
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false, cutout: '58%',
+                plugins: {
+                    legend: { position: 'bottom', labels: { boxWidth: 11, boxHeight: 11, padding: 12, usePointStyle: true, font: { size: 11 } } },
+                    tooltip: { callbacks: { label: context => {
+                        const item = items[context.dataIndex];
+                        return activeMetric === 'count'
+                            ? ` ${item.total_count} problem${item.total_count === 1 ? '' : 's'} · ${item.time_burden_days.toFixed(1)} burden days`
+                            : ` ${item.time_burden_days.toFixed(1)} burden days · ${item.total_count} problem${item.total_count === 1 ? '' : 's'}`;
+                    } } }
+                }
+            }
+        });
+        charts[key]._problemItems = items;
+    }
+
+    coreKeys.forEach(renderChart);
+    document.querySelectorAll('[data-problem-chart-metric]').forEach(button => button.addEventListener('click', function () {
+        activeMetric = this.dataset.problemChartMetric;
+        document.querySelectorAll('[data-problem-chart-metric]').forEach(candidate => {
+            const active = candidate === this;
+            candidate.classList.toggle('active', active);
+            candidate.classList.toggle('btn-primary', active);
+            candidate.classList.toggle('btn-outline-primary', !active);
+        });
+        Object.values(charts).forEach(chart => {
+            chart.data.datasets[0].data = valuesFor(chart._problemItems, activeMetric);
+            chart.update();
+        });
+    }));
+});
+</script>
 {% endblock %}

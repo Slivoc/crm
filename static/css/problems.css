@@ -108,12 +108,35 @@
 .problem-bar-track { height: 8px; border-radius: 999px; background: #e2e8f0; overflow: hidden; }
 .problem-bar-fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #0f766e, #14b8a6); }
 .problem-empty { padding: 2rem; text-align: center; color: var(--problem-muted); }
+.problem-responsibility-header { align-items: flex-start; }
+.problem-responsibility-charts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+.problem-responsibility-chart-card { border: 1px solid var(--problem-border); border-radius: 12px; padding: 1rem; min-width: 0; }
+.problem-responsibility-chart-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; min-height: 48px; }
+.problem-responsibility-chart-heading h6 { margin: 0 0 .2rem; color: var(--problem-ink); }
+.problem-responsibility-dot { width: 11px; height: 11px; border-radius: 50%; flex: 0 0 11px; margin-top: .2rem; background: #64748b; }
+.problem-responsibility-internal .problem-responsibility-dot { background: #0f766e; }
+.problem-responsibility-supplier .problem-responsibility-dot { background: #2563eb; }
+.problem-responsibility-customer .problem-responsibility-dot { background: #d97706; }
+.problem-chart-canvas-wrap { position: relative; height: 320px; margin-top: .75rem; }
+.problem-responsibility-matrix-wrap { border-top: 1px solid var(--problem-border); padding-top: 1.25rem; }
+.problem-responsibility-matrix th, .problem-responsibility-matrix td { vertical-align: middle; padding: .65rem .75rem; }
+.problem-responsibility-matrix td small { display: block; color: var(--problem-muted); font-size: .72rem; }
+.problem-responsibility-matrix td.has-problems { border-left: 3px solid transparent; }
+.problem-responsibility-matrix td.responsibility-internal { background: #f0fdfa; border-left-color: #0f766e; }
+.problem-responsibility-matrix td.responsibility-supplier { background: #eff6ff; border-left-color: #2563eb; }
+.problem-responsibility-matrix td.responsibility-customer { background: #fffbeb; border-left-color: #d97706; }
+.problem-responsibility-matrix td.responsibility-other { background: #f8fafc; border-left-color: #64748b; }
+.problem-responsibility-matrix td.responsibility-total { background: #f8fafc; }
+.problem-responsibility-matrix td.responsibility-total small { display: block; color: var(--problem-muted); font-size: .72rem; }
 
 @media (max-width: 1100px) {
     .problem-metric-grid { grid-template-columns: repeat(2, minmax(150px, 1fr)); }
     .problem-detail-grid, .problem-overview-grid { grid-template-columns: 1fr; }
+    .problem-responsibility-charts { grid-template-columns: 1fr; }
+    .problem-chart-canvas-wrap { height: 300px; }
 }
 @media (max-width: 700px) {
     .problems-header { flex-direction: column; }
     .problem-metric-grid { grid-template-columns: 1fr; }
+    .problem-responsibility-header { flex-direction: column; }
 }
