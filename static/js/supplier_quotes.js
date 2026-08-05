@@ -13,6 +13,22 @@ let latestExtractionMatchDebug = null;
 let supplierMetaById = {};
 let currentSourceArtifact = null;
 
+function rememberSourceArtifact(artifact) {
+    if (!artifact) return;
+    const priority = {
+        email_body_text: 10,
+        supplier_quote_xlsx: 20,
+        supplier_quote_pdf: 30
+    };
+    const currentPriority = priority[currentSourceArtifact?.kind] || 0;
+    const incomingPriority = priority[artifact.kind] || 0;
+
+    // Keep the original uploaded document when its extracted text is processed again.
+    if (!currentSourceArtifact || incomingPriority >= currentPriority) {
+        currentSourceArtifact = artifact;
+    }
+}
+
 function ensureSupplierQuoteGridStyles() {
     if (document.getElementById('supplier-quote-grid-styles')) return;
 
@@ -773,7 +789,7 @@ function uploadAndExtractQuoteFile(file, config) {
             document.getElementById('supplier-response-text').value = data.raw_text;
         }
         if (data.source_artifact) {
-            currentSourceArtifact = data.source_artifact;
+            rememberSourceArtifact(data.source_artifact);
         }
 
         const extractedLines =
@@ -1622,7 +1638,7 @@ function extractQuoteData() {
             setSupplierMovInput(data.mov);
         }
         if (data.source_artifact) {
-            currentSourceArtifact = data.source_artifact;
+            rememberSourceArtifact(data.source_artifact);
         }
 
         if (data.success && Array.isArray(extractedLines) && extractedLines.length > 0) {
