@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}Problem #{{ problem.id }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/problems.css') }}">{% endblock %}
+
+{% block content %}
+{% set open_ticket_count = linked_tickets | rejectattr('is_closed') | list | length %}
+<div class="problems-page">
+    <div class="problems-header">
+        <div>
+            <a class="text-decoration-none small" href="{{ url_for('problems.list_problems') }}"><i class="bi bi-arrow-left me-1"></i>All problems</a>
+            <h1 class="mt-2 mb-1">#{{ problem.id }} {{ problem.title }}</h1>
+            <div class="d-flex flex-wrap gap-2 align-items-center">
+                <span class="problem-status problem-status-{{ problem.status }}">{{ status_labels[problem.status] }}</span>
+                <span class="problem-pill">{{ problem.problem_type_name }}</span>
+                <span class="text-muted small">Opened {{ problem.created_at.strftime('%d %b %Y at %H:%M') if problem.created_at else '' }}</span>
+            </div>
+        </div>
+        <a class="btn btn-outline-secondary" href="{{ url_for('problems.overview') }}"><i class="bi bi-bar-chart me-1"></i>Overview</a>
+    </div>
+
+    {% if problem.status != 'resolved' and linked_tickets and open_ticket_count == 0 %}
+    <div class="alert alert-success d-flex justify-content-between align-items-center gap-3">
+        <span><i class="bi bi-check-circle me-2"></i>All linked tickets are closed. Review whether this problem can now be resolved.</span>
+        <button class="btn btn-sm btn-success" type="button" onclick="document.getElementById('editProblemStatus').value='resolved'; document.getElementById('editProblemForm').requestSubmit();">Resolve problem</button>
+    </div>
+    {% endif %}
+
+    <div class="problem-detail-grid">
+        <div class="problem-stack">
+            <div class="problem-card">
+                <div class="problem-card-header"><h5 class="mb-0"><i class="bi bi-card-text me-2"></i>Problem details</h5></div>
+                <div class="problem-card-body">
+                    <form id="editProblemForm" method="post" action="{{ url_for('problems.edit_problem', problem_id=problem.id) }}" data-open-ticket-count="{{ open_ticket_count }}" data-original-status="{{ problem.status }}">
+                        {% set form_prefix = 'editProblem' %}{% set show_status = true %}
+                        {% include 'problems/_form_fields.html' %}
+                        <div class="d-flex justify-content-between align-items-center mt-4">
+                            <button class="btn btn-primary" type="submit"><i class="bi bi-check-lg me-1"></i>Save changes</button>
+                            <span class="small text-muted">Created by {{ problem.created_by_name }} · {{ '%.1f'|format(problem.age_days or 0) }} days {{ 'to resolution' if problem.status == 'resolved' else 'open' }}</span>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <div class="problem-card">
+                <div class="problem-card-header"><h5 class="mb-0"><i class="bi bi-chat-left-text me-2"></i>Updates</h5></div>
+                <div class="problem-card-body">
+                    <form class="input-group mb-3" method="post" action="{{ url_for('problems.add_update', problem_id=problem.id) }}">
+                        <input class="form-control" name="update_text" placeholder="Add a progress update..." required>
+                        <button class="btn btn-outline-primary" type="submit"><i class="bi bi-send"></i></button>
+                    </form>
+                    {% for update in updates %}
+                    <div class="problem-update">
+                        <div class="problem-avatar">{{ update.user_name[0]|upper }}</div>
+                        <div><div><strong>{{ update.user_name }}</strong> <span class="text-muted small ms-1">{{ update.created_at.strftime('%d %b %Y %H:%M') if update.created_at else '' }}</span></div><div class="mt-1">{{ update.update_text }}</div></div>
+                    </div>
+                    {% else %}<div class="problem-empty py-3">No updates yet.</div>{% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <div class="problem-stack">
+            <div class="problem-card">
+                <div class="problem-card-header"><h5 class="mb-0"><i class="bi bi-diagram-3 me-2"></i>Cause</h5></div>
+                <div class="problem-card-body">
+                    <div class="text-muted small">Cause category</div><div class="fw-semibold mb-3">{{ problem.cause_category_name }}</div>
+                    <div class="text-muted small">Specifically caused by</div><div class="fw-semibold">{{ problem.cause_object_name or 'Not specified' }}</div>
+                    <hr>
+                    <div class="text-muted small mb-2">Related records (not necessarily the cause)</div>
+                    <div class="d-flex flex-wrap gap-2">
+                    {% for obj in problem.linked_objects %}<span class="problem-pill"><i class="bi {{ 'bi-people' if obj.object_type == 'customer' else 'bi-truck' }}"></i>{{ obj.object_name or ('#' ~ obj.object_id) }}</span>{% else %}<span class="text-muted">None linked</span>{% endfor %}
+                    </div>
+                </div>
+            </div>
+
+            <div class="problem-card" id="linkedTickets">
+                <div class="problem-card-header"><h5 class="mb-0"><i class="bi bi-ticket-perforated me-2"></i>Linked actions <span class="badge bg-secondary ms-1">{{ linked_tickets|length }}</span></h5><button class="btn btn-sm btn-primary" data-bs-toggle="collapse" data-bs-target="#createTicketForm" type="button"><i class="bi bi-plus"></i> Raise ticket</button></div>
+                <div class="problem-card-body">
+                    <div class="collapse mb-4" id="createTicketForm">
+                        <form class="border rounded p-3 bg-light" method="post" action="{{ url_for('problems.create_ticket', problem_id=problem.id) }}">
+                            <h6>Create an action ticket</h6>
+                            <div class="mb-2"><label class="form-label">Title</label><input class="form-control form-control-sm" name="ticket_title" value="Resolve: {{ problem.title }}" required></div>
+                            <div class="mb-2"><label class="form-label">Description</label><textarea class="form-control form-control-sm" name="ticket_description" rows="2" placeholder="What needs to be done?"></textarea></div>
+                            <div class="row g-2">
+                                <div class="col-6"><label class="form-label">Owner</label><select class="form-select form-select-sm" name="ticket_assigned_user_id"><option value="">Unassigned</option>{% for user in users %}<option value="{{ user.id }}" {% if user.id == problem.assigned_user_id %}selected{% endif %}>{{ user.username }}</option>{% endfor %}</select></div>
+                                <div class="col-6"><label class="form-label">Priority</label><select class="form-select form-select-sm" name="ticket_priority"><option>Low</option><option selected>Medium</option><option>High</option></select></div>
+                                <div class="col-6"><label class="form-label">Workspace</label><select class="form-select form-select-sm" name="ticket_workspace_id"><option value="">None</option>{% for workspace in workspaces %}<option value="{{ workspace.id }}">{{ workspace.name }}</option>{% endfor %}</select></div>
+                                <div class="col-6"><label class="form-label">Due date</label><input class="form-control form-control-sm" type="date" name="ticket_due_date"></div>
+                            </div>
+                            <button class="btn btn-sm btn-primary mt-3" type="submit">Create and open ticket</button>
+                        </form>
+                    </div>
+
+                    {% for ticket in linked_tickets %}
+                    <div class="problem-ticket">
+                        <div class="d-flex justify-content-between gap-2">
+                            <a class="fw-semibold text-decoration-none" href="{{ url_for('tickets.view_ticket', ticket_id=ticket.id) }}">#{{ ticket.id }} {{ ticket.title }}</a>
+                            <span class="badge {{ 'bg-success' if ticket.is_closed else 'bg-primary' }}">{{ ticket.status_name }}</span>
+                        </div>
+                        <div class="small text-muted mt-1">{{ ticket.assigned_user_name or 'Unassigned' }}{% if ticket.due_date %} · Due {{ ticket.due_date.strftime('%d %b %Y') }}{% endif %} · {{ ticket.priority or 'Medium' }} priority</div>
+                        <form class="mt-1" method="post" action="{{ url_for('problems.unlink_ticket', problem_id=problem.id, ticket_id=ticket.id) }}" onsubmit="return confirm('Unlink this ticket? The ticket will not be deleted.');"><button class="btn btn-sm btn-link text-secondary p-0" type="submit">Unlink</button></form>
+                    </div>
+                    {% else %}<div class="problem-empty py-3">No action tickets linked yet.</div>{% endfor %}
+
+                    <form class="input-group input-group-sm mt-3" method="post" action="{{ url_for('problems.link_ticket', problem_id=problem.id) }}">
+                        <span class="input-group-text">Existing ticket #</span><input class="form-control" type="number" min="1" name="ticket_id" required><button class="btn btn-outline-secondary" type="submit">Link</button>
+                    </form>
+                </div>
+            </div>
+
+            <div class="problem-card">
+                <div class="problem-card-header"><h5 class="mb-0"><i class="bi bi-clock-history me-2"></i>Status history</h5></div>
+                <div class="problem-card-body">
+                    {% for event in status_history %}
+                    <div class="d-flex gap-2 mb-3"><i class="bi bi-circle-fill text-secondary" style="font-size:.5rem;margin-top:.45rem"></i><div><div class="small">{% if event.from_status %}{{ status_labels.get(event.from_status, event.from_status) }} → {% endif %}<strong>{{ status_labels.get(event.to_status, event.to_status) }}</strong></div><div class="text-muted small">{{ event.changed_by_name }} · {{ event.changed_at.strftime('%d %b %Y %H:%M') if event.changed_at else '' }}</div></div></div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script src="{{ url_for('static', filename='js/problems.js') }}"></script>
+<script>
+document.getElementById('editProblemForm')?.addEventListener('submit', function (event) {
+    const status = document.getElementById('editProblemStatus')?.value;
+    const openTickets = Number(this.dataset.openTicketCount || 0);
+    if (this.dataset.originalStatus !== 'resolved' && status === 'resolved' && openTickets > 0 && !confirm(`${openTickets} linked ticket(s) are still open. Resolve the problem anyway?`)) {
+        event.preventDefault();
+    }
+});
+</script>
+{% endblock %}

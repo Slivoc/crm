@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Problem overview{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/problems.css') }}">{% endblock %}
+
+{% block content %}
+<div class="problems-page">
+    <div class="problems-header">
+        <div><a class="text-decoration-none small" href="{{ url_for('problems.list_problems') }}"><i class="bi bi-arrow-left me-1"></i>Problems</a><h1 class="mt-2"><i class="bi bi-bar-chart me-2"></i>Problem overview</h1><p>See where problems occur and how long they take to resolve.</p></div>
+        <a class="btn btn-primary" href="{{ url_for('problems.list_problems') }}"><i class="bi bi-list-ul me-1"></i>View problems</a>
+    </div>
+
+    <div class="problem-metric-grid">
+        <div class="problem-card problem-metric"><div class="problem-metric-value">{{ summary.open_count or 0 }}</div><div class="problem-metric-label">Open problems</div></div>
+        <div class="problem-card problem-metric"><div class="problem-metric-value">{{ summary.resolved_count or 0 }}</div><div class="problem-metric-label">Resolved problems</div></div>
+        <div class="problem-card problem-metric"><div class="problem-metric-value">{{ summary.aging_count or 0 }}</div><div class="problem-metric-label">Open over 14 days</div></div>
+        <div class="problem-card problem-metric"><div class="problem-metric-value">{{ '%.1f'|format(summary.median_resolution_days or 0) }}</div><div class="problem-metric-label">Median days to resolve</div></div>
+        <div class="problem-card problem-metric"><div class="problem-metric-value">{{ '%.1f'|format(summary.average_resolution_days or 0) }}</div><div class="problem-metric-label">Average days to resolve</div></div>
+    </div>
+
+    <div class="problem-overview-grid">
+        <div class="problem-card"><div class="problem-card-header"><h5 class="mb-0">Problems by cause</h5></div><div class="problem-card-body">
+            {% for row in by_cause %}<div class="problem-bar-row"><div class="problem-bar-meta"><span>{{ row.name }}</span><span><strong>{{ row.total_count }}</strong> total · {{ row.open_count }} open{% if row.average_days is not none %} · {{ '%.1f'|format(row.average_days) }} days avg{% endif %}</span></div><div class="problem-bar-track"><div class="problem-bar-fill" style="width:{{ row.bar_percent }}%"></div></div></div>{% else %}<div class="problem-empty">No problem data yet.</div>{% endfor %}
+        </div></div>
+        <div class="problem-card"><div class="problem-card-header"><h5 class="mb-0">Problems by type</h5></div><div class="problem-card-body">
+            {% for row in by_type %}<div class="problem-bar-row"><div class="problem-bar-meta"><span>{{ row.name }}</span><span><strong>{{ row.total_count }}</strong> total · {{ row.open_count }} open{% if row.average_days is not none %} · {{ '%.1f'|format(row.average_days) }} days avg{% endif %}</span></div><div class="problem-bar-track"><div class="problem-bar-fill" style="width:{{ row.bar_percent }}%"></div></div></div>{% else %}<div class="problem-empty">No problem data yet.</div>{% endfor %}
+        </div></div>
+        <div class="problem-card"><div class="problem-card-header"><h5 class="mb-0">Frequent responsible parties</h5></div><div class="problem-card-body p-0">
+            {% if caused_by %}<div class="table-responsive"><table class="table mb-0"><thead class="table-light"><tr><th>Party</th><th>Cause</th><th>Total</th><th>Open</th></tr></thead><tbody>{% for row in caused_by %}<tr><td class="fw-semibold">{{ row.party_name }}</td><td>{{ row.cause_name }}</td><td>{{ row.total_count }}</td><td>{{ row.open_count }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="problem-empty">No specific responsible parties recorded yet.</div>{% endif %}
+        </div></div>
+        <div class="problem-card"><div class="problem-card-header"><div><h5 class="mb-0">Frequently related companies</h5><div class="small text-muted">Association only; these companies are not necessarily the cause.</div></div></div><div class="problem-card-body p-0">
+            {% if related_companies %}<div class="table-responsive"><table class="table mb-0"><thead class="table-light"><tr><th>Company</th><th>Relationship</th><th>Total</th><th>Open</th></tr></thead><tbody>{% for row in related_companies %}<tr><td class="fw-semibold">{{ row.company_name or 'Unknown' }}</td><td>{{ row.object_type|title }}</td><td>{{ row.total_count }}</td><td>{{ row.open_count }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="problem-empty">No related customers or suppliers recorded yet.</div>{% endif %}
+        </div></div>
+        <div class="problem-card"><div class="problem-card-header"><h5 class="mb-0">Oldest open problems</h5></div><div class="problem-card-body p-0">
+            {% if oldest %}<div class="table-responsive"><table class="table mb-0"><thead class="table-light"><tr><th>Problem</th><th>Type</th><th>Age</th></tr></thead><tbody>{% for row in oldest %}<tr><td><a class="problem-title-link" href="{{ url_for('problems.view_problem', problem_id=row.id) }}">#{{ row.id }} {{ row.title }}</a><div><span class="problem-status problem-status-{{ row.status }}">{{ status_labels[row.status] }}</span></div></td><td>{{ row.problem_type_name }}</td><td class="problem-age is-aging">{{ '%.1f'|format(row.age_days) }} days</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="problem-empty">There are no open problems.</div>{% endif %}
+        </div></div>
+    </div>
+</div>
+{% endblock %}

@@ -68,6 +68,7 @@ from routes.news_email import send_news_email
 from routes.parts_list_ai import parts_list_ai_bp
 from routes.parts_list_po_check import parts_list_po_check_bp
 from routes.tickets import tickets_bp, external_api_bp
+from routes.problems import problems_bp
 from routes.manufacturer_approvals import manufacturer_approvals_bp
 from routes.supplier_portal import supplier_portal_bp
 from routes.notifications import notifications_bp
@@ -307,6 +308,7 @@ app.register_blueprint(marketplace_bp, url_prefix='/marketplace')
 app.register_blueprint(parts_list_ai_bp, url_prefix='/parts-list-ai')
 app.register_blueprint(parts_list_po_check_bp, url_prefix='/parts-list')
 app.register_blueprint(tickets_bp, url_prefix='/tickets')
+app.register_blueprint(problems_bp, url_prefix='/problems')
 app.register_blueprint(external_api_bp)
 app.secret_key = os.getenv('SECRET_KEY', app.config['SECRET_KEY'])  # Required for sessions
 app.register_blueprint(portal_api_bp)

@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Problems{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/problems.css') }}">{% endblock %}
+
+{% block content %}
+<div class="problems-page">
+    <div class="problems-header">
+        <div>
+            <h1><i class="bi bi-exclamation-diamond me-2"></i>Problems</h1>
+            <p>Track operational pain points separately from the actions used to resolve them.</p>
+        </div>
+        <div class="d-flex gap-2">
+            <a class="btn btn-outline-secondary" href="{{ url_for('problems.overview') }}"><i class="bi bi-bar-chart me-1"></i>Overview</a>
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#newProblemModal"><i class="bi bi-plus-lg me-1"></i>Log problem</button>
+        </div>
+    </div>
+
+    <form class="problem-card problem-filters" method="get">
+        <div class="row g-3 align-items-end">
+            <div class="col-lg-3 col-md-6">
+                <label class="form-label">Search</label>
+                <input class="form-control form-control-sm" name="q" value="{{ filters.q }}" placeholder="Title or description">
+            </div>
+            <div class="col-lg-2 col-md-6">
+                <label class="form-label">Status</label>
+                <select class="form-select form-select-sm" name="status">
+                    <option value="active" {% if filters.status == 'active' %}selected{% endif %}>All active</option>
+                    <option value="all" {% if filters.status == 'all' %}selected{% endif %}>All problems</option>
+                    {% for value, label in statuses %}<option value="{{ value }}" {% if filters.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+                </select>
+            </div>
+            <div class="col-lg-2 col-md-6">
+                <label class="form-label">Problem type</label>
+                <select class="form-select form-select-sm" name="problem_type_id">
+                    <option value="">Any</option>
+                    {% for type in types %}<option value="{{ type.id }}" {% if filters.problem_type_id == type.id %}selected{% endif %}>{{ type.name }}</option>{% endfor %}
+                </select>
+            </div>
+            <div class="col-lg-2 col-md-6">
+                <label class="form-label">Cause</label>
+                <select class="form-select form-select-sm" name="cause_category_id">
+                    <option value="">Any</option>
+                    {% for cause in causes %}<option value="{{ cause.id }}" {% if filters.cause_category_id == cause.id %}selected{% endif %}>{{ cause.name }}</option>{% endfor %}
+                </select>
+            </div>
+            <div class="col-lg-2 col-md-6">
+                <label class="form-label">Owner</label>
+                <select class="form-select form-select-sm" name="assigned_user_id">
+                    <option value="">Anyone</option>
+                    {% for user in users %}<option value="{{ user.id }}" {% if filters.assigned_user_id == user.id %}selected{% endif %}>{{ user.username }}</option>{% endfor %}
+                </select>
+            </div>
+            <div class="col-lg-1"><button class="btn btn-sm btn-outline-primary w-100" type="submit">Apply</button></div>
+            <div class="col-md-5 problem-single-lookup" data-lookup-type="customer">
+                <label class="form-label">Related customer</label>
+                <div class="position-relative">
+                    <input class="form-control form-control-sm" value="{{ filters.customer_name or '' }}" data-lookup-input placeholder="Search customers..." autocomplete="off">
+                    <input type="hidden" name="customer_id" value="{{ filters.customer_id or '' }}" data-lookup-value>
+                    <div class="problem-lookup-results list-group d-none" data-lookup-results></div>
+                </div>
+            </div>
+            <div class="col-md-5 problem-single-lookup" data-lookup-type="supplier">
+                <label class="form-label">Related supplier</label>
+                <div class="position-relative">
+                    <input class="form-control form-control-sm" value="{{ filters.supplier_name or '' }}" data-lookup-input placeholder="Search suppliers..." autocomplete="off">
+                    <input type="hidden" name="supplier_id" value="{{ filters.supplier_id or '' }}" data-lookup-value>
+                    <div class="problem-lookup-results list-group d-none" data-lookup-results></div>
+                </div>
+            </div>
+            <div class="col-md-2"><a class="btn btn-sm btn-link text-secondary w-100" href="{{ url_for('problems.list_problems') }}">Clear filters</a></div>
+        </div>
+    </form>
+
+    <div class="problem-card overflow-hidden">
+        {% if problems %}
+        <div class="table-responsive">
+            <table class="table table-hover problem-table mb-0">
+                <thead class="table-light"><tr><th>Problem</th><th>Type</th><th>Cause</th><th>Related</th><th>Owner</th><th>Status</th><th>Age</th></tr></thead>
+                <tbody>
+                {% for problem in problems %}
+                    <tr>
+                        <td><a class="problem-title-link" href="{{ url_for('problems.view_problem', problem_id=problem.id) }}">#{{ problem.id }} {{ problem.title }}</a><div class="small text-muted">{{ problem.created_at.strftime('%d %b %Y') if problem.created_at else '' }}</div></td>
+                        <td>{{ problem.problem_type_name }}</td>
+                        <td><div>{{ problem.cause_category_name }}</div>{% if problem.cause_object_name %}<div class="small text-muted">{{ problem.cause_object_name }}</div>{% endif %}</td>
+                        <td>
+                            <div class="d-flex flex-wrap gap-1">
+                            {% for obj in problem.linked_objects %}<span class="problem-pill"><i class="bi {{ 'bi-people' if obj.object_type == 'customer' else 'bi-truck' }}"></i>{{ obj.object_name or ('#' ~ obj.object_id) }}</span>{% else %}<span class="text-muted">—</span>{% endfor %}
+                            </div>
+                        </td>
+                        <td>{{ problem.assigned_user_name or 'Unassigned' }}</td>
+                        <td><span class="problem-status problem-status-{{ problem.status }}">{{ dict(statuses)[problem.status] }}</span></td>
+                        <td class="problem-age {% if problem.status != 'resolved' and problem.age_days >= 14 %}is-aging{% endif %}">{{ '%.1f'|format(problem.age_days or 0) }} days</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}<div class="problem-empty"><i class="bi bi-check2-circle fs-2 d-block mb-2"></i>No problems match these filters.</div>{% endif %}
+    </div>
+</div>
+
+<div class="modal fade" id="newProblemModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <form class="modal-content" method="post" action="{{ url_for('problems.list_problems') }}">
+            <div class="modal-header"><div><h5 class="modal-title">Log a problem</h5><div class="small text-muted">Capture the structured facts now; add progress updates later.</div></div><button class="btn-close" type="button" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body">
+                {% set problem = none %}{% set form_prefix = 'newProblem' %}{% set show_status = false %}
+                {% include 'problems/_form_fields.html' %}
+            </div>
+            <div class="modal-footer"><button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary" type="submit">Create problem</button></div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}{{ super() }}<script src="{{ url_for('static', filename='js/problems.js') }}"></script>{% endblock %}
