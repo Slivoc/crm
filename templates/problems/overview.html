@@ -6,7 +6,7 @@
 <div class="problems-page">
     <div class="problems-header">
         <div><a class="text-decoration-none small" href="{{ url_for('problems.list_problems') }}"><i class="bi bi-arrow-left me-1"></i>Problems</a><h1 class="mt-2"><i class="bi bi-bar-chart me-2"></i>Problem overview</h1><p>See where problems occur and how long they take to resolve.</p></div>
-        <a class="btn btn-primary" href="{{ url_for('problems.list_problems') }}"><i class="bi bi-list-ul me-1"></i>View problems</a>
+        <div class="d-flex gap-2">{% if is_admin %}<a class="btn btn-outline-secondary" href="{{ url_for('problems.settings') }}"><i class="bi bi-sliders me-1"></i>Options</a>{% endif %}<a class="btn btn-primary" href="{{ url_for('problems.list_problems') }}"><i class="bi bi-list-ul me-1"></i>View problems</a></div>
     </div>
 
     <div class="problem-metric-grid">

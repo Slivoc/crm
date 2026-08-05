@@ -10,6 +10,7 @@
             <p>Track operational pain points separately from the actions used to resolve them.</p>
         </div>
         <div class="d-flex gap-2">
+            {% if is_admin %}<a class="btn btn-outline-secondary" href="{{ url_for('problems.settings') }}"><i class="bi bi-sliders me-1"></i>Options</a>{% endif %}
             <a class="btn btn-outline-secondary" href="{{ url_for('problems.overview') }}"><i class="bi bi-bar-chart me-1"></i>Overview</a>
             <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#newProblemModal"><i class="bi bi-plus-lg me-1"></i>Log problem</button>
         </div>

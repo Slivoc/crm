@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Problem tracker settings{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/problems.css') }}">{% endblock %}
+
+{% block content %}
+<div class="problems-page">
+    <div class="problems-header">
+        <div>
+            <a class="text-decoration-none small" href="{{ url_for('problems.list_problems') }}"><i class="bi bi-arrow-left me-1"></i>Problems</a>
+            <h1 class="mt-2"><i class="bi bi-sliders me-2"></i>Problem tracker settings</h1>
+            <p>Manage the options used when problems are logged and how causes feed responsibility reporting.</p>
+        </div>
+        <a class="btn btn-outline-secondary" href="{{ url_for('problems.overview') }}"><i class="bi bi-bar-chart me-1"></i>Overview</a>
+    </div>
+
+    <div class="alert alert-light border small">
+        <strong>Historical data is preserved.</strong> Disable options you no longer want people to select. Changing a cause's responsibility group updates how all problems using that cause appear in the overview charts.
+    </div>
+
+    <div class="problem-settings-stack">
+        <section class="problem-card">
+            <div class="problem-card-header"><div><h5 class="mb-1">Problem types</h5><div class="small text-muted">What went wrong, such as revision, pricing, quantity, or quality.</div></div></div>
+            <div class="problem-card-body p-0">
+                {% for type in types %}<form id="problemTypeForm{{ type.id }}" method="post"><input type="hidden" name="entity" value="type"><input type="hidden" name="record_id" value="{{ type.id }}"></form>{% endfor %}
+                <div class="table-responsive"><table class="table align-middle mb-0 problem-settings-table">
+                    <thead class="table-light"><tr><th>Name</th><th class="text-center">Order</th><th class="text-center">Used</th><th class="text-center">Active</th><th></th></tr></thead>
+                    <tbody>
+                    {% for type in types %}
+                    <tr class="{% if not type.is_active %}problem-option-inactive{% endif %}">
+                        <td><input class="form-control form-control-sm" name="name" value="{{ type.name }}" form="problemTypeForm{{ type.id }}" required></td>
+                        <td><input class="form-control form-control-sm text-center problem-order-input" type="number" name="sort_order" value="{{ type.sort_order }}" form="problemTypeForm{{ type.id }}"></td>
+                        <td class="text-center"><span class="badge text-bg-light">{{ type.usage_count }}</span></td>
+                        <td class="text-center"><input class="form-check-input" type="checkbox" name="is_active" form="problemTypeForm{{ type.id }}" {% if type.is_active %}checked{% endif %}></td>
+                        <td class="text-end"><button class="btn btn-sm btn-outline-primary" form="problemTypeForm{{ type.id }}" type="submit">Save</button></td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table></div>
+            </div>
+            <div class="problem-settings-add-row">
+                <form class="row g-2 align-items-end" method="post">
+                    <input type="hidden" name="entity" value="type">
+                    <div class="col-md-7"><label class="form-label small">New problem type</label><input class="form-control form-control-sm" name="name" placeholder="e.g. Packaging" required></div>
+                    <div class="col-md-2"><label class="form-label small">Order</label><input class="form-control form-control-sm" type="number" name="sort_order" value="100"></div>
+                    <div class="col-md-1 text-center"><label class="form-label small d-block">Active</label><input class="form-check-input" type="checkbox" name="is_active" checked></div>
+                    <div class="col-md-2"><button class="btn btn-sm btn-primary w-100" type="submit"><i class="bi bi-plus-lg me-1"></i>Add</button></div>
+                </form>
+            </div>
+        </section>
+
+        <section class="problem-card">
+            <div class="problem-card-header"><div><h5 class="mb-1">Cause categories</h5><div class="small text-muted">Where responsibility lies. This mapping controls the responsibility charts.</div></div></div>
+            <div class="problem-card-body p-0">
+                {% for cause in causes %}<form id="problemCauseForm{{ cause.id }}" method="post"><input type="hidden" name="entity" value="cause"><input type="hidden" name="record_id" value="{{ cause.id }}"></form>{% endfor %}
+                <div class="table-responsive"><table class="table align-middle mb-0 problem-settings-table problem-causes-table">
+                    <thead class="table-light"><tr><th>Name / code</th><th>Responsibility</th><th>Specific party lookup</th><th class="text-center">Order</th><th class="text-center">Used</th><th class="text-center">Active</th><th></th></tr></thead>
+                    <tbody>
+                    {% for cause in causes %}
+                    <tr class="{% if not cause.is_active %}problem-option-inactive{% endif %}">
+                        <td><input class="form-control form-control-sm mb-1" name="name" value="{{ cause.name }}" form="problemCauseForm{{ cause.id }}" required><input class="form-control form-control-sm font-monospace" name="code" value="{{ cause.code }}" form="problemCauseForm{{ cause.id }}" pattern="[a-z0-9]+(?:_[a-z0-9]+)*" required></td>
+                        <td><select class="form-select form-select-sm" name="responsibility_group" form="problemCauseForm{{ cause.id }}">{% for value, label in responsibility_groups %}<option value="{{ value }}" {% if cause.responsibility_group == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></td>
+                        <td><select class="form-select form-select-sm" name="party_type" form="problemCauseForm{{ cause.id }}" {% if cause.attributed_count %}title="Locked because existing problems identify a specific party"{% endif %}>{% for value, label in party_types %}<option value="{{ value }}" {% if (cause.party_type or '') == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>{% if cause.attributed_count %}<div class="small text-muted mt-1">{{ cause.attributed_count }} attributed; lookup type locked</div>{% endif %}</td>
+                        <td><input class="form-control form-control-sm text-center problem-order-input" type="number" name="sort_order" value="{{ cause.sort_order }}" form="problemCauseForm{{ cause.id }}"></td>
+                        <td class="text-center"><span class="badge text-bg-light">{{ cause.usage_count }}</span></td>
+                        <td class="text-center"><input class="form-check-input" type="checkbox" name="is_active" form="problemCauseForm{{ cause.id }}" {% if cause.is_active %}checked{% endif %}></td>
+                        <td class="text-end"><button class="btn btn-sm btn-outline-primary" form="problemCauseForm{{ cause.id }}" type="submit">Save</button></td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table></div>
+            </div>
+            <div class="problem-settings-add-row">
+                <form class="row g-2 align-items-end" method="post">
+                    <input type="hidden" name="entity" value="cause">
+                    <div class="col-lg-3"><label class="form-label small">New cause</label><input class="form-control form-control-sm" name="name" placeholder="e.g. Internal quote error" required></div>
+                    <div class="col-lg-2"><label class="form-label small">Code</label><input class="form-control form-control-sm font-monospace" name="code" placeholder="internal_quote_error" pattern="[a-z0-9]+(?:_[a-z0-9]+)*" required></div>
+                    <div class="col-lg-2"><label class="form-label small">Responsibility</label><select class="form-select form-select-sm" name="responsibility_group">{% for value, label in responsibility_groups %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></div>
+                    <div class="col-lg-2"><label class="form-label small">Specific lookup</label><select class="form-select form-select-sm" name="party_type">{% for value, label in party_types %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></div>
+                    <div class="col-lg-1"><label class="form-label small">Order</label><input class="form-control form-control-sm" type="number" name="sort_order" value="100"></div>
+                    <div class="col-lg-1 text-center"><label class="form-label small d-block">Active</label><input class="form-check-input" type="checkbox" name="is_active" checked></div>
+                    <div class="col-lg-1"><button class="btn btn-sm btn-primary w-100" type="submit"><i class="bi bi-plus-lg"></i></button></div>
+                </form>
+            </div>
+        </section>
+    </div>
+</div>
+{% endblock %}

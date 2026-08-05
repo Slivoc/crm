@@ -1,4 +1,5 @@
 import random
+import re
 from datetime import datetime, timedelta
 
 from flask import Blueprint, abort, flash, jsonify, redirect, render_template, request, url_for
@@ -17,6 +18,18 @@ PROBLEM_STATUSES = (
     ("resolved", "Resolved"),
 )
 STATUS_LABELS = dict(PROBLEM_STATUSES)
+RESPONSIBILITY_GROUPS = (
+    ('internal', 'Internal responsibility'),
+    ('supplier', 'Supplier responsibility'),
+    ('customer', 'Customer responsibility'),
+    ('other', 'Other / unknown'),
+)
+CAUSE_PARTY_TYPES = (
+    ('', 'No specific party lookup'),
+    ('user', 'Internal user'),
+    ('supplier', 'Supplier'),
+    ('customer', 'Customer'),
+)
 
 
 @problems_bp.before_request
@@ -61,6 +74,13 @@ def _parse_id_list(values):
     return result
 
 
+def _parse_sort_order(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _fetch_types(active_only=False):
     clause = "WHERE is_active = TRUE" if active_only else ""
     return [dict(row) for row in (db_execute(
@@ -73,7 +93,7 @@ def _fetch_causes(active_only=False):
     clause = "WHERE is_active = TRUE" if active_only else ""
     return [dict(row) for row in (db_execute(
         f"""
-        SELECT id, code, name, party_type, is_active
+        SELECT id, code, name, party_type, responsibility_group, is_active
         FROM problem_cause_categories
         {clause}
         ORDER BY sort_order, name
@@ -391,6 +411,7 @@ def list_problems():
         causes=_fetch_causes(active_only=True),
         users=_fetch_users(),
         statuses=PROBLEM_STATUSES,
+        is_admin=_is_admin(),
         filters={
             "status": status, "problem_type_id": problem_type_id,
             "cause_category_id": cause_category_id, "assigned_user_id": assigned_user_id,
@@ -773,13 +794,7 @@ def overview():
     by_responsibility_type = [dict(row) for row in (db_execute(
         """
         SELECT
-            CASE
-                WHEN pc.party_type = 'customer' THEN 'customer'
-                WHEN pc.party_type = 'supplier' THEN 'supplier'
-                WHEN pc.party_type = 'user'
-                     OR pc.code IN ('internal_process', 'system_error') THEN 'internal'
-                ELSE 'other'
-            END AS responsibility,
+            pc.responsibility_group AS responsibility,
             pt.id AS problem_type_id,
             pt.name AS problem_type_name,
             pt.sort_order AS problem_type_sort_order,
@@ -954,6 +969,168 @@ def overview():
         oldest=oldest,
         status_labels=STATUS_LABELS,
         is_admin=_is_admin(),
+    )
+
+
+@problems_bp.route('/settings', methods=['GET', 'POST'])
+@login_required
+def settings():
+    if not _is_admin():
+        abort(403)
+
+    if request.method == 'POST':
+        entity = (request.form.get('entity') or '').strip().lower()
+        record_id = _parse_id(request.form.get('record_id'))
+        name = (request.form.get('name') or '').strip()
+        sort_order = _parse_sort_order(request.form.get('sort_order'))
+        is_active = request.form.get('is_active') == 'on'
+
+        if entity == 'type':
+            if not name:
+                flash('Problem type name is required.', 'error')
+                return redirect(url_for('problems.settings'))
+            duplicate = db_execute(
+                'SELECT id FROM problem_types WHERE LOWER(name) = LOWER(?) AND id != ?'
+                if record_id else
+                'SELECT id FROM problem_types WHERE LOWER(name) = LOWER(?)',
+                (name, record_id) if record_id else (name,),
+                fetch='one',
+            )
+            if duplicate:
+                flash('A problem type with that name already exists.', 'error')
+                return redirect(url_for('problems.settings'))
+
+            if record_id:
+                updated = db_execute(
+                    """
+                    UPDATE problem_types
+                    SET name = ?, sort_order = ?, is_active = ?
+                    WHERE id = ?
+                    RETURNING id
+                    """,
+                    (name, sort_order, is_active, record_id),
+                    fetch='one',
+                    commit=True,
+                )
+                if not updated:
+                    abort(404)
+                flash(f'Problem type “{name}” updated.', 'success')
+            else:
+                db_execute(
+                    'INSERT INTO problem_types (name, sort_order, is_active) VALUES (?, ?, ?)',
+                    (name, sort_order, is_active),
+                    commit=True,
+                )
+                flash(f'Problem type “{name}” added.', 'success')
+
+        elif entity == 'cause':
+            code = (request.form.get('code') or '').strip().lower()
+            responsibility_group = (request.form.get('responsibility_group') or '').strip().lower()
+            party_type = (request.form.get('party_type') or '').strip().lower() or None
+            valid_responsibilities = {value for value, _label in RESPONSIBILITY_GROUPS}
+            valid_party_types = {value for value, _label in CAUSE_PARTY_TYPES if value}
+
+            if not name:
+                flash('Cause name is required.', 'error')
+                return redirect(url_for('problems.settings'))
+            if not re.fullmatch(r'[a-z0-9]+(?:_[a-z0-9]+)*', code):
+                flash('Cause code must use lowercase letters, numbers, and single underscores.', 'error')
+                return redirect(url_for('problems.settings'))
+            if responsibility_group not in valid_responsibilities:
+                flash('Choose a valid responsibility group.', 'error')
+                return redirect(url_for('problems.settings'))
+            if party_type is not None and party_type not in valid_party_types:
+                flash('Choose a valid specific-party lookup.', 'error')
+                return redirect(url_for('problems.settings'))
+
+            duplicate = db_execute(
+                """
+                SELECT id FROM problem_cause_categories
+                WHERE (LOWER(name) = LOWER(?) OR LOWER(code) = LOWER(?)) AND id != ?
+                """ if record_id else """
+                SELECT id FROM problem_cause_categories
+                WHERE LOWER(name) = LOWER(?) OR LOWER(code) = LOWER(?)
+                """,
+                (name, code, record_id) if record_id else (name, code),
+                fetch='one',
+            )
+            if duplicate:
+                flash('A cause with that name or code already exists.', 'error')
+                return redirect(url_for('problems.settings'))
+
+            if record_id:
+                current = db_execute(
+                    'SELECT id, party_type FROM problem_cause_categories WHERE id = ?',
+                    (record_id,),
+                    fetch='one',
+                )
+                if not current:
+                    abort(404)
+                if current.get('party_type') != party_type:
+                    attributed = db_execute(
+                        'SELECT COUNT(*) AS total FROM problems WHERE cause_category_id = ? AND cause_object_id IS NOT NULL',
+                        (record_id,),
+                        fetch='one',
+                    )
+                    if attributed and int(attributed.get('total') or 0) > 0:
+                        flash('The specific-party lookup cannot be changed because existing problems have attributed parties.', 'error')
+                        return redirect(url_for('problems.settings'))
+                db_execute(
+                    """
+                    UPDATE problem_cause_categories
+                    SET code = ?, name = ?, responsibility_group = ?, party_type = ?,
+                        sort_order = ?, is_active = ?
+                    WHERE id = ?
+                    """,
+                    (code, name, responsibility_group, party_type, sort_order, is_active, record_id),
+                    commit=True,
+                )
+                flash(f'Cause “{name}” updated.', 'success')
+            else:
+                db_execute(
+                    """
+                    INSERT INTO problem_cause_categories
+                        (code, name, responsibility_group, party_type, sort_order, is_active)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (code, name, responsibility_group, party_type, sort_order, is_active),
+                    commit=True,
+                )
+                flash(f'Cause “{name}” added.', 'success')
+        else:
+            abort(400)
+
+        return redirect(url_for('problems.settings'))
+
+    types = [dict(row) for row in (db_execute(
+        """
+        SELECT pt.id, pt.name, pt.sort_order, pt.is_active, COUNT(p.id) AS usage_count
+        FROM problem_types pt
+        LEFT JOIN problems p ON p.problem_type_id = pt.id
+        GROUP BY pt.id, pt.name, pt.sort_order, pt.is_active
+        ORDER BY pt.sort_order, pt.name
+        """,
+        fetch='all',
+    ) or [])]
+    causes = [dict(row) for row in (db_execute(
+        """
+        SELECT pc.id, pc.code, pc.name, pc.responsibility_group, pc.party_type,
+               pc.sort_order, pc.is_active, COUNT(p.id) AS usage_count,
+               COUNT(p.id) FILTER (WHERE p.cause_object_id IS NOT NULL) AS attributed_count
+        FROM problem_cause_categories pc
+        LEFT JOIN problems p ON p.cause_category_id = pc.id
+        GROUP BY pc.id, pc.code, pc.name, pc.responsibility_group, pc.party_type,
+                 pc.sort_order, pc.is_active
+        ORDER BY pc.sort_order, pc.name
+        """,
+        fetch='all',
+    ) or [])]
+    return render_template(
+        'problems/settings.html',
+        types=types,
+        causes=causes,
+        responsibility_groups=RESPONSIBILITY_GROUPS,
+        party_types=CAUSE_PARTY_TYPES,
     )
 
 
