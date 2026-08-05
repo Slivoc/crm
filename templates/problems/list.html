@@ -31,17 +31,17 @@
                 </select>
             </div>
             <div class="col-lg-2 col-md-6">
-                <label class="form-label">Problem type</label>
-                <select class="form-select form-select-sm" name="problem_type_id">
-                    <option value="">Any</option>
-                    {% for type in types %}<option value="{{ type.id }}" {% if filters.problem_type_id == type.id %}selected{% endif %}>{{ type.name }}</option>{% endfor %}
-                </select>
-            </div>
-            <div class="col-lg-2 col-md-6">
                 <label class="form-label">Cause</label>
                 <select class="form-select form-select-sm" name="cause_category_id">
                     <option value="">Any</option>
                     {% for cause in causes %}<option value="{{ cause.id }}" {% if filters.cause_category_id == cause.id %}selected{% endif %}>{{ cause.name }}</option>{% endfor %}
+                </select>
+            </div>
+            <div class="col-lg-2 col-md-6">
+                <label class="form-label">Problem type</label>
+                <select class="form-select form-select-sm" name="problem_type_id">
+                    <option value="">Any</option>
+                    {% for type in types %}<option value="{{ type.id }}" {% if filters.problem_type_id == type.id %}selected{% endif %}>{{ type.cause_category_name }} — {{ type.name }}</option>{% endfor %}
                 </select>
             </div>
             <div class="col-lg-2 col-md-6">
@@ -103,7 +103,7 @@
 <div class="modal fade" id="newProblemModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
         <form class="modal-content" method="post" action="{{ url_for('problems.list_problems') }}">
-            <div class="modal-header"><div><h5 class="modal-title">Log a problem</h5><div class="small text-muted">Capture the structured facts now; add progress updates later.</div></div><button class="btn-close" type="button" data-bs-dismiss="modal"></button></div>
+            <div class="modal-header"><div><h5 class="modal-title">Log a problem</h5><div class="small text-muted">Start with where responsibility lies, then describe what went wrong.</div></div><button class="btn-close" type="button" data-bs-dismiss="modal"></button></div>
             <div class="modal-body">
                 {% set problem = none %}{% set form_prefix = 'newProblem' %}{% set show_status = false %}
                 {% include 'problems/_form_fields.html' %}

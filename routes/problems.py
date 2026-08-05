@@ -81,10 +81,25 @@ def _parse_sort_order(value, default=0):
         return default
 
 
-def _fetch_types(active_only=False):
-    clause = "WHERE is_active = TRUE" if active_only else ""
+def _fetch_types(active_only=False, cause_category_id=None):
+    clauses = []
+    params = []
+    if active_only:
+        clauses.append("pt.is_active = TRUE")
+    if cause_category_id:
+        clauses.append("pt.cause_category_id = ?")
+        params.append(cause_category_id)
+    clause = "WHERE " + " AND ".join(clauses) if clauses else ""
     return [dict(row) for row in (db_execute(
-        f"SELECT id, name, is_active FROM problem_types {clause} ORDER BY sort_order, name",
+        f"""
+        SELECT pt.id, pt.name, pt.cause_category_id, pt.is_active,
+               pc.name AS cause_category_name
+        FROM problem_types pt
+        JOIN problem_cause_categories pc ON pc.id = pt.cause_category_id
+        {clause}
+        ORDER BY pc.sort_order, pc.name, pt.sort_order, pt.name
+        """,
+        params,
         fetch="all",
     ) or [])]
 
@@ -253,21 +268,72 @@ def _cause_selection(cause_category_id, raw_object_id):
     return dict(cause), object_id, None
 
 
+def _resolve_problem_type(cause_category_id, raw_type_id, raw_name):
+    type_id = _parse_id(raw_type_id)
+    name = re.sub(r"\s+", " ", (raw_name or "").strip())
+
+    if type_id:
+        selected = db_execute(
+            """
+            SELECT id, name FROM problem_types
+            WHERE id = ? AND cause_category_id = ? AND is_active = TRUE
+            """,
+            (type_id, cause_category_id),
+            fetch="one",
+        )
+        if selected:
+            return dict(selected), None
+
+    if not name:
+        return None, "Enter a problem type."
+    if len(name) > 120:
+        return None, "Problem type must be 120 characters or fewer."
+
+    existing = db_execute(
+        """
+        SELECT id, name, is_active FROM problem_types
+        WHERE cause_category_id = ? AND LOWER(name) = LOWER(?)
+        """,
+        (cause_category_id, name),
+        fetch="one",
+    )
+    if existing:
+        if existing.get("is_active"):
+            return dict(existing), None
+        return None, "That problem type is inactive for this cause. Choose another or ask an admin to enable it."
+
+    row = db_execute(
+        """
+        INSERT INTO problem_types (name, cause_category_id, sort_order, is_active)
+        VALUES (?, ?, 100, TRUE)
+        ON CONFLICT DO NOTHING
+        RETURNING id, name
+        """,
+        (name, cause_category_id),
+        fetch="one",
+        commit=True,
+    )
+    if not row:
+        row = db_execute(
+            """
+            SELECT id, name FROM problem_types
+            WHERE cause_category_id = ? AND LOWER(name) = LOWER(?) AND is_active = TRUE
+            """,
+            (cause_category_id, name),
+            fetch="one",
+        )
+    return (dict(row), None) if row else (None, "The problem type could not be created.")
+
+
 def _validate_problem_form():
     title = (request.form.get("title") or "").strip()
     description = (request.form.get("description") or "").strip()
-    problem_type_id = _parse_id(request.form.get("problem_type_id"))
     cause_category_id = _parse_id(request.form.get("cause_category_id"))
     assigned_user_id = _parse_id(request.form.get("assigned_user_id"))
     status = request.form.get("status") or "open"
 
     if not title:
         return None, "Title is required."
-    if not problem_type_id or not db_execute(
-        "SELECT id FROM problem_types WHERE id = ? AND is_active = TRUE",
-        (problem_type_id,), fetch="one"
-    ):
-        return None, "Choose a valid problem type."
     cause, cause_object_id, error = _cause_selection(
         cause_category_id, request.form.get("cause_object_id")
     )
@@ -279,11 +345,16 @@ def _validate_problem_form():
         return None, "Choose a valid owner."
     if status not in STATUS_LABELS:
         return None, "Choose a valid status."
+    problem_type, error = _resolve_problem_type(
+        cause["id"], request.form.get("problem_type_id"), request.form.get("problem_type_name")
+    )
+    if error:
+        return None, error
 
     return {
         "title": title,
         "description": description or None,
-        "problem_type_id": problem_type_id,
+        "problem_type_id": problem_type["id"],
         "cause_category_id": cause["id"],
         "cause_object_id": cause_object_id,
         "assigned_user_id": assigned_user_id,
@@ -428,6 +499,31 @@ def _object_name(object_type, object_id):
     table = "customers" if object_type == "customer" else "suppliers"
     row = db_execute(f"SELECT name FROM {table} WHERE id = ?", (object_id,), fetch="one")
     return row.get("name") if row else None
+
+
+@problems_bp.route("/types/search")
+@login_required
+def search_problem_types():
+    cause_category_id = _parse_id(request.args.get("cause_category_id"))
+    query = (request.args.get("q") or "").strip()
+    if not cause_category_id:
+        return jsonify([])
+    rows = db_execute(
+        """
+        SELECT id, name
+        FROM problem_types
+        WHERE cause_category_id = ? AND is_active = TRUE
+          AND (? = '' OR name ILIKE ?)
+        ORDER BY
+            CASE WHEN LOWER(name) = LOWER(?) THEN 0
+                 WHEN LOWER(name) LIKE LOWER(?) THEN 1 ELSE 2 END,
+            sort_order, name
+        LIMIT 12
+        """,
+        (cause_category_id, query, f"%{query}%", query, f"{query}%"),
+        fetch="all",
+    ) or []
+    return jsonify([dict(row) for row in rows])
 
 
 @problems_bp.route("/<int:problem_id>", methods=["GET"])
@@ -772,6 +868,7 @@ def overview():
         """
         SELECT
             pt.name,
+            pc.name AS cause_name,
             COUNT(*) AS total_count,
             COUNT(*) FILTER (WHERE p.status != 'resolved') AS open_count,
             AVG(EXTRACT(EPOCH FROM (p.resolved_at - p.created_at)) / 86400.0)
@@ -782,12 +879,13 @@ def overview():
                 FILTER (WHERE p.status != 'resolved'), 0) AS open_age_days
         FROM problems p
         JOIN problem_types pt ON pt.id = p.problem_type_id
-        GROUP BY pt.id, pt.name, pt.sort_order
+        JOIN problem_cause_categories pc ON pc.id = pt.cause_category_id
+        GROUP BY pt.id, pt.name, pt.sort_order, pc.name, pc.sort_order
         ORDER BY (COALESCE(SUM(EXTRACT(EPOCH FROM (p.resolved_at - p.created_at)) / 86400.0)
                     FILTER (WHERE p.resolved_at IS NOT NULL), 0)
                   + COALESCE(SUM(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - p.created_at)) / 86400.0)
                     FILTER (WHERE p.status != 'resolved'), 0)) DESC,
-                 total_count DESC, pt.sort_order
+                 total_count DESC, pc.sort_order, pt.sort_order
         """,
         fetch="all",
     ) or [])]
@@ -795,6 +893,8 @@ def overview():
         """
         SELECT
             pc.responsibility_group AS responsibility,
+            pc.id AS cause_category_id,
+            pc.name AS cause_category_name,
             pt.id AS problem_type_id,
             pt.name AS problem_type_name,
             pt.sort_order AS problem_type_sort_order,
@@ -807,8 +907,9 @@ def overview():
         FROM problems p
         JOIN problem_types pt ON pt.id = p.problem_type_id
         JOIN problem_cause_categories pc ON pc.id = p.cause_category_id
-        GROUP BY responsibility, pt.id, pt.name, pt.sort_order
-        ORDER BY responsibility, pt.sort_order, pt.name
+        GROUP BY responsibility, pc.id, pc.name, pc.sort_order,
+                 pt.id, pt.name, pt.sort_order
+        ORDER BY responsibility, pc.sort_order, pc.name, pt.sort_order, pt.name
         """,
         fetch="all",
     ) or [])]
@@ -837,8 +938,11 @@ def overview():
         open_age_days = float(row.get('open_age_days') or 0)
         time_burden_days = resolution_days + open_age_days
         item = {
+            'cause_category_id': row['cause_category_id'],
+            'cause_category_name': row['cause_category_name'],
             'problem_type_id': row['problem_type_id'],
             'problem_type_name': row['problem_type_name'],
+            'display_name': f"{row['cause_category_name']} - {row['problem_type_name']}",
             'problem_type_sort_order': row['problem_type_sort_order'],
             'total_count': int(row.get('total_count') or 0),
             'open_count': int(row.get('open_count') or 0),
@@ -856,6 +960,8 @@ def overview():
             {
                 'problem_type_id': row['problem_type_id'],
                 'problem_type_name': row['problem_type_name'],
+                'cause_category_id': row['cause_category_id'],
+                'cause_category_name': row['cause_category_name'],
                 'problem_type_sort_order': row['problem_type_sort_order'],
                 'total_count': 0,
                 'time_burden_days': 0.0,
@@ -938,9 +1044,11 @@ def overview():
         """
         SELECT p.id, p.title, p.status, p.created_at,
                pt.name AS problem_type_name,
+               pc.name AS cause_category_name,
                EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - p.created_at)) / 86400.0 AS age_days
         FROM problems p
         JOIN problem_types pt ON pt.id = p.problem_type_id
+        JOIN problem_cause_categories pc ON pc.id = p.cause_category_id
         WHERE p.status != 'resolved'
         ORDER BY p.created_at
         LIMIT 10
@@ -986,29 +1094,49 @@ def settings():
         is_active = request.form.get('is_active') == 'on'
 
         if entity == 'type':
+            cause_category_id = _parse_id(request.form.get('cause_category_id'))
             if not name:
                 flash('Problem type name is required.', 'error')
                 return redirect(url_for('problems.settings'))
+            if not cause_category_id or not db_execute(
+                'SELECT id FROM problem_cause_categories WHERE id = ?',
+                (cause_category_id,), fetch='one'
+            ):
+                flash('Choose a valid cause for the problem type.', 'error')
+                return redirect(url_for('problems.settings'))
             duplicate = db_execute(
-                'SELECT id FROM problem_types WHERE LOWER(name) = LOWER(?) AND id != ?'
+                'SELECT id FROM problem_types WHERE cause_category_id = ? AND LOWER(name) = LOWER(?) AND id != ?'
                 if record_id else
-                'SELECT id FROM problem_types WHERE LOWER(name) = LOWER(?)',
-                (name, record_id) if record_id else (name,),
+                'SELECT id FROM problem_types WHERE cause_category_id = ? AND LOWER(name) = LOWER(?)',
+                (cause_category_id, name, record_id) if record_id else (cause_category_id, name),
                 fetch='one',
             )
             if duplicate:
-                flash('A problem type with that name already exists.', 'error')
+                flash('A problem type with that name already exists for this cause.', 'error')
                 return redirect(url_for('problems.settings'))
 
             if record_id:
+                current = db_execute(
+                    'SELECT cause_category_id FROM problem_types WHERE id = ?',
+                    (record_id,), fetch='one'
+                )
+                if not current:
+                    abort(404)
+                usage = db_execute(
+                    'SELECT COUNT(*) AS total FROM problems WHERE problem_type_id = ?',
+                    (record_id,), fetch='one'
+                )
+                if int(usage.get('total') or 0) and current.get('cause_category_id') != cause_category_id:
+                    flash('A type cannot be moved to another cause after it has been used.', 'error')
+                    return redirect(url_for('problems.settings'))
                 updated = db_execute(
                     """
                     UPDATE problem_types
-                    SET name = ?, sort_order = ?, is_active = ?
+                    SET name = ?, cause_category_id = ?, sort_order = ?, is_active = ?
                     WHERE id = ?
                     RETURNING id
                     """,
-                    (name, sort_order, is_active, record_id),
+                    (name, cause_category_id, sort_order, is_active, record_id),
                     fetch='one',
                     commit=True,
                 )
@@ -1017,8 +1145,8 @@ def settings():
                 flash(f'Problem type “{name}” updated.', 'success')
             else:
                 db_execute(
-                    'INSERT INTO problem_types (name, sort_order, is_active) VALUES (?, ?, ?)',
-                    (name, sort_order, is_active),
+                    'INSERT INTO problem_types (name, cause_category_id, sort_order, is_active) VALUES (?, ?, ?, ?)',
+                    (name, cause_category_id, sort_order, is_active),
                     commit=True,
                 )
                 flash(f'Problem type “{name}” added.', 'success')
@@ -1104,11 +1232,14 @@ def settings():
 
     types = [dict(row) for row in (db_execute(
         """
-        SELECT pt.id, pt.name, pt.sort_order, pt.is_active, COUNT(p.id) AS usage_count
+        SELECT pt.id, pt.name, pt.cause_category_id, pc.name AS cause_category_name,
+               pt.sort_order, pt.is_active, COUNT(p.id) AS usage_count
         FROM problem_types pt
+        JOIN problem_cause_categories pc ON pc.id = pt.cause_category_id
         LEFT JOIN problems p ON p.problem_type_id = pt.id
-        GROUP BY pt.id, pt.name, pt.sort_order, pt.is_active
-        ORDER BY pt.sort_order, pt.name
+        GROUP BY pt.id, pt.name, pt.cause_category_id, pc.name, pc.sort_order,
+                 pt.sort_order, pt.is_active
+        ORDER BY pc.sort_order, pc.name, pt.sort_order, pt.name
         """,
         fetch='all',
     ) or [])]
@@ -1206,10 +1337,16 @@ def seed_demo_data():
     now = datetime.now()
 
     with db_cursor(commit=True) as cur:
-        cur.execute("SELECT id, name FROM problem_types WHERE is_active = TRUE ORDER BY sort_order, id")
+        cur.execute(
+            """
+            SELECT pt.id, pt.name, pc.id AS cause_id, pc.code, pc.party_type
+            FROM problem_types pt
+            JOIN problem_cause_categories pc ON pc.id = pt.cause_category_id
+            WHERE pt.is_active = TRUE AND pc.is_active = TRUE
+            ORDER BY pc.sort_order, pt.sort_order, pt.id
+            """
+        )
         problem_types = [dict(row) for row in cur.fetchall()]
-        cur.execute("SELECT id, code, party_type FROM problem_cause_categories WHERE is_active = TRUE ORDER BY sort_order, id")
-        causes = [dict(row) for row in cur.fetchall()]
         cur.execute("SELECT id FROM users ORDER BY RANDOM()")
         user_ids = [int(row["id"]) for row in cur.fetchall()]
         cur.execute("SELECT id FROM customers ORDER BY RANDOM()")
@@ -1217,8 +1354,8 @@ def seed_demo_data():
         cur.execute("SELECT id FROM suppliers ORDER BY RANDOM()")
         supplier_ids = [int(row["id"]) for row in cur.fetchall()]
 
-        if not problem_types or not causes or not user_ids:
-            flash("Demo data requires at least one problem type, cause, and user.", "error")
+        if not problem_types or not user_ids:
+            flash("Demo data requires at least one cause-specific problem type and user.", "error")
             return redirect(url_for("problems.overview"))
 
         cause_weights = {
@@ -1226,12 +1363,10 @@ def seed_demo_data():
             "internal_process": 16, "system_error": 9, "carrier_logistics": 7,
             "external_other": 4, "unknown": 4,
         }
-        cause_choices = [cause for cause in causes]
-        weights = [cause_weights.get(cause["code"], 5) for cause in cause_choices]
+        weights = [cause_weights.get(problem_type["code"], 5) for problem_type in problem_types]
 
         for index in range(count):
-            problem_type = random.choice(problem_types)
-            cause = random.choices(cause_choices, weights=weights, k=1)[0]
+            problem_type = random.choices(problem_types, weights=weights, k=1)[0]
             age_days = random.randint(2, 180)
             created_at = now - timedelta(days=age_days, hours=random.randint(0, 20))
             status = random.choices(
@@ -1243,7 +1378,7 @@ def seed_demo_data():
                 duration_days = random.randint(1, max(1, min(age_days, 55)))
                 resolved_at = created_at + timedelta(days=duration_days, hours=random.randint(0, 20))
 
-            party_type = cause.get("party_type")
+            party_type = problem_type.get("party_type")
             if party_type == "supplier":
                 cause_object_id = _weighted_demo_id(supplier_ids)
             elif party_type == "customer":
@@ -1271,7 +1406,7 @@ def seed_demo_data():
                 (
                     title,
                     "Demonstration record generated automatically for the problem tracker presentation.",
-                    problem_type["id"], cause["id"], cause_object_id,
+                    problem_type["id"], problem_type["cause_id"], cause_object_id,
                     assigned_user_id, current_user.id, status, created_at,
                     resolved_at or now, resolved_at,
                 ),

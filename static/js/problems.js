@@ -97,7 +97,29 @@
         const hidden = root.querySelector('[data-cause-object]');
         const userSelect = root.querySelector('[data-cause-user]');
         const partySections = root.querySelectorAll('[data-cause-party]');
+        const typeRoot = root.querySelector('[data-problem-type-lookup]');
+        const typeInput = typeRoot?.querySelector('[data-problem-type-name]');
+        const typeId = typeRoot?.querySelector('[data-problem-type-id]');
+        const typeResults = typeRoot?.querySelector('[data-problem-type-results]');
+        const typeHelp = typeRoot?.querySelector('[data-problem-type-help]');
         if (!category || !hidden) return;
+
+        let typeTimer;
+        const hideTypeResults = () => typeResults?.classList.add('d-none');
+        const updateTypeAvailability = (clear) => {
+            if (!typeInput) return;
+            const hasCause = Boolean(category.value);
+            typeInput.disabled = !hasCause;
+            typeInput.placeholder = hasCause ? 'Search or enter a type...' : 'Choose a cause first';
+            if (typeHelp) typeHelp.textContent = hasCause
+                ? 'Choose an existing type for this cause, or enter a new one.'
+                : 'Problem types are specific to the selected cause.';
+            if (clear) {
+                typeInput.value = '';
+                if (typeId) typeId.value = '';
+            }
+            hideTypeResults();
+        };
 
         const update = (preserve) => {
             const party = category.options[category.selectedIndex]?.dataset.party || '';
@@ -110,7 +132,10 @@
                 root.querySelectorAll('[data-cause-search]').forEach(input => { input.value = ''; });
             }
         };
-        category.addEventListener('change', () => update(false));
+        category.addEventListener('change', () => {
+            update(false);
+            updateTypeAvailability(true);
+        });
         userSelect?.addEventListener('change', () => { hidden.value = userSelect.value; });
         root.querySelectorAll('.problem-cause-lookup').forEach(section => {
             const type = section.dataset.causeParty;
@@ -123,7 +148,45 @@
                 hidden.value = item.id;
             });
         });
+        typeInput?.addEventListener('input', () => {
+            if (typeId) typeId.value = '';
+            clearTimeout(typeTimer);
+            const query = typeInput.value.trim();
+            if (!category.value) {
+                hideTypeResults();
+                return;
+            }
+            typeTimer = setTimeout(async () => {
+                try {
+                    const url = `/problems/types/search?cause_category_id=${encodeURIComponent(category.value)}&q=${encodeURIComponent(query)}`;
+                    const response = await fetch(url);
+                    const items = await response.json();
+                    typeResults.innerHTML = '';
+                    items.forEach(item => typeResults.appendChild(resultButton(item, selected => {
+                        typeInput.value = selected.name;
+                        typeId.value = selected.id;
+                        hideTypeResults();
+                    })));
+                    if (!items.length && query) {
+                        const create = document.createElement('div');
+                        create.className = 'list-group-item text-muted';
+                        create.textContent = `Press Create problem to add “${query}” to this cause`;
+                        typeResults.appendChild(create);
+                    }
+                    typeResults.classList.toggle('d-none', !query && !items.length);
+                } catch (error) {
+                    hideTypeResults();
+                }
+            }, 180);
+        });
+        typeInput?.addEventListener('focus', () => {
+            if (category.value) typeInput.dispatchEvent(new Event('input'));
+        });
+        document.addEventListener('click', event => {
+            if (typeRoot && !typeRoot.contains(event.target)) hideTypeResults();
+        });
         update(true);
+        updateTypeAvailability(false);
     }
 
     document.querySelectorAll('.problem-single-lookup').forEach(initSingle);

@@ -1,23 +1,6 @@
 {% set p = problem or {} %}
 <div class="problem-form" data-problem-form>
     <div class="row g-3">
-        <div class="col-12">
-            <label class="form-label" for="{{ form_prefix }}Title">Title</label>
-            <input class="form-control" id="{{ form_prefix }}Title" name="title" value="{{ p.title or '' }}" placeholder="A short description of what went wrong" required>
-        </div>
-        <div class="col-12">
-            <label class="form-label" for="{{ form_prefix }}Description">Description</label>
-            <textarea class="form-control" id="{{ form_prefix }}Description" name="description" rows="4" placeholder="Add the useful context; this can be expanded later">{{ p.description or '' }}</textarea>
-        </div>
-        <div class="col-md-6">
-            <label class="form-label" for="{{ form_prefix }}Type">Problem type</label>
-            <select class="form-select" id="{{ form_prefix }}Type" name="problem_type_id" required>
-                <option value="">Choose what went wrong</option>
-                {% for type in types %}
-                    <option value="{{ type.id }}" {% if p.problem_type_id == type.id %}selected{% endif %}>{{ type.name }}</option>
-                {% endfor %}
-            </select>
-        </div>
         <div class="col-md-6">
             <label class="form-label" for="{{ form_prefix }}Cause">Cause</label>
             <select class="form-select" id="{{ form_prefix }}Cause" name="cause_category_id" data-cause-category required>
@@ -26,6 +9,25 @@
                     <option value="{{ cause.id }}" data-party="{{ cause.party_type or '' }}" {% if p.cause_category_id == cause.id %}selected{% endif %}>{{ cause.name }}</option>
                 {% endfor %}
             </select>
+            <div class="form-text">Choose who or what was responsible first.</div>
+        </div>
+        <div class="col-md-6 position-relative" data-problem-type-lookup>
+            <label class="form-label" for="{{ form_prefix }}Type">Problem type</label>
+            <input type="hidden" name="problem_type_id" value="{{ p.problem_type_id or '' }}" data-problem-type-id>
+            <input class="form-control" id="{{ form_prefix }}Type" name="problem_type_name"
+                   value="{{ p.problem_type_name or '' }}" data-problem-type-name autocomplete="off"
+                   placeholder="Choose a cause first" required>
+            <div class="problem-lookup-results list-group d-none" data-problem-type-results></div>
+            <div class="form-text" data-problem-type-help>Search existing types for this cause, or enter a new one.</div>
+        </div>
+
+        <div class="col-12">
+            <label class="form-label" for="{{ form_prefix }}Title">Title</label>
+            <input class="form-control" id="{{ form_prefix }}Title" name="title" value="{{ p.title or '' }}" placeholder="A short description of what went wrong" required>
+        </div>
+        <div class="col-12">
+            <label class="form-label" for="{{ form_prefix }}Description">Description</label>
+            <textarea class="form-control" id="{{ form_prefix }}Description" name="description" rows="4" placeholder="Add the useful context; this can be expanded later">{{ p.description or '' }}</textarea>
         </div>
 
         <div class="col-12">
