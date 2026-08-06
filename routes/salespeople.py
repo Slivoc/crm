@@ -6210,7 +6210,10 @@ def get_planner_data(salesperson_id):
                 SELECT
                     customer_id,
                     COUNT(*) AS pinned_list_count,
-                    COALESCE(SUM(expected_amount_gbp), 0) AS expected_amount_gbp
+                    COALESCE(SUM(
+                        COALESCE(expected_amount_gbp, 0)
+                        * COALESCE(likelihood_score, 0) / 100.0
+                    ), 0) AS weighted_expected_amount_gbp
                 FROM parts_lists
                 WHERE salesperson_id = ?
                   AND customer_id IN ({placeholders})
@@ -6226,7 +6229,7 @@ def get_planner_data(salesperson_id):
             ) or []
             pinned_forecast_map = {
                 row['customer_id']: {
-                    'amount': float(row['expected_amount_gbp'] or 0),
+                    'amount': float(row['weighted_expected_amount_gbp'] or 0),
                     'count': int(row['pinned_list_count'] or 0)
                 }
                 for row in pinned_forecast_rows

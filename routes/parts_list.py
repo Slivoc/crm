@@ -8193,9 +8193,9 @@ def update_parts_list_header(list_id):
                         try:
                             value = Decimal(str(value))
                         except Exception:
-                            return jsonify(success=False, message="Expected amount must be a number"), 400
+                            return jsonify(success=False, message="Relevant line value must be a number"), 400
                         if value < 0:
-                            return jsonify(success=False, message="Expected amount cannot be negative"), 400
+                            return jsonify(success=False, message="Relevant line value cannot be negative"), 400
                 elif key == 'expected_date' and value == '':
                     value = None
                 fields.append(f"{key} = ?")

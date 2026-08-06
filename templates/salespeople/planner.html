@@ -213,7 +213,7 @@
         <th width="21%">Customer</th>
         <th width="13%">Trend</th>
         <th width="14%">Calculation Logic</th>
-        <th width="14%" class="text-end">Pinned Forecast</th>
+        <th width="14%" class="text-end">Weighted Forecast</th>
         <th width="18%" class="text-end">Actual / Target (£)</th>
         <th width="20%">Next Action / Comments / Response</th>
     </tr>
@@ -237,7 +237,7 @@
         <th width="21%">Customer</th>
         <th width="13%">Recent Trend</th>
         <th width="14%">First Order</th>
-        <th width="14%" class="text-end">Pinned Forecast</th>
+        <th width="14%" class="text-end">Weighted Forecast</th>
         <th width="18%" class="text-end">Actual / Target (£)</th>
         <th width="20%">Next Action / Comments / Response</th>
     </tr>
@@ -265,7 +265,7 @@
         <th width="21%">Customer</th>
         <th width="13%">2-Year Trend</th>
         <th width="14%">Risk Factor</th>
-        <th width="14%" class="text-end">Pinned Forecast</th>
+        <th width="14%" class="text-end">Weighted Forecast</th>
         <th width="18%" class="text-end">Actual / Target (£)</th>
         <th width="20%">Next Action / Comments / Response</th>
     </tr>
@@ -664,7 +664,7 @@ function renderPlanner(data) {
         const listLabel = `${count} pinned list${count === 1 ? '' : 's'}`;
         return `
             <span class="fw-semibold"
-                  title="${listLabel} expected in the selected month">
+                  title="Relevant line value × likelihood for ${listLabel} in the selected month">
                 ${formatCurrency(amount)}
             </span>
             <small class="text-muted d-block">${listLabel}</small>

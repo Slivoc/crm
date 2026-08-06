@@ -36,7 +36,7 @@
     <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-3">
         <div>
             <h1 class="h3 mb-1"><i class="bi bi-pin-angle-fill text-primary me-2"></i>Pinned Parts Forecast</h1>
-            <p class="text-muted mb-0">Manage probability, timing and expected value separately from the live quoted value.</p>
+            <p class="text-muted mb-0">Manage probability, timing and relevant line value separately from the live quoted value.</p>
         </div>
         <div class="btn-group" role="group" aria-label="List layout">
             <button class="btn btn-primary" type="button" data-layout="value"><i class="bi bi-sort-down me-1"></i>Value order</button>
@@ -52,7 +52,7 @@
     {% endfor %}
     <div class="row g-3 mb-3">
         <div class="col-sm-6 col-xl-3"><div class="forecast-summary p-3"><div class="small text-muted">Pinned lists</div><div class="h4 mb-0">{{ forecast_lists|length }}</div></div></div>
-        <div class="col-sm-6 col-xl-3"><div class="forecast-summary p-3"><div class="small text-muted">Expected amount</div><div class="h4 mb-0">&pound;{{ "{:,.2f}".format(totals.expected) }}</div></div></div>
+        <div class="col-sm-6 col-xl-3"><div class="forecast-summary p-3"><div class="small text-muted">Relevant line value</div><div class="h4 mb-0">&pound;{{ "{:,.2f}".format(totals.expected) }}</div></div></div>
         <div class="col-sm-6 col-xl-3"><div class="forecast-summary p-3"><div class="small text-muted">Weighted due · {{ forecast_month_label }}</div><div class="h4 mb-0 text-primary">&pound;{{ "{:,.2f}".format(weighted_this_month|float) }}</div></div></div>
         <div class="col-sm-6 col-xl-3"><div class="forecast-summary p-3"><div class="small text-muted">Actual quoted value</div><div class="h4 mb-0 text-success">&pound;{{ "{:,.2f}".format(totals.actual) }}</div></div></div>
     </div>
@@ -71,7 +71,7 @@
 
     <div class="forecast-table-wrap" data-table-wrap>
         <table class="table forecast-table">
-            <thead class="table-light"><tr><th>List</th><th>Created</th><th>Customer</th><th>Status</th><th class="text-end">Actual value</th><th>Expected Amount<span class="forecast-heading-note">Which lines do you actually expect to win?</span></th><th>Likelihood<span class="forecast-heading-note">How likely is the customer to order these lines?</span></th><th>Expected date<span class="forecast-heading-note">By when?</span></th><th>Comment</th></tr></thead>
+            <thead class="table-light"><tr><th>List</th><th>Created</th><th>Customer</th><th>Status</th><th class="text-end">Actual value</th><th>Relevant Line Value<span class="forecast-heading-note">Which lines do you actually expect to win?</span></th><th>Likelihood<span class="forecast-heading-note">How likely is the customer to order these lines?</span></th><th>Expected date<span class="forecast-heading-note">By when?</span></th><th>Comment</th></tr></thead>
             <tbody data-forecast-body>
             {% if forecast_lists %}
                 {% for customer_group in forecast_lists|groupby('customer_name') %}
@@ -83,7 +83,7 @@
                         <td>{{ item.customer_name }}</td>
                         <td><span class="forecast-chip">{{ item.status_name }}</span></td>
                         <td class="text-end fw-semibold text-success">&pound;{{ "{:,.2f}".format((item.quoted_value_gbp or 0)|float) }}</td>
-                        <td><div class="input-group input-group-sm forecast-amount"><span class="input-group-text">£</span><input class="form-control text-end" type="number" min="0" step="0.01" value="{{ item.expected_amount_gbp if item.expected_amount_gbp is not none else '' }}" data-field="expected_amount_gbp"><button class="btn btn-outline-primary" type="button" data-amount-helper data-helper-url="{{ url_for('parts_list.pinned_forecast_lines', list_id=item.id) }}" title="Calculate from quoted lines" aria-label="Calculate expected amount from quoted lines"><i class="bi bi-calculator"></i></button></div><div class="forecast-save-state text-muted" data-save-state></div></td>
+                        <td><div class="input-group input-group-sm forecast-amount"><span class="input-group-text">£</span><input class="form-control text-end" type="number" min="0" step="0.01" value="{{ item.expected_amount_gbp if item.expected_amount_gbp is not none else '' }}" data-field="expected_amount_gbp"><button class="btn btn-outline-primary" type="button" data-amount-helper data-helper-url="{{ url_for('parts_list.pinned_forecast_lines', list_id=item.id) }}" title="Calculate from quoted lines" aria-label="Calculate relevant line value from quoted lines"><i class="bi bi-calculator"></i></button></div><div class="forecast-save-state text-muted" data-save-state></div></td>
                         <td><div class="input-group input-group-sm forecast-field"><input class="form-control text-end" type="number" min="0" max="100" step="1" value="{{ item.likelihood_score if item.likelihood_score is not none else '' }}" data-field="likelihood_score"><span class="input-group-text">%</span></div></td>
                         <td><input class="form-control form-control-sm forecast-field" type="date" value="{{ item.expected_date.isoformat() if item.expected_date else '' }}" data-field="expected_date"></td>
                         <td><textarea class="form-control form-control-sm forecast-comment" rows="2" placeholder="Add a comment..." data-field="notes">{{ item.notes or '' }}</textarea><div class="small text-muted mt-1" data-comment-date>{{ 'Commented ' ~ item.date_modified.strftime('%d %b %Y') if item.notes and item.date_modified else 'No comment date' }}</div></td>
@@ -102,7 +102,7 @@
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
         <div class="modal-content">
             <div class="modal-header">
-                <div><h5 class="modal-title" id="expectedAmountHelperModalLabel"><i class="bi bi-calculator me-2"></i>Expected Amount Helper</h5><div class="small text-muted" data-helper-list-name></div></div>
+                <div><h5 class="modal-title" id="expectedAmountHelperModalLabel"><i class="bi bi-calculator me-2"></i>Relevant Line Value Helper</h5><div class="small text-muted" data-helper-list-name></div></div>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body p-0">
