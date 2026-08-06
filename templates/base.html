@@ -202,7 +202,7 @@
 
         .pinned-parts-row {
             display: grid;
-            grid-template-columns: minmax(0, 1fr) auto auto;
+            grid-template-columns: minmax(0, 1fr) auto;
             gap: 0.6rem;
             align-items: center;
             padding: 0.7rem 0.8rem;
@@ -288,6 +288,36 @@
             font-size: 0.78rem;
             font-weight: 700;
             white-space: nowrap;
+        }
+
+        .pinned-parts-actions {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+        }
+
+        .pinned-parts-unpin-btn {
+            display: inline-grid;
+            width: 1.85rem;
+            height: 1.85rem;
+            padding: 0;
+            place-items: center;
+            border: 0;
+            border-radius: 50%;
+            background: transparent;
+            color: #b7791f;
+        }
+
+        .pinned-parts-unpin-btn:hover,
+        .pinned-parts-unpin-btn:focus-visible {
+            background: #fff3cd;
+            color: #856404;
+            outline: 0;
+        }
+
+        .pinned-parts-unpin-btn:disabled {
+            cursor: wait;
+            opacity: 0.6;
         }
 
         .pinned-parts-comment-wrap {
@@ -1512,13 +1542,14 @@ input:-webkit-autofill {
                         </a>
                         <button type="button"
                                 class="btn btn-primary"
+                                data-pinned-modal-trigger
                                 data-bs-toggle="modal"
                                 data-bs-target="#pinnedPartsListsModal"
                                 title="Pinned parts lists"
                                 aria-label="Pinned parts lists">
                             <i class="bi bi-pin-angle-fill"></i>
                             {% if pinned_parts_lists %}
-                                <span class="badge text-bg-light ms-1">{{ pinned_parts_lists|length }}</span>
+                                <span class="badge text-bg-light ms-1" data-pinned-nav-count>{{ pinned_parts_lists|length }}</span>
                             {% endif %}
                         </button>
                     </div>
@@ -1541,7 +1572,7 @@ input:-webkit-autofill {
                     <h5 class="modal-title" id="pinnedPartsListsModalLabel">
                         <i class="bi bi-pin-angle-fill me-2"></i>Pinned Parts Lists
                     </h5>
-                    <div class="text-muted small">
+                    <div class="text-muted small" data-pinned-total-summary>
                         {% if pinned_parts_lists %}
                             {{ pinned_parts_lists|length }} pinned list{{ '' if pinned_parts_lists|length == 1 else 's' }}
                         {% else %}
@@ -1579,8 +1610,8 @@ input:-webkit-autofill {
             <div class="modal-body">
                 {% if pinned_parts_lists %}
                     <div class="pinned-parts-empty-filter text-center text-muted py-5" data-pinned-empty-filter>
-                        <i class="bi bi-funnel display-6 d-block mb-2"></i>
-                        No pinned lists match the selected statuses.
+                        <i class="bi bi-funnel display-6 d-block mb-2" data-pinned-empty-icon></i>
+                        <span data-pinned-empty-text>No pinned lists match the selected statuses.</span>
                     </div>
                     <div class="pinned-parts-grid" data-pinned-parts-grid>
                         {% for customer_group in pinned_parts_lists|groupby('customer_name') %}
@@ -1596,6 +1627,7 @@ input:-webkit-autofill {
                                              data-pinned-list-row
                                              data-list-id="{{ pinned_list.id }}"
                                              data-status-name="{{ pinned_list.status_name }}"
+                                             data-pin-update-url="{{ url_for('parts_list.toggle_parts_list_pinned', list_id=pinned_list.id) }}"
                                              data-update-url="{{ url_for('parts_list.update_parts_list_header', list_id=pinned_list.id) }}"
                                              data-comment-updated-at="{{ pinned_list.date_modified.isoformat() if pinned_list.date_modified else '' }}">
                                             <div class="pinned-parts-main-link">
@@ -1615,27 +1647,36 @@ input:-webkit-autofill {
                                                     </span>
                                                 </span>
                                             </div>
-                                            <span class="pinned-parts-id">#{{ pinned_list.id }}</span>
-                                            <span class="pinned-parts-comment-wrap">
+                                            <span class="pinned-parts-actions">
+                                                <span class="pinned-parts-id">#{{ pinned_list.id }}</span>
                                                 <button type="button"
-                                                        class="pinned-parts-comment-btn {% if not has_comment %}comment-empty{% endif %}"
-                                                        data-comment-toggle
-                                                        title="{% if has_comment %}View/edit comment{% else %}Add comment{% endif %}"
-                                                        aria-label="{% if has_comment %}View/edit comment{% else %}Add comment{% endif %}"
-                                                        aria-expanded="false">
-                                                    <i class="bi bi-chat-left-text{% if has_comment %}-fill{% endif %}"></i>
+                                                        class="pinned-parts-unpin-btn"
+                                                        data-pinned-unpin
+                                                        title="Unpin {{ pinned_list.name }}"
+                                                        aria-label="Unpin {{ pinned_list.name }}">
+                                                    <i class="bi bi-pin-angle-fill" aria-hidden="true"></i>
                                                 </button>
-                                                <div class="pinned-parts-comment-popover" data-comment-popover>
-                                                    <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
-                                                        <label class="form-label small text-muted mb-0" for="pinnedPartsComment{{ pinned_list.id }}">Comment</label>
-                                                        <small class="text-muted" data-comment-status></small>
+                                                <span class="pinned-parts-comment-wrap">
+                                                    <button type="button"
+                                                            class="pinned-parts-comment-btn {% if not has_comment %}comment-empty{% endif %}"
+                                                            data-comment-toggle
+                                                            title="{% if has_comment %}View/edit comment{% else %}Add comment{% endif %}"
+                                                            aria-label="{% if has_comment %}View/edit comment{% else %}Add comment{% endif %}"
+                                                            aria-expanded="false">
+                                                        <i class="bi bi-chat-left-text{% if has_comment %}-fill{% endif %}"></i>
+                                                    </button>
+                                                    <div class="pinned-parts-comment-popover" data-comment-popover>
+                                                        <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+                                                            <label class="form-label small text-muted mb-0" for="pinnedPartsComment{{ pinned_list.id }}">Comment</label>
+                                                            <small class="text-muted" data-comment-status></small>
+                                                        </div>
+                                                        <textarea id="pinnedPartsComment{{ pinned_list.id }}"
+                                                                  class="form-control form-control-sm"
+                                                                  rows="3"
+                                                                  data-comment-input
+                                                                  placeholder="Add a comment...">{{ pinned_list.notes or '' }}</textarea>
                                                     </div>
-                                                    <textarea id="pinnedPartsComment{{ pinned_list.id }}"
-                                                              class="form-control form-control-sm"
-                                                              rows="3"
-                                                              data-comment-input
-                                                              placeholder="Add a comment...">{{ pinned_list.notes or '' }}</textarea>
-                                                </div>
+                                                </span>
                                             </span>
                                         </div>
                                     {% endfor %}
@@ -3018,14 +3059,42 @@ document.addEventListener('DOMContentLoaded', function() {
     const modal = document.getElementById('pinnedPartsListsModal');
     if (!modal) return;
 
-    const rows = Array.from(modal.querySelectorAll('[data-pinned-list-row]'));
+    let rows = Array.from(modal.querySelectorAll('[data-pinned-list-row]'));
     if (!rows.length) return;
 
     const statusFilterContainer = modal.querySelector('.pinned-parts-status-filters');
     const resetStatusButton = modal.querySelector('[data-pinned-status-reset]');
     const emptyFilterMessage = modal.querySelector('[data-pinned-empty-filter]');
+    const emptyFilterText = modal.querySelector('[data-pinned-empty-text]');
+    const emptyFilterIcon = modal.querySelector('[data-pinned-empty-icon]');
+    const totalSummary = modal.querySelector('[data-pinned-total-summary]');
+    const navCount = document.querySelector('[data-pinned-nav-count]');
     const getStatusFilters = () => Array.from(modal.querySelectorAll('[data-pinned-status-filter]'));
     const activeStatuses = new Set(getStatusFilters().map((filter) => filter.dataset.statusName || ''));
+
+    const updatePinnedTotal = () => {
+        const total = rows.length;
+        if (totalSummary) {
+            totalSummary.textContent = total
+                ? `${total} pinned list${total === 1 ? '' : 's'}`
+                : 'No pinned lists yet';
+        }
+        if (navCount) {
+            navCount.textContent = String(total);
+            navCount.classList.toggle('d-none', total === 0);
+        }
+        statusFilterContainer?.classList.toggle('d-none', total === 0);
+        resetStatusButton?.classList.toggle('d-none', total === 0);
+        if (emptyFilterText) {
+            emptyFilterText.textContent = total
+                ? 'No pinned lists match the selected statuses.'
+                : 'No pinned lists yet.';
+        }
+        if (emptyFilterIcon) {
+            emptyFilterIcon.classList.toggle('bi-funnel', total > 0);
+            emptyFilterIcon.classList.toggle('bi-pin-angle', total === 0);
+        }
+    };
 
     const syncStatusFilterCounts = () => {
         const counts = new Map();
@@ -3230,6 +3299,50 @@ document.addEventListener('DOMContentLoaded', function() {
             .finally(() => {
                 statusButton.disabled = false;
                 statusButton.removeAttribute('aria-busy');
+            });
+        });
+
+        const unpinButton = row.querySelector('[data-pinned-unpin]');
+        unpinButton?.addEventListener('click', () => {
+            if (unpinButton.disabled) return;
+
+            const listName = row.querySelector('.pinned-parts-name')?.textContent.trim() || 'parts list';
+            const originalContent = Array.from(unpinButton.childNodes).map((node) => node.cloneNode(true));
+            const spinner = document.createElement('span');
+            spinner.className = 'spinner-border spinner-border-sm';
+            spinner.setAttribute('aria-hidden', 'true');
+            unpinButton.disabled = true;
+            unpinButton.setAttribute('aria-busy', 'true');
+            unpinButton.replaceChildren(spinner);
+
+            fetch(row.dataset.pinUpdateUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ is_pinned: false })
+            })
+            .then((response) => response.json().then((data) => ({ response, data })))
+            .then(({ response, data }) => {
+                if (!response.ok || !data.success || data.is_pinned) {
+                    throw new Error(data.message || 'Unable to unpin parts list');
+                }
+
+                closePopovers();
+                const panel = row.closest('.pinned-parts-panel');
+                rows = rows.filter((candidate) => candidate !== row);
+                row.remove();
+                if (panel && !panel.querySelector('[data-pinned-list-row]')) {
+                    panel.remove();
+                }
+                syncStatusFilterCounts();
+                updatePinnedTotal();
+                updatePinnedStatusFilters();
+            })
+            .catch((error) => {
+                console.error('Error unpinning parts list:', error);
+                unpinButton.replaceChildren(...originalContent);
+                unpinButton.disabled = false;
+                unpinButton.removeAttribute('aria-busy');
+                alert(`Error unpinning ${listName}: ${error.message}`);
             });
         });
 
