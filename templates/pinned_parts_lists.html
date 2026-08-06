@@ -22,6 +22,7 @@
     .forecast-amount { min-width: 9rem; }
     .forecast-comment { min-width: 14rem; resize: vertical; }
     .forecast-save-state { min-height: 1.15rem; font-size: .72rem; }
+    .forecast-heading-note { display: block; max-width: 12rem; margin-top: .2rem; color: #6c757d; font-size: .72rem; font-weight: 400; line-height: 1.25; }
     .forecast-customer-heading { display: none; }
     .is-grouped .forecast-customer-heading { display: table-row; }
     .forecast-customer-heading td { background: #edf3fb; color: #344054; font-weight: 700; border-top: 2px solid #d5e0ee; }
@@ -70,7 +71,7 @@
 
     <div class="forecast-table-wrap" data-table-wrap>
         <table class="table forecast-table">
-            <thead class="table-light"><tr><th>List</th><th>Created</th><th>Customer</th><th>Status</th><th class="text-end">Actual value</th><th>Likelihood</th><th>Expected date</th><th>Expected amount</th><th>Comment</th></tr></thead>
+            <thead class="table-light"><tr><th>List</th><th>Created</th><th>Customer</th><th>Status</th><th class="text-end">Actual value</th><th>Expected Amount<span class="forecast-heading-note">Which lines do you actually expect to win?</span></th><th>Likelihood<span class="forecast-heading-note">How likely is the customer to order these lines?</span></th><th>Expected date<span class="forecast-heading-note">By when?</span></th><th>Comment</th></tr></thead>
             <tbody data-forecast-body>
             {% if forecast_lists %}
                 {% for customer_group in forecast_lists|groupby('customer_name') %}
@@ -82,9 +83,9 @@
                         <td>{{ item.customer_name }}</td>
                         <td><span class="forecast-chip">{{ item.status_name }}</span></td>
                         <td class="text-end fw-semibold text-success">&pound;{{ "{:,.2f}".format((item.quoted_value_gbp or 0)|float) }}</td>
+                        <td><div class="input-group input-group-sm forecast-amount"><span class="input-group-text">£</span><input class="form-control text-end" type="number" min="0" step="0.01" value="{{ item.expected_amount_gbp if item.expected_amount_gbp is not none else '' }}" data-field="expected_amount_gbp"><button class="btn btn-outline-primary" type="button" data-amount-helper data-helper-url="{{ url_for('parts_list.pinned_forecast_lines', list_id=item.id) }}" title="Calculate from quoted lines" aria-label="Calculate expected amount from quoted lines"><i class="bi bi-calculator"></i></button></div><div class="forecast-save-state text-muted" data-save-state></div></td>
                         <td><div class="input-group input-group-sm forecast-field"><input class="form-control text-end" type="number" min="0" max="100" step="1" value="{{ item.likelihood_score if item.likelihood_score is not none else '' }}" data-field="likelihood_score"><span class="input-group-text">%</span></div></td>
                         <td><input class="form-control form-control-sm forecast-field" type="date" value="{{ item.expected_date.isoformat() if item.expected_date else '' }}" data-field="expected_date"></td>
-                        <td><div class="input-group input-group-sm forecast-amount"><span class="input-group-text">£</span><input class="form-control text-end" type="number" min="0" step="0.01" value="{{ item.expected_amount_gbp if item.expected_amount_gbp is not none else '' }}" data-field="expected_amount_gbp"><button class="btn btn-outline-primary" type="button" data-amount-helper data-helper-url="{{ url_for('parts_list.pinned_forecast_lines', list_id=item.id) }}" title="Calculate from quoted lines" aria-label="Calculate expected amount from quoted lines"><i class="bi bi-calculator"></i></button></div><div class="forecast-save-state text-muted" data-save-state></div></td>
                         <td><textarea class="form-control form-control-sm forecast-comment" rows="2" placeholder="Add a comment..." data-field="notes">{{ item.notes or '' }}</textarea><div class="small text-muted mt-1" data-comment-date>{{ 'Commented ' ~ item.date_modified.strftime('%d %b %Y') if item.notes and item.date_modified else 'No comment date' }}</div></td>
                     </tr>
                     {% endfor %}
