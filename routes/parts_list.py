@@ -10300,9 +10300,10 @@ def get_all_suppliers():
 @parts_list_bp.route('/parts-lists/<int:list_id>/lines/<int:line_id>/quotes', methods=['GET'])
 def get_line_quotes(list_id, line_id):
     """
-    Get all supplier quotes for a specific parts list line.
+    Get supplier quotes for a specific line's part number.
     For price break lines, shows ALL quotes for that part number across
-    all lines in this parts list (not just the specific line).
+    all lines in this parts list (not just the specific line), plus a
+    recent selection from other parts lists.
     Returns quotes sorted by price (cheapest first).
     Also includes QPL approval data for manufacturer validation.
     """
@@ -10318,6 +10319,8 @@ def get_line_quotes(list_id, line_id):
                     pll.customer_part_number,
                     pll.base_part_number,
                     pll.parent_line_id,
+                    pll.chosen_source_type,
+                    pll.chosen_source_reference,
                     pn.pieces_per_pound
                 FROM parts_list_lines pll
                 LEFT JOIN part_numbers pn ON pn.base_part_number = pll.base_part_number
@@ -10356,8 +10359,11 @@ def get_line_quotes(list_id, line_id):
                     sql.is_no_bid,
                     sql.line_notes,
                     sq.id as quote_id,
+                    sq.parts_list_id,
                     sq.quote_reference,
                     sq.quote_date,
+                    sq.source_artifact_filename,
+                    CASE WHEN sq.source_artifact_path IS NOT NULL THEN TRUE ELSE FALSE END AS has_source,
                     sq.supplier_id,
                     s.name as supplier_name,
                     sq.currency_id,
@@ -10406,6 +10412,8 @@ def get_line_quotes(list_id, line_id):
                     sq.id as quote_id,
                     sq.quote_reference,
                     sq.quote_date,
+                    sq.source_artifact_filename,
+                    CASE WHEN sq.source_artifact_path IS NOT NULL THEN TRUE ELSE FALSE END AS has_source,
                     COALESCE(sq.quote_date, sql.date_modified, sql.date_created, sq.date_created) as effective_quote_date,
                     sq.supplier_id,
                     s.name as supplier_name,
@@ -10425,11 +10433,20 @@ def get_line_quotes(list_id, line_id):
                 AND sql.is_no_bid = FALSE
                 AND sql.unit_price IS NOT NULL
                 ORDER BY
+                    CASE
+                        WHEN ? = 'quote' AND CAST(sql.id AS TEXT) = ? THEN 0
+                        ELSE 1
+                    END,
                     COALESCE(sq.quote_date, sql.date_modified, sql.date_created, sq.date_created) DESC,
                     sql.id DESC
                 LIMIT 12
                 """,
-                (line['base_part_number'], list_id),
+                (
+                    line['base_part_number'],
+                    list_id,
+                    line['chosen_source_type'],
+                    str(line['chosen_source_reference']) if line['chosen_source_reference'] is not None else None,
+                ),
             ).fetchall()
 
             # Get QPL approved manufacturers for this part number
@@ -11745,8 +11762,14 @@ def extract_pdf_text():
 
     try:
         import pdfplumber
+        pdf_bytes = file.read(SUPPLIER_QUOTE_SOURCE_MAX_BYTES + 1)
+        if len(pdf_bytes) > SUPPLIER_QUOTE_SOURCE_MAX_BYTES:
+            return jsonify(success=False, message="PDF exceeds the 20 MB limit"), 413
+        if not pdf_bytes.startswith(b'%PDF'):
+            return jsonify(success=False, message="Uploaded file is not a valid PDF"), 400
+
         text_parts = []
-        with pdfplumber.open(file) as pdf:
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             for page in pdf.pages:
                 page_text = page.extract_text() or ""
                 if page_text:
@@ -11755,7 +11778,13 @@ def extract_pdf_text():
         max_chars = 60000
         if len(text) > max_chars:
             text = text[:max_chars] + "..."
-        return jsonify(success=True, text=text)
+        source_artifact = _store_supplier_quote_source(
+            pdf_bytes,
+            file.filename,
+            file.mimetype or 'application/pdf',
+            'supplier_quote_pdf',
+        )
+        return jsonify(success=True, text=text, source_artifact=source_artifact)
     except Exception as e:
         logging.exception("PDF text extraction failed")
         return jsonify(success=False, message="Failed to process PDF: " + str(e))

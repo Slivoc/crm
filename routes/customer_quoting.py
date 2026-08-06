@@ -201,12 +201,11 @@ def _get_supplier_quote_metadata(cur, parts_list_line_id, supplier_id, source_ty
             SELECT sql.condition_code, sql.certifications, sql.manufacturer, sql.cage_code, sql.test_certs
             FROM parts_list_supplier_quote_lines sql
             JOIN parts_list_supplier_quotes sq ON sq.id = sql.supplier_quote_id
-            WHERE sql.parts_list_line_id = ?
-              AND sq.supplier_id = ?
+            WHERE sq.supplier_id = ?
               AND CAST(sql.id AS TEXT) = ?
               AND sql.is_no_bid = FALSE
             LIMIT 1
-        """, (parts_list_line_id, supplier_id, str(source_reference))).fetchone()
+        """, (supplier_id, str(source_reference))).fetchone()
 
     if explicit_quote:
         condition = (explicit_quote['condition_code'] or '').strip() or None
@@ -2144,8 +2143,7 @@ def customer_quote_simple(list_id):
                             ON offer_quote.id = offer_line.supplier_quote_id
                           JOIN parts_list_lines offer_parts_line
                             ON offer_parts_line.id = offer_line.parts_list_line_id
-                          WHERE offer_parts_line.parts_list_id = pll.parts_list_id
-                            AND offer_parts_line.base_part_number = pll.base_part_number
+                          WHERE offer_parts_line.base_part_number = pll.base_part_number
                             AND offer_line.is_no_bid = FALSE
                             AND offer_line.unit_price IS NOT NULL
                       ) AS available_offer_count,

@@ -943,7 +943,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const requiredQty = parseFloat(elements.chosenQty?.value) || lineData.quantity || '-';
         document.getElementById('simple-offer-part-number').textContent = requestedPart;
         document.getElementById('simple-offer-required-qty').textContent = requiredQty;
-        document.getElementById('simple-offers-empty').textContent = 'No supplier offers for this part were found on this parts list.';
+        document.getElementById('simple-offers-empty').textContent = 'No supplier offers for this part were found.';
         document.getElementById('simple-offers-table-body').replaceChildren();
         setSupplierOfferModalState({ loading: true, empty: false, showTable: false });
         bootstrap.Modal.getOrCreateInstance(modalElement).show();
@@ -951,7 +951,9 @@ document.addEventListener('DOMContentLoaded', function() {
         try {
             const response = await fetch(`/parts_list/parts-lists/${LIST_ID}/lines/${lineData.id}/quotes`);
             const result = await response.json();
-            const offers = result.success && Array.isArray(result.quotes) ? result.quotes : [];
+            const currentOffers = result.success && Array.isArray(result.quotes) ? result.quotes : [];
+            const historicalOffers = result.success && Array.isArray(result.other_offers) ? result.other_offers : [];
+            const offers = [...currentOffers, ...historicalOffers];
             setSupplierOfferModalState({ loading: false, empty: offers.length === 0, showTable: offers.length > 0 });
             if (offers.length) renderSupplierOffers(offers, row, cached);
         } catch (error) {
@@ -967,9 +969,19 @@ document.addEventListener('DOMContentLoaded', function() {
         offers.forEach(offer => {
             const price = Number.parseFloat(offer.unit_price);
             const isUsable = !offer.is_no_bid && Number.isFinite(price) && price >= 0 && offer.supplier_id && offer.currency_id;
+            const sourceListId = Number.parseInt(offer.parts_list_id, 10);
+            const sourceQuoteId = Number.parseInt(offer.quote_id, 10);
+            const hasSource = Boolean(offer.has_source) && Number.isFinite(sourceListId) && Number.isFinite(sourceQuoteId);
+            const sourceLink = hasSource
+                ? `<a class="btn btn-sm btn-outline-secondary" href="/parts_list/parts-lists/${sourceListId}/supplier-quotes/${sourceQuoteId}/source" target="_blank" rel="noopener" title="${escapeHtml(offer.source_artifact_filename || 'Open saved source')}"><i class="bi bi-paperclip"></i> Source</a>`
+                : '<span class="text-muted">-</span>';
+            const isHistorical = Number.isFinite(sourceListId) && sourceListId !== Number.parseInt(LIST_ID, 10);
+            const originLabel = isHistorical
+                ? `<div class="small text-muted">From ${escapeHtml(offer.parts_list_name || `parts list #${sourceListId}`)}</div>`
+                : '';
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td>${escapeHtml(offer.supplier_name || '-')}</td>
+                <td>${escapeHtml(offer.supplier_name || '-')}${originLabel}</td>
                 <td>${escapeHtml(offer.quoted_part_number || '-')}</td>
                 <td>${escapeHtml(offer.manufacturer || '-')}</td>
                 <td class="text-end">${escapeHtml(offer.quantity_quoted ?? '-')}</td>
@@ -981,6 +993,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 <td>${escapeHtml(offer.certifications || '-')}</td>
                 <td>${escapeHtml(offer.cage_code || '-')}</td>
                 <td>${escapeHtml(offer.test_certs || '-')}</td>
+                <td>${sourceLink}</td>
                 <td class="text-end"><button type="button" class="btn btn-sm btn-primary" ${isUsable ? '' : 'disabled'}>${offer.is_no_bid ? 'No bid' : 'Use offer'}</button></td>`;
             if (isUsable) {
                 const useButton = tr.querySelector('button');

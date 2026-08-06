@@ -370,6 +370,9 @@
                 return;
             }
             supplierResponseText.value = textData.text || '';
+            if (textData.source_artifact) {
+                rememberSourceArtifact(textData.source_artifact);
+            }
             setEmailStatus(textData.text ? 'Loaded attachment text' : 'Attachment text was empty');
         } catch (error) {
             setEmailStatus('Failed to load attachment', true);
