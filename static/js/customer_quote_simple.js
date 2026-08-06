@@ -973,28 +973,43 @@ document.addEventListener('DOMContentLoaded', function() {
             const sourceQuoteId = Number.parseInt(offer.quote_id, 10);
             const hasSource = Boolean(offer.has_source) && Number.isFinite(sourceListId) && Number.isFinite(sourceQuoteId);
             const sourceLink = hasSource
-                ? `<a class="btn btn-sm btn-outline-secondary" href="/parts_list/parts-lists/${sourceListId}/supplier-quotes/${sourceQuoteId}/source" target="_blank" rel="noopener" title="${escapeHtml(offer.source_artifact_filename || 'Open saved source')}"><i class="bi bi-paperclip"></i> Source</a>`
+                ? `<a class="btn btn-sm btn-outline-secondary" href="/parts_list/parts-lists/${sourceListId}/supplier-quotes/${sourceQuoteId}/source" target="_blank" rel="noopener" title="${escapeHtml(offer.source_artifact_filename || 'Open saved source')}"><i class="bi bi-paperclip"></i><span class="visually-hidden">Open source</span></a>`
                 : '<span class="text-muted">-</span>';
             const isHistorical = Number.isFinite(sourceListId) && sourceListId !== Number.parseInt(LIST_ID, 10);
-            const originLabel = isHistorical
-                ? `<div class="small text-muted">From ${escapeHtml(offer.parts_list_name || `parts list #${sourceListId}`)}</div>`
+            const supplierMeta = [];
+            if (isHistorical) {
+                supplierMeta.push(`<span title="${escapeHtml(offer.parts_list_name || '')}">From PL #${sourceListId}</span>`);
+            }
+            if (offer.quote_reference) {
+                supplierMeta.push(`Ref ${escapeHtml(offer.quote_reference)}`);
+            }
+            const supplierMetaHtml = supplierMeta.length
+                ? `<div class="offer-meta">${supplierMeta.join(' &middot; ')}</div>`
                 : '';
+            const manufacturer = offer.manufacturer
+                ? `<div class="offer-meta">${escapeHtml(offer.manufacturer)}</div>`
+                : '';
+            const certDetails = [
+                offer.certifications ? `<div class="offer-detail"><span class="offer-detail-label">Man:</span> ${escapeHtml(offer.certifications)}</div>` : '',
+                offer.cage_code ? `<div class="offer-detail"><span class="offer-detail-label">CAGE:</span> ${escapeHtml(offer.cage_code)}</div>` : '',
+                offer.test_certs ? `<div class="offer-detail"><span class="offer-detail-label">Test:</span> ${escapeHtml(offer.test_certs)}</div>` : ''
+            ].filter(Boolean).join('');
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td>${escapeHtml(offer.supplier_name || '-')}${originLabel}</td>
-                <td>${escapeHtml(offer.quoted_part_number || '-')}</td>
-                <td>${escapeHtml(offer.manufacturer || '-')}</td>
-                <td class="text-end">${escapeHtml(offer.quantity_quoted ?? '-')}</td>
-                <td class="text-end">${escapeHtml(offer.qty_available ?? '-')}</td>
-                <td class="text-end">${Number.isFinite(price) ? price.toFixed(4) : '-'}</td>
-                <td>${escapeHtml(offer.currency_code || '-')}</td>
-                <td class="text-center">${offer.lead_time_days ? `${escapeHtml(offer.lead_time_days)}d` : '-'}</td>
-                <td>${escapeHtml(offer.condition_code || '-')}</td>
-                <td>${escapeHtml(offer.certifications || '-')}</td>
-                <td>${escapeHtml(offer.cage_code || '-')}</td>
-                <td>${escapeHtml(offer.test_certs || '-')}</td>
-                <td>${sourceLink}</td>
-                <td class="text-end"><button type="button" class="btn btn-sm btn-primary" ${isUsable ? '' : 'disabled'}>${offer.is_no_bid ? 'No bid' : 'Use offer'}</button></td>`;
+                <td class="offer-supplier"><div class="offer-primary">${escapeHtml(offer.supplier_name || '-')}</div>${supplierMetaHtml}</td>
+                <td class="offer-part"><div class="offer-primary">${escapeHtml(offer.quoted_part_number || '-')}</div>${manufacturer}</td>
+                <td class="offer-quantity">
+                    <div class="offer-detail"><span class="offer-detail-label">Quoted:</span> ${escapeHtml(offer.quantity_quoted ?? '-')}</div>
+                    <div class="offer-detail"><span class="offer-detail-label">Avail:</span> ${escapeHtml(offer.qty_available ?? '-')}</div>
+                </td>
+                <td class="offer-price"><div class="offer-primary">${Number.isFinite(price) ? price.toFixed(4) : '-'}</div><div class="offer-meta">${escapeHtml(offer.currency_code || '-')}</div></td>
+                <td class="offer-terms">
+                    <div class="offer-detail"><span class="offer-detail-label">Lead:</span> ${offer.lead_time_days ? `${escapeHtml(offer.lead_time_days)}d` : '-'}</div>
+                    <div class="offer-detail"><span class="offer-detail-label">Cond:</span> ${escapeHtml(offer.condition_code || '-')}</div>
+                </td>
+                <td class="offer-certs">${certDetails || '<span class="text-muted">-</span>'}</td>
+                <td class="offer-source">${sourceLink}</td>
+                <td class="offer-actions"><button type="button" class="btn btn-sm btn-primary" ${isUsable ? '' : 'disabled'}>${offer.is_no_bid ? 'No bid' : 'Use'}</button></td>`;
             if (isUsable) {
                 const useButton = tr.querySelector('button');
                 useButton.addEventListener('click', () => applySupplierOffer(offer, row, cached, useButton));
@@ -1062,7 +1077,7 @@ document.addEventListener('DOMContentLoaded', function() {
         } catch (error) {
             console.error('Unable to apply supplier offer', error);
             alert(error.message || 'Unable to apply supplier offer');
-            if (button) { button.disabled = false; button.textContent = 'Use offer'; }
+            if (button) { button.disabled = false; button.textContent = 'Use'; }
         }
     }
 
