@@ -260,9 +260,22 @@
         }
 
         .pinned-parts-chip-status {
+            border: 0;
             background: var(--pinned-accent-bg);
             color: var(--pinned-accent);
             font-weight: 600;
+            cursor: pointer;
+        }
+
+        .pinned-parts-chip-status:hover,
+        .pinned-parts-chip-status:focus-visible {
+            box-shadow: 0 0 0 2px color-mix(in srgb, var(--pinned-accent) 25%, transparent);
+            outline: 0;
+        }
+
+        .pinned-parts-chip-status:disabled {
+            cursor: wait;
+            opacity: 0.7;
         }
 
         .pinned-parts-chip-value {
@@ -1585,18 +1598,23 @@ input:-webkit-autofill {
                                              data-status-name="{{ pinned_list.status_name }}"
                                              data-update-url="{{ url_for('parts_list.update_parts_list_header', list_id=pinned_list.id) }}"
                                              data-comment-updated-at="{{ pinned_list.date_modified.isoformat() if pinned_list.date_modified else '' }}">
-                                            <a class="pinned-parts-main-link"
-                                               href="{{ url_for('parts_list.view_parts_list', list_id=pinned_list.id) }}">
-                                                <span class="pinned-parts-name">{{ pinned_list.name }}</span>
+                                            <div class="pinned-parts-main-link">
+                                                <a class="pinned-parts-name text-reset text-decoration-none"
+                                                   href="{{ url_for('parts_list.view_parts_list', list_id=pinned_list.id) }}">{{ pinned_list.name }}</a>
                                                 <span class="pinned-parts-meta">
-                                                    <span class="pinned-parts-chip pinned-parts-chip-status">{{ pinned_list.status_name }}</span>
+                                                    <button type="button"
+                                                            class="pinned-parts-chip pinned-parts-chip-status"
+                                                            data-pinned-status-cycle
+                                                            data-status-update-url="{{ url_for('parts_list.update_parts_list_status', list_id=pinned_list.id) }}"
+                                                            title="Click to change status"
+                                                            aria-label="Change status for {{ pinned_list.name }}. Current status: {{ pinned_list.status_name }}">{{ pinned_list.status_name }}</button>
                                                     <span class="pinned-parts-chip pinned-parts-chip-value">&pound;{{ "{:,.2f}".format((pinned_list.quoted_value_gbp or 0)|float) }}</span>
                                                     <span class="pinned-parts-comment-meta" data-comment-meta>
                                                         <span class="pinned-parts-comment-dot {% if not has_comment %}comment-empty{% endif %}" data-comment-dot></span>
                                                         <span data-comment-date>{{ 'No comment' if not has_comment else 'Comment' }}</span>
                                                     </span>
                                                 </span>
-                                            </a>
+                                            </div>
                                             <span class="pinned-parts-id">#{{ pinned_list.id }}</span>
                                             <span class="pinned-parts-comment-wrap">
                                                 <button type="button"
@@ -3003,10 +3021,55 @@ document.addEventListener('DOMContentLoaded', function() {
     const rows = Array.from(modal.querySelectorAll('[data-pinned-list-row]'));
     if (!rows.length) return;
 
-    const statusFilters = Array.from(modal.querySelectorAll('[data-pinned-status-filter]'));
+    const statusFilterContainer = modal.querySelector('.pinned-parts-status-filters');
     const resetStatusButton = modal.querySelector('[data-pinned-status-reset]');
     const emptyFilterMessage = modal.querySelector('[data-pinned-empty-filter]');
-    const activeStatuses = new Set(statusFilters.map((filter) => filter.dataset.statusName || ''));
+    const getStatusFilters = () => Array.from(modal.querySelectorAll('[data-pinned-status-filter]'));
+    const activeStatuses = new Set(getStatusFilters().map((filter) => filter.dataset.statusName || ''));
+
+    const syncStatusFilterCounts = () => {
+        const counts = new Map();
+        rows.forEach((row) => {
+            const statusName = row.dataset.statusName || '';
+            counts.set(statusName, (counts.get(statusName) || 0) + 1);
+        });
+
+        getStatusFilters().forEach((filter) => {
+            const statusName = filter.dataset.statusName || '';
+            const count = counts.get(statusName) || 0;
+            if (!count) {
+                filter.remove();
+                activeStatuses.delete(statusName);
+                return;
+            }
+            filter.querySelector('.pinned-parts-status-filter-count').textContent = String(count);
+            counts.delete(statusName);
+        });
+
+        counts.forEach((count, statusName) => {
+            const filter = document.createElement('button');
+            filter.type = 'button';
+            filter.className = 'pinned-parts-status-filter is-active';
+            filter.dataset.pinnedStatusFilter = '';
+            filter.dataset.statusName = statusName;
+            filter.setAttribute('aria-pressed', 'true');
+
+            const label = document.createElement('span');
+            label.textContent = statusName;
+            const countEl = document.createElement('span');
+            countEl.className = 'pinned-parts-status-filter-count';
+            countEl.textContent = String(count);
+            filter.append(label, countEl);
+            statusFilterContainer?.appendChild(filter);
+            activeStatuses.add(statusName);
+        });
+
+        if (statusFilterContainer) {
+            getStatusFilters()
+                .sort((left, right) => (left.dataset.statusName || '').localeCompare(right.dataset.statusName || ''))
+                .forEach((filter) => statusFilterContainer.appendChild(filter));
+        }
+    };
 
     const updatePinnedStatusFilters = () => {
         const visiblePanels = new Set();
@@ -3030,7 +3093,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
 
-        statusFilters.forEach((filter) => {
+        getStatusFilters().forEach((filter) => {
             const isActive = activeStatuses.has(filter.dataset.statusName || '');
             filter.classList.toggle('is-active', isActive);
             filter.setAttribute('aria-pressed', String(isActive));
@@ -3039,20 +3102,20 @@ document.addEventListener('DOMContentLoaded', function() {
         emptyFilterMessage?.classList.toggle('is-visible', visibleRows === 0);
     };
 
-    statusFilters.forEach((filter) => {
-        filter.addEventListener('click', () => {
-            const statusName = filter.dataset.statusName || '';
-            if (activeStatuses.has(statusName)) {
-                activeStatuses.delete(statusName);
-            } else {
-                activeStatuses.add(statusName);
-            }
-            updatePinnedStatusFilters();
-        });
+    statusFilterContainer?.addEventListener('click', (event) => {
+        const filter = event.target.closest('[data-pinned-status-filter]');
+        if (!filter) return;
+        const statusName = filter.dataset.statusName || '';
+        if (activeStatuses.has(statusName)) {
+            activeStatuses.delete(statusName);
+        } else {
+            activeStatuses.add(statusName);
+        }
+        updatePinnedStatusFilters();
     });
 
     resetStatusButton?.addEventListener('click', () => {
-        statusFilters.forEach((filter) => activeStatuses.add(filter.dataset.statusName || ''));
+        getStatusFilters().forEach((filter) => activeStatuses.add(filter.dataset.statusName || ''));
         updatePinnedStatusFilters();
     });
 
@@ -3126,6 +3189,49 @@ document.addEventListener('DOMContentLoaded', function() {
 
     rows.forEach((row) => {
         applyCommentState(row);
+
+        const statusButton = row.querySelector('[data-pinned-status-cycle]');
+        statusButton?.addEventListener('click', () => {
+            if (statusButton.disabled) return;
+
+            const currentStatus = row.dataset.statusName || statusButton.textContent.trim();
+            const spinner = document.createElement('span');
+            spinner.className = 'spinner-border spinner-border-sm';
+            spinner.setAttribute('aria-hidden', 'true');
+            statusButton.disabled = true;
+            statusButton.setAttribute('aria-busy', 'true');
+            statusButton.replaceChildren(spinner, document.createTextNode(' Updating...'));
+
+            fetch(statusButton.dataset.statusUpdateUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then((response) => response.json().then((data) => ({ response, data })))
+            .then(({ response, data }) => {
+                if (!response.ok || !data.success) {
+                    throw new Error(data.message || 'Unable to update status');
+                }
+
+                row.dataset.statusName = data.new_status_name;
+                statusButton.textContent = data.new_status_name;
+                statusButton.setAttribute(
+                    'aria-label',
+                    `Change status for ${row.querySelector('.pinned-parts-name')?.textContent.trim() || 'parts list'}. Current status: ${data.new_status_name}`
+                );
+                activeStatuses.add(data.new_status_name);
+                syncStatusFilterCounts();
+                updatePinnedStatusFilters();
+            })
+            .catch((error) => {
+                console.error('Error updating pinned parts list status:', error);
+                statusButton.textContent = currentStatus;
+                alert(`Error updating status: ${error.message}`);
+            })
+            .finally(() => {
+                statusButton.disabled = false;
+                statusButton.removeAttribute('aria-busy');
+            });
+        });
 
         const button = row.querySelector('[data-comment-toggle]');
         const popover = row.querySelector('[data-comment-popover]');

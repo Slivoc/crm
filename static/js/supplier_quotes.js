@@ -287,28 +287,55 @@ function parseQuoteNumber(value) {
     return Number.isFinite(parsed) ? parsed : null;
 }
 
+const SUPPLIER_QUOTE_COL = Object.freeze({
+    LINE_NUMBER: 0,
+    OUR_PART_NUMBER: 1,
+    REQUESTED_QUANTITY: 2,
+    QUOTED_PART_NUMBER: 3,
+    MANUFACTURER: 4,
+    REVISION: 5,
+    TEST_CERTS: 6,
+    CAGE_CODE: 7,
+    QUANTITY_QUOTED: 8,
+    QUANTITY_AVAILABLE: 9,
+    PURCHASE_INCREMENT: 10,
+    MOQ: 11,
+    UNIT_PRICE: 12,
+    CERTIFICATIONS: 13,
+    LEAD_TIME_DAYS: 14,
+    QUOTED_LBS: 15,
+    LB_UNIT_PRICE: 16,
+    PIECES_PER_POUND: 17,
+    CONDITION: 18,
+    NO_BID: 19,
+    NOTES: 20,
+    OTHER_QUOTES: 21,
+    SENT: 22,
+    SPLIT_LINE: 23
+});
+
 function calculatePiecePriceFromLb(row) {
     if (!quoteLinesTable) return;
 
-    const lbPrice = parseQuoteNumber(quoteLinesTable.getDataAtCell(row, 14));
-    const ppp = parseQuoteNumber(quoteLinesTable.getDataAtCell(row, 15));
+    const lbPrice = parseQuoteNumber(quoteLinesTable.getDataAtCell(row, SUPPLIER_QUOTE_COL.LB_UNIT_PRICE));
+    const ppp = parseQuoteNumber(quoteLinesTable.getDataAtCell(row, SUPPLIER_QUOTE_COL.PIECES_PER_POUND));
 
     if (lbPrice === null || ppp === null || ppp <= 0) return;
 
-    quoteLinesTable.setDataAtCell(row, 10, Number((lbPrice / ppp).toFixed(4)), 'lb-price-calc');
+    quoteLinesTable.setDataAtCell(row, SUPPLIER_QUOTE_COL.UNIT_PRICE, Number((lbPrice / ppp).toFixed(4)), 'lb-price-calc');
 }
 
 function calculateQuotedQuantityFromLb(row) {
     if (!quoteLinesTable) return null;
 
-    const lbQty = parseQuoteNumber(quoteLinesTable.getDataAtCell(row, 13));
-    const ppp = parseQuoteNumber(quoteLinesTable.getDataAtCell(row, 15));
+    const lbQty = parseQuoteNumber(quoteLinesTable.getDataAtCell(row, SUPPLIER_QUOTE_COL.QUOTED_LBS));
+    const ppp = parseQuoteNumber(quoteLinesTable.getDataAtCell(row, SUPPLIER_QUOTE_COL.PIECES_PER_POUND));
     if (lbQty === null || lbQty <= 0 || ppp === null || ppp <= 0) return null;
 
     const pieceQty = Math.round(lbQty * ppp);
     if (!Number.isFinite(pieceQty) || pieceQty <= 0) return null;
 
-    quoteLinesTable.setDataAtCell(row, 6, pieceQty, 'lb-quantity-calc');
+    quoteLinesTable.setDataAtCell(row, SUPPLIER_QUOTE_COL.QUANTITY_QUOTED, pieceQty, 'lb-quantity-calc');
 
     return {
         lbQty,
@@ -318,8 +345,8 @@ function calculateQuotedQuantityFromLb(row) {
 }
 
 function getPerLbQuotedQuantityConversion(row, tableData, originalLine = {}) {
-    const lbQty = parseQuoteNumber(tableData[row]?.[13]);
-    const ppp = parseQuoteNumber(tableData[row]?.[15]);
+    const lbQty = parseQuoteNumber(tableData[row]?.[SUPPLIER_QUOTE_COL.QUOTED_LBS]);
+    const ppp = parseQuoteNumber(tableData[row]?.[SUPPLIER_QUOTE_COL.PIECES_PER_POUND]);
     if (lbQty === null || lbQty <= 0 || ppp === null || ppp <= 0) return null;
 
     const pieceQty = Math.round(lbQty * ppp);
@@ -344,14 +371,14 @@ function validateLbPriceRows() {
     const lbInputErrors = [];
 
     quoteLinesData.forEach((line, index) => {
-        const lbQty = parseQuoteNumber(tableData[index]?.[13]);
-        const lbPrice = parseQuoteNumber(tableData[index]?.[14]);
+        const lbQty = parseQuoteNumber(tableData[index]?.[SUPPLIER_QUOTE_COL.QUOTED_LBS]);
+        const lbPrice = parseQuoteNumber(tableData[index]?.[SUPPLIER_QUOTE_COL.LB_UNIT_PRICE]);
         const priceEnteredAsLb = lbQty !== null || lbPrice !== null;
-        const isNoBid = !!tableData[index]?.[17];
+        const isNoBid = !!tableData[index]?.[SUPPLIER_QUOTE_COL.NO_BID];
         if (!priceEnteredAsLb || isNoBid) return;
 
-        const ppp = parseQuoteNumber(tableData[index]?.[15]);
-        const unitPrice = parseQuoteNumber(tableData[index]?.[10]);
+        const ppp = parseQuoteNumber(tableData[index]?.[SUPPLIER_QUOTE_COL.PIECES_PER_POUND]);
+        const unitPrice = parseQuoteNumber(tableData[index]?.[SUPPLIER_QUOTE_COL.UNIT_PRICE]);
 
         if (lbPrice === null || ppp === null || ppp <= 0 || unitPrice === null) {
             lbInputErrors.push(line?.line_number || index + 1);
@@ -1392,6 +1419,8 @@ function initializeQuoteLinesTable(lines) {
         line.quoted_part_number || line.customer_part_number,
         line.manufacturer || '',
         line.revision || '',
+        line.test_certs || '',
+        line.cage_code || '',
         line.quantity_quoted,
         line.qty_available,
         line.purchase_increment,
@@ -1407,9 +1436,7 @@ function initializeQuoteLinesTable(lines) {
         line.line_notes,
         line.other_quotes_count || 0,
         !!line.quote_requested,
-        false,  // split_line - column 21
-        line.cage_code || '',
-        line.test_certs || ''
+        false
     ]);
 
     quoteLinesTable = new Handsontable(container, {
@@ -1421,12 +1448,14 @@ function initializeQuoteLinesTable(lines) {
             'Quoted Part #',
             'Manufacturer',
             'Rev',
+            'Test Certs',
+            'CAGE Code',
             'Qty Quoted',
             'Qty Avail',
             'Increment',
             'MOQ',
             'Unit Price (ea)',
-            'Man Certs',
+            'Certs',
             'Lead Days',
             'Lbs',
             'LB Price',
@@ -1436,47 +1465,45 @@ function initializeQuoteLinesTable(lines) {
             'Notes',
             'Other Quotes',
             'Sent?',
-            'Split',
-            'CAGE Code',
-            'Test Certs'
+            'Split'
         ],
         columns: [
-            { data: 0, type: 'numeric', readOnly: true, className: 'htCenter htMiddle' },
-            { data: 1, type: 'text', readOnly: true },
-            { data: 2, type: 'numeric', readOnly: true, className: 'htCenter' },
-            { data: 3, type: 'text' },
-            { data: 4, type: 'text' },
-            { data: 5, type: 'text', readOnly: false, className: 'htCenter' },
-            { data: 6, type: 'numeric' },
-            { data: 7, type: 'numeric' },
-            { data: 8, type: 'numeric' },
-            { data: 9, type: 'numeric' },
-            { data: 10, type: 'numeric', numericFormat: { pattern: '0,0.0000' } },
-            { data: 11, type: 'text' },
-            { data: 12, type: 'numeric' },
-            { data: 13, type: 'numeric', numericFormat: { pattern: '0,0.####' }, className: 'htRight lb-quote-cell' },
-            { data: 14, type: 'numeric', numericFormat: { pattern: '0,0.00' }, className: 'htRight lb-quote-cell' },
-            { data: 15, type: 'numeric', numericFormat: { pattern: '0,0.####' }, className: 'htRight lb-quote-cell' },
-            { data: 16, type: 'text' },
+            { data: SUPPLIER_QUOTE_COL.LINE_NUMBER, type: 'numeric', readOnly: true, className: 'htCenter htMiddle' },
+            { data: SUPPLIER_QUOTE_COL.OUR_PART_NUMBER, type: 'text', readOnly: true },
+            { data: SUPPLIER_QUOTE_COL.REQUESTED_QUANTITY, type: 'numeric', readOnly: true, className: 'htCenter' },
+            { data: SUPPLIER_QUOTE_COL.QUOTED_PART_NUMBER, type: 'text' },
+            { data: SUPPLIER_QUOTE_COL.MANUFACTURER, type: 'text' },
+            { data: SUPPLIER_QUOTE_COL.REVISION, type: 'text', readOnly: false, className: 'htCenter' },
+            { data: SUPPLIER_QUOTE_COL.TEST_CERTS, type: 'text' },
+            { data: SUPPLIER_QUOTE_COL.CAGE_CODE, type: 'text' },
+            { data: SUPPLIER_QUOTE_COL.QUANTITY_QUOTED, type: 'numeric' },
+            { data: SUPPLIER_QUOTE_COL.QUANTITY_AVAILABLE, type: 'numeric' },
+            { data: SUPPLIER_QUOTE_COL.PURCHASE_INCREMENT, type: 'numeric' },
+            { data: SUPPLIER_QUOTE_COL.MOQ, type: 'numeric' },
+            { data: SUPPLIER_QUOTE_COL.UNIT_PRICE, type: 'numeric', numericFormat: { pattern: '0,0.0000' } },
+            { data: SUPPLIER_QUOTE_COL.CERTIFICATIONS, type: 'text' },
+            { data: SUPPLIER_QUOTE_COL.LEAD_TIME_DAYS, type: 'numeric' },
+            { data: SUPPLIER_QUOTE_COL.QUOTED_LBS, type: 'numeric', numericFormat: { pattern: '0,0.####' }, className: 'htRight lb-quote-cell' },
+            { data: SUPPLIER_QUOTE_COL.LB_UNIT_PRICE, type: 'numeric', numericFormat: { pattern: '0,0.00' }, className: 'htRight lb-quote-cell' },
+            { data: SUPPLIER_QUOTE_COL.PIECES_PER_POUND, type: 'numeric', numericFormat: { pattern: '0,0.####' }, className: 'htRight lb-quote-cell' },
+            { data: SUPPLIER_QUOTE_COL.CONDITION, type: 'text' },
             {
-                data: 17,
+                data: SUPPLIER_QUOTE_COL.NO_BID,
                 type: 'text',
                 renderer: noBidCheckboxRenderer,
                 readOnly: false,
                 className: 'htCenter'
             },
-            { data: 18, type: 'text' },
-            { data: 19, type: 'numeric', readOnly: true, className: 'htCenter' },
-            { data: 20, type: 'checkbox', readOnly: true },
+            { data: SUPPLIER_QUOTE_COL.NOTES, type: 'text' },
+            { data: SUPPLIER_QUOTE_COL.OTHER_QUOTES, type: 'numeric', readOnly: true, className: 'htCenter' },
+            { data: SUPPLIER_QUOTE_COL.SENT, type: 'checkbox', readOnly: true },
             {
-                data: 21,
+                data: SUPPLIER_QUOTE_COL.SPLIT_LINE,
                 type: 'text',
                 renderer: splitLineCheckboxRenderer,
                 readOnly: false,
                 className: 'htCenter'
-            },
-            { data: 22, type: 'text' },
-            { data: 23, type: 'text' }
+            }
         ],
         rowHeaders: true,
         height: 500,
@@ -1487,7 +1514,7 @@ function initializeQuoteLinesTable(lines) {
         filters: true,
         dropdownMenu: true,
         hiddenColumns: {
-            columns: [20],
+            columns: [SUPPLIER_QUOTE_COL.SENT],
             indicators: false
         },
         hiddenRows: {
@@ -1518,24 +1545,24 @@ function initializeQuoteLinesTable(lines) {
                 }
             }
             // Add tooltip to Split column header
-            if (col === 21) {
+            if (col === SUPPLIER_QUOTE_COL.SPLIT_LINE) {
                 TH.title = 'Check to create a new line (e.g., 1.1, 1.2) for this partial quote';
             }
-            if (col === 11) {
+            if (col === SUPPLIER_QUOTE_COL.CERTIFICATIONS) {
                 TH.title = 'Manufacturer/trace certifications for this quoted line.';
             }
-            if (col === 12) {
+            if (col === SUPPLIER_QUOTE_COL.LEAD_TIME_DAYS) {
                 TH.title = 'Supplier lead time in days.';
             }
-            if (col === 13) {
+            if (col === SUPPLIER_QUOTE_COL.QUOTED_LBS) {
                 TH.classList.add('lb-quote-header');
                 TH.title = 'Quoted pounds. Qty Quoted is calculated as Lbs multiplied by PPP.';
             }
-            if (col === 14) {
+            if (col === SUPPLIER_QUOTE_COL.LB_UNIT_PRICE) {
                 TH.classList.add('lb-quote-header');
                 TH.title = 'Supplier price per lb. Unit Price is saved as the calculated each price.';
             }
-            if (col === 15) {
+            if (col === SUPPLIER_QUOTE_COL.PIECES_PER_POUND) {
                 TH.classList.add('lb-quote-header');
                 TH.title = 'Pieces per pound. Defaults from the part record when available.';
             }
@@ -1543,7 +1570,7 @@ function initializeQuoteLinesTable(lines) {
         cells: function(row, col) {
             const cellProperties = {};
 
-            if ([13, 14, 15].includes(col)) {
+            if ([SUPPLIER_QUOTE_COL.QUOTED_LBS, SUPPLIER_QUOTE_COL.LB_UNIT_PRICE, SUPPLIER_QUOTE_COL.PIECES_PER_POUND].includes(col)) {
                 cellProperties.className = ((cellProperties.className || '') + ' htRight lb-quote-cell').trim();
             }
 
@@ -1558,17 +1585,17 @@ function initializeQuoteLinesTable(lines) {
             }
 
             // Other quotes warning
-            if (col === 19 && this.instance.getDataAtCell(row, col) > 0) {
+            if (col === SUPPLIER_QUOTE_COL.OTHER_QUOTES && this.instance.getDataAtCell(row, col) > 0) {
                 cellProperties.className = ((cellProperties.className || '') + ' bg-warning').trim();
             }
 
             // Split line indicator - highlight the row if split is checked
-            if (this.instance.getDataAtCell(row, 21) === true) {
+            if (this.instance.getDataAtCell(row, SUPPLIER_QUOTE_COL.SPLIT_LINE) === true) {
                 cellProperties.className = ((cellProperties.className || '') + ' bg-success bg-opacity-25').trim();
             }
 
             // No-bid styling (takes precedence)
-            if (this.instance.getDataAtCell(row, 17) === true) {
+            if (this.instance.getDataAtCell(row, SUPPLIER_QUOTE_COL.NO_BID) === true) {
                 cellProperties.className = 'bg-secondary text-white';
             }
 
@@ -1580,7 +1607,7 @@ function initializeQuoteLinesTable(lines) {
             const rowsToRecalculate = new Set();
             changes.forEach(([row, prop]) => {
                 const col = Number(prop);
-                if ([13, 14, 15].includes(col)) {
+                if ([SUPPLIER_QUOTE_COL.QUOTED_LBS, SUPPLIER_QUOTE_COL.LB_UNIT_PRICE, SUPPLIER_QUOTE_COL.PIECES_PER_POUND].includes(col)) {
                     rowsToRecalculate.add(row);
                 }
             });
@@ -1766,21 +1793,21 @@ function applyExtractedDataToTable(extractedLines) {
             );
 
             quoteLinesTable.setDataAtCell([
-                [bestIndex, 3, extracted.part_number],
-                [bestIndex, 4, extracted.manufacturer || ''],
-                [bestIndex, 5, extracted.revision || ''],
-                [bestIndex, 6, extracted.quantity],
-                [bestIndex, 7, extracted.qty_available],
-                [bestIndex, 8, extracted.purchase_increment],
-                [bestIndex, 9, extracted.moq],
-                [bestIndex, 10, extracted.price],
-                [bestIndex, 11, extracted.certifications],
-                [bestIndex, 12, extracted.lead_time_days],
-                [bestIndex, 16, extracted.condition],
-                [bestIndex, 17, !!extracted.is_no_bid],
-                [bestIndex, 18, extracted.notes],
-                [bestIndex, 22, extracted.cage_code],
-                [bestIndex, 23, extracted.test_certs]
+                [bestIndex, SUPPLIER_QUOTE_COL.QUOTED_PART_NUMBER, extracted.part_number],
+                [bestIndex, SUPPLIER_QUOTE_COL.MANUFACTURER, extracted.manufacturer || ''],
+                [bestIndex, SUPPLIER_QUOTE_COL.REVISION, extracted.revision || ''],
+                [bestIndex, SUPPLIER_QUOTE_COL.TEST_CERTS, extracted.test_certs || ''],
+                [bestIndex, SUPPLIER_QUOTE_COL.CAGE_CODE, extracted.cage_code || ''],
+                [bestIndex, SUPPLIER_QUOTE_COL.QUANTITY_QUOTED, extracted.quantity],
+                [bestIndex, SUPPLIER_QUOTE_COL.QUANTITY_AVAILABLE, extracted.qty_available],
+                [bestIndex, SUPPLIER_QUOTE_COL.PURCHASE_INCREMENT, extracted.purchase_increment],
+                [bestIndex, SUPPLIER_QUOTE_COL.MOQ, extracted.moq],
+                [bestIndex, SUPPLIER_QUOTE_COL.UNIT_PRICE, extracted.price],
+                [bestIndex, SUPPLIER_QUOTE_COL.CERTIFICATIONS, extracted.certifications],
+                [bestIndex, SUPPLIER_QUOTE_COL.LEAD_TIME_DAYS, extracted.lead_time_days],
+                [bestIndex, SUPPLIER_QUOTE_COL.CONDITION, extracted.condition],
+                [bestIndex, SUPPLIER_QUOTE_COL.NO_BID, !!extracted.is_no_bid],
+                [bestIndex, SUPPLIER_QUOTE_COL.NOTES, extracted.notes]
             ]);
         } else {
             console.warn(`No strong match for extracted PN "${matchPN}", bestScore=${bestScore.toFixed(2)}`);
@@ -1924,36 +1951,36 @@ function saveQuoteLines(quoteId) {
 
     const lines = quoteLinesData.map((line, index) => {
         const quantityConversion = getPerLbQuotedQuantityConversion(index, tableData, line);
-        const lbQty = parseQuoteNumber(tableData[index][13]);
-        const lbPrice = parseQuoteNumber(tableData[index][14]);
+        const lbQty = parseQuoteNumber(tableData[index][SUPPLIER_QUOTE_COL.QUOTED_LBS]);
+        const lbPrice = parseQuoteNumber(tableData[index][SUPPLIER_QUOTE_COL.LB_UNIT_PRICE]);
         const priceEnteredAsLb = lbQty !== null || lbPrice !== null;
         if (quantityConversion) {
             quantityConversions.push(quantityConversion);
-            quoteLinesTable.setDataAtCell(index, 6, quantityConversion.pieceQty, 'lb-quantity-calc');
+            quoteLinesTable.setDataAtCell(index, SUPPLIER_QUOTE_COL.QUANTITY_QUOTED, quantityConversion.pieceQty, 'lb-quantity-calc');
         }
 
         return {
             parts_list_line_id: line.parts_list_line_id,
-            quoted_part_number: tableData[index][3],
-            manufacturer: tableData[index][4],
-            revision: tableData[index][5],
-            quantity_quoted: quantityConversion ? quantityConversion.pieceQty : tableData[index][6],
-            qty_available: tableData[index][7],
-            purchase_increment: tableData[index][8],
-            moq: tableData[index][9],
-            unit_price: tableData[index][10],
+            quoted_part_number: tableData[index][SUPPLIER_QUOTE_COL.QUOTED_PART_NUMBER],
+            manufacturer: tableData[index][SUPPLIER_QUOTE_COL.MANUFACTURER],
+            revision: tableData[index][SUPPLIER_QUOTE_COL.REVISION],
+            quantity_quoted: quantityConversion ? quantityConversion.pieceQty : tableData[index][SUPPLIER_QUOTE_COL.QUANTITY_QUOTED],
+            qty_available: tableData[index][SUPPLIER_QUOTE_COL.QUANTITY_AVAILABLE],
+            purchase_increment: tableData[index][SUPPLIER_QUOTE_COL.PURCHASE_INCREMENT],
+            moq: tableData[index][SUPPLIER_QUOTE_COL.MOQ],
+            unit_price: tableData[index][SUPPLIER_QUOTE_COL.UNIT_PRICE],
             price_entered_as_lb: priceEnteredAsLb,
             quoted_quantity_lbs: lbQty,
-            lb_unit_price: tableData[index][14],
-            pieces_per_pound_used: tableData[index][15],
-            certifications: tableData[index][11],
-            lead_time_days: tableData[index][12],
-            condition_code: tableData[index][16],
-            is_no_bid: !!tableData[index][17],
-            line_notes: tableData[index][18],
-            split_line: !!tableData[index][21],  // New: split line flag
-            cage_code: tableData[index][22],
-            test_certs: tableData[index][23],
+            lb_unit_price: tableData[index][SUPPLIER_QUOTE_COL.LB_UNIT_PRICE],
+            pieces_per_pound_used: tableData[index][SUPPLIER_QUOTE_COL.PIECES_PER_POUND],
+            certifications: tableData[index][SUPPLIER_QUOTE_COL.CERTIFICATIONS],
+            lead_time_days: tableData[index][SUPPLIER_QUOTE_COL.LEAD_TIME_DAYS],
+            condition_code: tableData[index][SUPPLIER_QUOTE_COL.CONDITION],
+            is_no_bid: !!tableData[index][SUPPLIER_QUOTE_COL.NO_BID],
+            line_notes: tableData[index][SUPPLIER_QUOTE_COL.NOTES],
+            split_line: !!tableData[index][SUPPLIER_QUOTE_COL.SPLIT_LINE],
+            cage_code: tableData[index][SUPPLIER_QUOTE_COL.CAGE_CODE],
+            test_certs: tableData[index][SUPPLIER_QUOTE_COL.TEST_CERTS],
             per_lb_quantity_converted: priceEnteredAsLb
         };
     });
