@@ -28,6 +28,44 @@ def test_supplier_quote_extraction_keeps_man_and_test_certs_separate(monkeypatch
     assert extracted[0]['cage_code'] == '01234'
 
 
+def test_supplier_quote_extraction_recovers_parenthesized_cage_from_item_line(monkeypatch):
+    payload = """[{"part_number":"ASNA0045-120BCL","quantity":100,"price":10,
+        "certifications":null,"test_certs":null,"cage_code":null,
+        "manufacturer":"Bollhoff","is_no_bid":false}]"""
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=payload))]
+    )
+    fake_client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(create=lambda **_kwargs: response)
+        )
+    )
+    monkeypatch.setattr(parts_list, 'client', fake_client)
+
+    quote_text = (
+        'Certificate Codes: 1+FAI First Article Insp. Report; 1 MFG+TR+LS (all)\n'
+        '1 100 EA ASNA0045-120BCL NUT, STEEL 10,00 EA Note '
+        'Bollhoff SNEP (F2094) April 2027 1.000,00'
+    )
+    extracted = parts_list.extract_supplier_quote_data(quote_text)
+
+    assert extracted[0]['cage_code'] == 'F2094'
+    assert extracted[0]['certifications'] is None
+    assert extracted[0]['test_certs'] is None
+
+
+def test_parenthesized_cage_fallback_does_not_use_unrelated_legend_code():
+    quote_text = (
+        '1 100 EA ASNA0045-120BCL NUT, STEEL 10,00 EA Bollhoff\n'
+        'Certificate Codes: First Article Inspection Report (FAIR1)'
+    )
+
+    assert parts_list._extract_cage_code_near_part(
+        quote_text,
+        'ASNA0045-120BCL',
+    ) is None
+
+
 def test_supplier_quote_source_is_stored_and_revalidated(tmp_path):
     app = Flask(__name__)
     app.config['UPLOAD_FOLDER'] = str(tmp_path)

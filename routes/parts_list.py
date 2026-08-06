@@ -2740,6 +2740,44 @@ def _normalize_part_number_key(value):
     return re.sub(r'[^A-Z0-9]', '', str(value).upper())
 
 
+_CAGE_CODE_PATTERN = re.compile(r'(?=[A-Z0-9]{5}\b)(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{5}', re.IGNORECASE)
+
+
+def _extract_cage_code_near_part(quote_text, *part_numbers):
+    """Find a CAGE/NCAGE shown on the same extracted-text line as a quoted part.
+
+    Supplier PDFs often render manufacturer and CAGE columns as ``SNEP (F2094)``
+    without printing a literal "CAGE" label. Restricting the fallback to the item
+    line avoids treating unrelated parenthesized references elsewhere as CAGEs.
+    """
+    if not quote_text:
+        return None
+
+    part_keys = {_normalize_part_number_key(value) for value in part_numbers if value}
+    part_keys.discard('')
+    if not part_keys:
+        return None
+
+    for line in quote_text.splitlines():
+        normalized_line = _normalize_part_number_key(line)
+        if not any(part_key in normalized_line for part_key in part_keys):
+            continue
+
+        labelled = re.search(
+            r'\b(?:N?CAGE)(?:\s+CODE)?\s*[:#-]?\s*([A-Z0-9]{5})\b',
+            line,
+            re.IGNORECASE,
+        )
+        if labelled and _CAGE_CODE_PATTERN.fullmatch(labelled.group(1)):
+            return labelled.group(1).upper()
+
+        for candidate in re.findall(r'\(([A-Z0-9]{5})\)', line, re.IGNORECASE):
+            if _CAGE_CODE_PATTERN.fullmatch(candidate):
+                return candidate.upper()
+
+    return None
+
+
 def _is_peerless_quote(text):
     if not text:
         return False
@@ -2883,9 +2921,9 @@ Do NOT use markdown formatting like ```json or any wrappers. Output raw JSON onl
   - price: Unit price (decimal number, extract just the number)
   - lead_time_days: Lead time in days (integer, null if not specified)
   - condition: Condition code like "NE", "OH", "SV", "AR" (use null if not specified)
-  - certifications: MANUFACTURER/TRACE certificates only. Keep this concise. Prefer "OEM certs" if there is full trace to OEM/manufacturer. Use "EASA Form 1" or "8130-3" when those release certificates are mentioned. Use "Dual release (8130/EASA)" if both are present. Use "no trace" ONLY when explicitly stated (e.g., "no certs", "no trace", "distributor C of C only"). If manufacturer/trace certs are not defined, use null. Never put testing or inspection certificates here.
-  - test_certs: Testing/inspection paperwork exactly as defined by the supplier, kept concise (examples: "chemical test", "physical test report", "material test report", "NDT cert"). Use null if the supplier does not define test certificates. Do not infer them from manufacturer trace.
-  - cage_code: The quoted item's manufacturer CAGE code when explicitly present. Preserve leading zeroes and use null when not defined. Do not use an unrelated supplier CAGE code.
+  - certifications: MANUFACTURER/TRACE certificates only. Keep this concise. Prefer "OEM certs" if there is full trace to OEM/manufacturer. Use "EASA Form 1" or "8130-3" when those release certificates are mentioned. Use "Dual release (8130/EASA)" if both are present. Use "no trace" ONLY when explicitly stated (e.g., "no certs", "no trace", "distributor C of C only"). If manufacturer/trace certs are not defined, use null. Never put testing or inspection certificates here. A quote may print a certificate-code legend; decode a legend code only when that code is actually present on this item line. Do not apply every option in the legend to every item.
+  - test_certs: Testing/inspection paperwork exactly as defined by the supplier, kept concise (examples: "chemical test", "physical test report", "material test report", "First Article Inspection Report", "NDT cert"). Use null if the supplier does not define test certificates. Decode a certificate legend only when its code appears on this item line. Do not infer test certs merely because a legend is printed elsewhere on the page.
+  - cage_code: The quoted item's manufacturer CAGE/NCAGE code when present. Preserve leading zeroes and use null when not defined. CAGE codes are five alphanumeric characters and are often printed without a label after the manufacturer, for example "SNEP (F2094)" means manufacturer SNEP and cage_code "F2094". Do not use an unrelated supplier CAGE code or confuse a certificate option code with a CAGE.
 - is_no_bid: true if supplier declined to quote this part, false otherwise
   - manufacturer: Extract the manufacturer name if mentioned. Look for common aerospace hardware brands like "Cherry", "Alcoa", "Arconic", "Allfast", "SPS", "Monogram", "Fairchild", "Kaynar", "Huck", "Shur-Lok".
   - revision: Extract revision/rev if explicitly provided (examples: "Rev A", "REV: B", "R1"). Return only the revision value (e.g., "A", "B", "R1"), null if not specified.
@@ -3014,6 +3052,12 @@ CRITICAL REMINDER: If you see text like "CR3212-4-04 / Quoting: NAS9301B-5-10", 
                 cage_code = _normalize_optional_text(
                     item.get('cage_code') or item.get('cage') or item.get('manufacturer_cage_code')
                 )
+                if not cage_code:
+                    cage_code = _extract_cage_code_near_part(
+                        quote_text,
+                        part_number,
+                        item.get('match_part_number'),
+                    )
                 test_certs = _normalize_optional_text(
                     item.get('test_certs') or item.get('test_certifications') or item.get('testing_certs')
                 )
