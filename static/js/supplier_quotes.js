@@ -13,10 +13,11 @@ let latestExtractionMatchDebug = null;
 let supplierMetaById = {};
 let currentSourceArtifact = null;
 
-function rememberSourceArtifact(artifact) {
+function rememberSourceArtifact(artifact, force = false) {
     if (!artifact) return;
     const priority = {
         email_body_text: 10,
+        email_body_html: 15,
         supplier_quote_xlsx: 20,
         supplier_quote_pdf: 30
     };
@@ -24,7 +25,7 @@ function rememberSourceArtifact(artifact) {
     const incomingPriority = priority[artifact.kind] || 0;
 
     // Keep the original uploaded document when its extracted text is processed again.
-    if (!currentSourceArtifact || incomingPriority >= currentPriority) {
+    if (force || !currentSourceArtifact || incomingPriority >= currentPriority) {
         currentSourceArtifact = artifact;
     }
 }

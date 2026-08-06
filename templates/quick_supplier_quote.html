@@ -280,6 +280,33 @@
         return htmlToPlainText(message.body.content || '');
     }
 
+    function graphEmailAddress(recipient) {
+        return recipient?.emailAddress || recipient || {};
+    }
+
+    async function preserveMailSource(message) {
+        const sourceResponse = await fetch('/parts_list/store-supplier-email-source', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                subject: message?.subject || '',
+                from: graphEmailAddress(message?.from),
+                to_recipients: (message?.toRecipients || []).map(graphEmailAddress),
+                cc_recipients: (message?.ccRecipients || []).map(graphEmailAddress),
+                received_at: message?.receivedDateTime || '',
+                body: {
+                    content_type: message?.body?.contentType || 'text',
+                    content: message?.body?.content || ''
+                }
+            })
+        });
+        const sourceData = await sourceResponse.json();
+        if (!sourceResponse.ok || !sourceData.success || !sourceData.source_artifact) {
+            throw new Error(sourceData.message || 'Unable to preserve email source');
+        }
+        rememberSourceArtifact(sourceData.source_artifact, true);
+    }
+
     function base64ToBlob(base64, contentType) {
         const byteChars = atob(base64);
         const byteNumbers = new Array(byteChars.length);
@@ -329,9 +356,20 @@
                 setEmailStatus('Failed to load mail body', true);
                 return;
             }
-            const text = parseEmailBodyText(data.message || {});
+            const message = data.message || {};
+            const text = parseEmailBodyText(message);
             supplierResponseText.value = text || '';
-            setEmailStatus(text ? 'Loaded mail body' : 'Mail body was empty');
+            if (text) {
+                try {
+                    await preserveMailSource(message);
+                    setEmailStatus('Loaded mail body and preserved formatted source');
+                } catch (sourceError) {
+                    console.error('Unable to preserve formatted email source', sourceError);
+                    setEmailStatus('Loaded mail body; formatted source could not be preserved', true);
+                }
+            } else {
+                setEmailStatus('Mail body was empty');
+            }
         } catch (error) {
             setEmailStatus('Failed to load mail body', true);
         }

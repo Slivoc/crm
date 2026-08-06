@@ -26,6 +26,8 @@ import html
 import io
 import hashlib
 import uuid
+import bleach
+from bleach.css_sanitizer import CSSSanitizer
 from io import StringIO
 from calendar import monthrange
 from routes.emails import (
@@ -58,6 +60,30 @@ AI_PARTS_RESPONSE_TOKENS = 3000
 AI_PARTS_HEADER_LINES = 20
 AI_PARTS_HEADER_CHAR_LIMIT = 2000
 SUPPLIER_QUOTE_SOURCE_MAX_BYTES = 20 * 1024 * 1024
+
+SUPPLIER_EMAIL_ALLOWED_TAGS = {
+    'a', 'b', 'blockquote', 'br', 'code', 'col', 'colgroup', 'div', 'em',
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'i', 'li', 'ol', 'p',
+    'pre', 's', 'span', 'strong', 'table', 'tbody', 'td', 'tfoot', 'th',
+    'thead', 'tr', 'u', 'ul',
+}
+SUPPLIER_EMAIL_ALLOWED_ATTRIBUTES = {
+    'a': ['href', 'title'],
+    'table': ['border', 'cellpadding', 'cellspacing', 'style', 'width'],
+    'col': ['span', 'style', 'width'],
+    'colgroup': ['span', 'style', 'width'],
+    'td': ['align', 'colspan', 'height', 'rowspan', 'style', 'valign', 'width'],
+    'th': ['align', 'colspan', 'height', 'rowspan', 'style', 'valign', 'width'],
+    '*': ['style'],
+}
+SUPPLIER_EMAIL_CSS_SANITIZER = CSSSanitizer(allowed_css_properties=[
+    'background-color', 'border', 'border-bottom', 'border-collapse',
+    'border-left', 'border-right', 'border-top', 'color', 'font-family',
+    'font-size', 'font-style', 'font-weight', 'height', 'margin',
+    'margin-bottom', 'margin-left', 'margin-right', 'margin-top', 'padding',
+    'padding-bottom', 'padding-left', 'padding-right', 'padding-top',
+    'text-align', 'text-decoration', 'vertical-align', 'white-space', 'width',
+])
 
 
 def _supplier_quote_source_dir():
@@ -110,6 +136,76 @@ def _validated_supplier_quote_source(source):
         'size': os.path.getsize(full_path),
         'sha256': sha256,
     }
+
+
+def _format_email_address(value):
+    if isinstance(value, dict):
+        name = str(value.get('name') or '').strip()
+        address = str(value.get('address') or '').strip()
+        if name and address:
+            return f"{name} <{address}>"
+        return name or address
+    return str(value or '').strip()
+
+
+def _build_supplier_email_source_html(data):
+    """Build a safe, readable email snapshot while retaining tables and formatting."""
+    body = data.get('body') if isinstance(data.get('body'), dict) else {}
+    body_content = str(body.get('content') or '')
+    body_type = str(body.get('content_type') or body.get('contentType') or 'text').lower()
+
+    if body_type == 'html':
+        readable_body = bleach.clean(
+            body_content,
+            tags=SUPPLIER_EMAIL_ALLOWED_TAGS,
+            attributes=SUPPLIER_EMAIL_ALLOWED_ATTRIBUTES,
+            protocols={'http', 'https', 'mailto'},
+            css_sanitizer=SUPPLIER_EMAIL_CSS_SANITIZER,
+            strip=True,
+            strip_comments=True,
+        )
+    else:
+        readable_body = f'<pre class="plain-text">{html.escape(body_content)}</pre>'
+
+    sender = _format_email_address(data.get('from'))
+    recipients = ', '.join(filter(None, (_format_email_address(item) for item in (data.get('to_recipients') or []))))
+    cc_recipients = ', '.join(filter(None, (_format_email_address(item) for item in (data.get('cc_recipients') or []))))
+    headers = [
+        ('From', sender),
+        ('To', recipients),
+        ('Cc', cc_recipients),
+        ('Received', str(data.get('received_at') or '').strip()),
+    ]
+    header_rows = ''.join(
+        f'<div class="header-row"><strong>{label}:</strong> {html.escape(value)}</div>'
+        for label, value in headers if value
+    )
+    subject = str(data.get('subject') or 'Supplier email').strip()
+
+    return f'''<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{html.escape(subject)}</title>
+<style>
+body {{ margin: 0; padding: 24px; color: #212529; background: #fff; font: 14px/1.45 Arial, sans-serif; }}
+.email-source {{ max-width: 1100px; margin: 0 auto; }}
+.email-header {{ margin-bottom: 20px; padding: 16px; border: 1px solid #dfe3e7; border-radius: 6px; background: #f8f9fa; }}
+.email-header h1 {{ margin: 0 0 10px; font-size: 20px; }}
+.header-row {{ margin: 3px 0; overflow-wrap: anywhere; }}
+.email-body {{ overflow-wrap: anywhere; }}
+.email-body table {{ max-width: 100%; border-collapse: collapse; }}
+.email-body th, .email-body td {{ padding: 5px 7px; border: 1px solid #cfd4da; vertical-align: top; }}
+.plain-text {{ white-space: pre-wrap; font: inherit; }}
+a {{ color: #0d6efd; }}
+</style>
+</head>
+<body><main class="email-source">
+<section class="email-header"><h1>{html.escape(subject)}</h1>{header_rows}</section>
+<section class="email-body">{readable_body}</section>
+</main></body>
+</html>'''
 
 
 @parts_list_bp.route('/parts-lists/pinned')
@@ -2399,6 +2495,35 @@ def extract_supplier_quote():
     except Exception as e:
         logger.exception("Error in extract_supplier_quote route")
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@parts_list_bp.route('/store-supplier-email-source', methods=['POST'])
+def store_supplier_email_source():
+    """Preserve a sanitized, standalone HTML snapshot of a supplier email."""
+    try:
+        data = request.get_json(force=True) or {}
+        body = data.get('body') if isinstance(data.get('body'), dict) else {}
+        body_content = str(body.get('content') or '')
+        if not body_content.strip():
+            return jsonify(success=False, message="Email body is empty"), 400
+        if len(body_content.encode('utf-8')) > SUPPLIER_QUOTE_SOURCE_MAX_BYTES:
+            return jsonify(success=False, message="Email source exceeds the 20 MB limit"), 413
+
+        snapshot = _build_supplier_email_source_html(data).encode('utf-8')
+        subject = secure_filename(str(data.get('subject') or '').strip())[:80]
+        filename_stem = subject or f"supplier-email-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        source_artifact = _store_supplier_quote_source(
+            snapshot,
+            f"{filename_stem}.html",
+            'text/html; charset=utf-8',
+            'email_body_html',
+        )
+        return jsonify(success=True, source_artifact=source_artifact)
+    except ValueError as exc:
+        return jsonify(success=False, message=str(exc)), 413
+    except Exception as exc:
+        logging.exception("Supplier email source storage failed")
+        return jsonify(success=False, message="Failed to preserve email source: " + str(exc)), 500
 
 
 

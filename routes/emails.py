@@ -3940,7 +3940,7 @@ def graph_message_detail(message_id):
 
     headers = graph_headers(token['access_token'])
     params = {
-        "$select": "id,subject,from,receivedDateTime,body,bodyPreview,webLink,conversationId,hasAttachments",
+        "$select": "id,subject,from,toRecipients,ccRecipients,receivedDateTime,body,bodyPreview,webLink,conversationId,hasAttachments",
     }
     safe_message_id = quote(message_id, safe="")
     resp = requests.get(

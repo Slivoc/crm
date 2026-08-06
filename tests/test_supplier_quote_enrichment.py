@@ -82,3 +82,42 @@ def test_extract_pdf_text_preserves_original_pdf_source(monkeypatch, tmp_path):
     assert payload['source_artifact']['kind'] == 'supplier_quote_pdf'
     stored_path = tmp_path / 'supplier_quote_sources' / payload['source_artifact']['path']
     assert stored_path.read_bytes() == pdf_bytes
+
+
+def test_store_supplier_email_source_preserves_tables_and_sanitizes_html(tmp_path):
+    app = Flask(__name__)
+    app.config['UPLOAD_FOLDER'] = str(tmp_path)
+    app.register_blueprint(parts_list.parts_list_bp, url_prefix='/parts_list')
+
+    response = app.test_client().post(
+        '/parts_list/store-supplier-email-source',
+        json={
+            'subject': 'Quote ABC-123',
+            'from': {'name': 'Supplier Sales', 'address': 'sales@example.com'},
+            'to_recipients': [{'name': 'Buyer', 'address': 'buyer@example.com'}],
+            'received_at': '2026-08-06T10:30:00Z',
+            'body': {
+                'content_type': 'html',
+                'content': (
+                    '<p>Please see our offer:</p>'
+                    '<table><tr><th>Part</th><th>Price</th></tr>'
+                    '<tr><td>ABC-123</td><td>$12.50</td></tr></table>'
+                    '<script>alert("unsafe")</script>'
+                    '<img src="https://tracker.example/pixel" onerror="alert(1)">'
+                ),
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload['source_artifact']['kind'] == 'email_body_html'
+    assert payload['source_artifact']['filename'] == 'Quote_ABC-123.html'
+    stored_path = tmp_path / 'supplier_quote_sources' / payload['source_artifact']['path']
+    snapshot = stored_path.read_text(encoding='utf-8')
+    assert '<table>' in snapshot
+    assert '<td>ABC-123</td>' in snapshot
+    assert 'Supplier Sales &lt;sales@example.com&gt;' in snapshot
+    assert '<script' not in snapshot
+    assert '<img' not in snapshot
+    assert 'onerror' not in snapshot
