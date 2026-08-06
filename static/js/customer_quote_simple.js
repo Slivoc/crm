@@ -1703,6 +1703,40 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
+    document.getElementById('apply-stock-defaults-btn')?.addEventListener('click', function() {
+        if (quotePageBusy) return;
+
+        let updatedCount = 0;
+        rowCache.forEach(({ lineData, elements }) => {
+            if (!isStockLine(lineData)) return;
+
+            const defaultValues = [
+                [elements.leadDays, '2'],
+                [elements.standardCondition, 'NE'],
+                [elements.standardCerts, 'OEM certs']
+            ];
+            defaultValues.forEach(([input, value]) => {
+                if (!input) return;
+                input.value = value;
+                input.classList.add('changed-input');
+            });
+            updatedCount++;
+        });
+
+        if (!updatedCount) {
+            alert('No Stock-sourced lines were found.');
+            return;
+        }
+
+        markUnsaved();
+        updateEmailQuoteWarnings();
+
+        const btn = this;
+        const originalHtml = btn.innerHTML;
+        btn.innerHTML = `<i class="bi bi-check-circle me-1"></i>Applied to ${updatedCount} Stock line${updatedCount === 1 ? '' : 's'}`;
+        setTimeout(() => { btn.innerHTML = originalHtml; }, 2500);
+    });
+
     // Purchasing Instructions
     document.getElementById('purchasing-instructions-btn').addEventListener('click', function() {
         renderPurchasingInstructionsTable();
@@ -2554,6 +2588,7 @@ document.addEventListener('DOMContentLoaded', function() {
         '#calculate-all-btn',
         '#save-all-btn',
         '#pull-supplier-metadata-btn',
+        '#apply-stock-defaults-btn',
         '#toggle-target-price-btn',
         '#purchasing-instructions-btn',
         '#minimum-line-value-btn',
