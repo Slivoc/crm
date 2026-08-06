@@ -27,7 +27,6 @@ import io
 import hashlib
 import uuid
 import bleach
-from bleach.css_sanitizer import CSSSanitizer
 from io import StringIO
 from calendar import monthrange
 from routes.emails import (
@@ -69,21 +68,12 @@ SUPPLIER_EMAIL_ALLOWED_TAGS = {
 }
 SUPPLIER_EMAIL_ALLOWED_ATTRIBUTES = {
     'a': ['href', 'title'],
-    'table': ['border', 'cellpadding', 'cellspacing', 'style', 'width'],
-    'col': ['span', 'style', 'width'],
-    'colgroup': ['span', 'style', 'width'],
-    'td': ['align', 'colspan', 'height', 'rowspan', 'style', 'valign', 'width'],
-    'th': ['align', 'colspan', 'height', 'rowspan', 'style', 'valign', 'width'],
-    '*': ['style'],
+    'table': ['border', 'cellpadding', 'cellspacing', 'width'],
+    'col': ['span', 'width'],
+    'colgroup': ['span', 'width'],
+    'td': ['align', 'colspan', 'height', 'rowspan', 'valign', 'width'],
+    'th': ['align', 'colspan', 'height', 'rowspan', 'valign', 'width'],
 }
-SUPPLIER_EMAIL_CSS_SANITIZER = CSSSanitizer(allowed_css_properties=[
-    'background-color', 'border', 'border-bottom', 'border-collapse',
-    'border-left', 'border-right', 'border-top', 'color', 'font-family',
-    'font-size', 'font-style', 'font-weight', 'height', 'margin',
-    'margin-bottom', 'margin-left', 'margin-right', 'margin-top', 'padding',
-    'padding-bottom', 'padding-left', 'padding-right', 'padding-top',
-    'text-align', 'text-decoration', 'vertical-align', 'white-space', 'width',
-])
 
 
 def _supplier_quote_source_dir():
@@ -160,7 +150,6 @@ def _build_supplier_email_source_html(data):
             tags=SUPPLIER_EMAIL_ALLOWED_TAGS,
             attributes=SUPPLIER_EMAIL_ALLOWED_ATTRIBUTES,
             protocols={'http', 'https', 'mailto'},
-            css_sanitizer=SUPPLIER_EMAIL_CSS_SANITIZER,
             strip=True,
             strip_comments=True,
         )
