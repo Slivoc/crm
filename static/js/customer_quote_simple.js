@@ -928,10 +928,93 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // --- 7. SUPPLIER OFFER SELECTOR ---
 
+    let supplierSourcePreviewUrl = null;
+
     function setSupplierOfferModalState({ loading, empty, showTable }) {
         document.getElementById('simple-offers-loading').style.display = loading ? 'block' : 'none';
         document.getElementById('simple-offers-empty').style.display = empty ? 'block' : 'none';
         document.getElementById('simple-offers-table-wrap').style.display = showTable ? 'block' : 'none';
+        document.getElementById('simple-offer-groups-toolbar')?.style.setProperty('display', showTable ? 'flex' : 'none', 'important');
+    }
+
+    function resetSupplierSourcePreview() {
+        const modal = document.getElementById('simpleSupplierOfferModal');
+        const pane = document.getElementById('simple-offer-source-preview');
+        const frame = document.getElementById('simple-source-preview-frame');
+        if (supplierSourcePreviewUrl) {
+            URL.revokeObjectURL(supplierSourcePreviewUrl);
+            supplierSourcePreviewUrl = null;
+        }
+        if (frame) {
+            frame.onload = null;
+            frame.removeAttribute('src');
+            frame.classList.add('d-none');
+        }
+        pane?.classList.add('d-none');
+        modal?.classList.remove('source-preview-open');
+    }
+
+    async function showSupplierSourcePreview(offer, triggerButton) {
+        const sourceListId = Number.parseInt(offer.parts_list_id, 10);
+        const sourceQuoteId = Number.parseInt(offer.quote_id, 10);
+        if (!Number.isFinite(sourceListId) || !Number.isFinite(sourceQuoteId)) return;
+
+        const sourceUrl = `/parts_list/parts-lists/${sourceListId}/supplier-quotes/${sourceQuoteId}/source`;
+        const modal = document.getElementById('simpleSupplierOfferModal');
+        const pane = document.getElementById('simple-offer-source-preview');
+        const frame = document.getElementById('simple-source-preview-frame');
+        const loading = document.getElementById('simple-source-preview-loading');
+        const error = document.getElementById('simple-source-preview-error');
+        const filename = document.getElementById('simple-source-preview-filename');
+        const download = document.getElementById('simple-source-download-btn');
+        if (!pane || !frame || !loading || !error || !filename || !download) return;
+
+        resetSupplierSourcePreview();
+        pane.classList.remove('d-none');
+        modal?.classList.add('source-preview-open');
+        loading.classList.remove('d-none');
+        error.classList.add('d-none');
+        filename.textContent = offer.source_artifact_filename || 'Saved supplier quote source';
+        download.href = sourceUrl;
+        triggerButton?.setAttribute('disabled', 'disabled');
+        pane.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+        try {
+            const response = await fetch(sourceUrl);
+            if (!response.ok) throw new Error(`Source request failed (${response.status})`);
+            const blob = await response.blob();
+            supplierSourcePreviewUrl = URL.createObjectURL(blob);
+            if ((blob.type || '').toLowerCase().includes('application/pdf')) {
+                frame.removeAttribute('sandbox');
+            } else {
+                frame.setAttribute('sandbox', '');
+            }
+            frame.onload = () => {
+                loading.classList.add('d-none');
+                frame.classList.remove('d-none');
+            };
+            frame.src = supplierSourcePreviewUrl;
+        } catch (previewError) {
+            console.error('Unable to preview supplier source', previewError);
+            loading.classList.add('d-none');
+            error.textContent = 'This source could not be previewed. You can still download it.';
+            error.classList.remove('d-none');
+        } finally {
+            triggerButton?.removeAttribute('disabled');
+        }
+    }
+
+    function setHistoricalOffersExpanded(expanded, count) {
+        document.querySelectorAll('#simple-offers-table-body .historical-offer-row').forEach(element => {
+            element.classList.toggle('d-none', !expanded);
+        });
+        const toggle = document.getElementById('simple-toggle-history-btn');
+        if (toggle) {
+            toggle.innerHTML = expanded
+                ? `<i class="bi bi-chevron-up me-1"></i>Hide other parts lists`
+                : `<i class="bi bi-chevron-down me-1"></i>Show other parts lists (${count})`;
+            toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        }
     }
 
     async function showSupplierOfferModal(row, cached) {
@@ -945,6 +1028,7 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('simple-offer-required-qty').textContent = requiredQty;
         document.getElementById('simple-offers-empty').textContent = 'No supplier offers for this part were found.';
         document.getElementById('simple-offers-table-body').replaceChildren();
+        resetSupplierSourcePreview();
         setSupplierOfferModalState({ loading: true, empty: false, showTable: false });
         bootstrap.Modal.getOrCreateInstance(modalElement).show();
 
@@ -955,7 +1039,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const historicalOffers = result.success && Array.isArray(result.other_offers) ? result.other_offers : [];
             const offers = [...currentOffers, ...historicalOffers];
             setSupplierOfferModalState({ loading: false, empty: offers.length === 0, showTable: offers.length > 0 });
-            if (offers.length) renderSupplierOffers(offers, row, cached);
+            if (offers.length) renderSupplierOffers(currentOffers, historicalOffers, row, cached);
         } catch (error) {
             console.error('Unable to load supplier offers', error);
             setSupplierOfferModalState({ loading: false, empty: true, showTable: false });
@@ -963,19 +1047,55 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    function renderSupplierOffers(offers, row, cached) {
+    function renderSupplierOffers(currentOffers, historicalOffers, row, cached) {
         const body = document.getElementById('simple-offers-table-body');
         body.replaceChildren();
-        offers.forEach(offer => {
+        const summary = document.getElementById('simple-current-offers-summary');
+        const historyToggle = document.getElementById('simple-toggle-history-btn');
+        if (summary) {
+            summary.innerHTML = `<i class="bi bi-check-circle-fill me-1"></i>This parts list: ${currentOffers.length} offer${currentOffers.length === 1 ? '' : 's'}`;
+        }
+        if (historyToggle) {
+            historyToggle.classList.toggle('d-none', historicalOffers.length === 0);
+            historyToggle.onclick = () => {
+                const expanded = historyToggle.getAttribute('aria-expanded') === 'true';
+                setHistoricalOffersExpanded(!expanded, historicalOffers.length);
+            };
+        }
+
+        const currentHeader = document.createElement('tr');
+        currentHeader.className = 'offer-group-row offer-group-current';
+        currentHeader.innerHTML = `<td colspan="8"><i class="bi bi-check-circle-fill me-1"></i>Offers for this parts list <span class="badge text-bg-success ms-1">${currentOffers.length}</span></td>`;
+        body.appendChild(currentHeader);
+
+        if (currentOffers.length) {
+            currentOffers.forEach(offer => body.appendChild(buildSupplierOfferRow(offer, row, cached, false)));
+        } else {
+            const emptyCurrent = document.createElement('tr');
+            emptyCurrent.className = 'offer-group-empty';
+            emptyCurrent.innerHTML = '<td colspan="8">No offers have been recorded against this parts list.</td>';
+            body.appendChild(emptyCurrent);
+        }
+
+        if (historicalOffers.length) {
+            const historicalHeader = document.createElement('tr');
+            historicalHeader.className = 'offer-group-row offer-group-history historical-offer-row d-none';
+            historicalHeader.innerHTML = `<td colspan="8"><i class="bi bi-clock-history me-1"></i>Offers from other parts lists <span class="badge text-bg-secondary ms-1">${historicalOffers.length}</span></td>`;
+            body.appendChild(historicalHeader);
+            historicalOffers.forEach(offer => body.appendChild(buildSupplierOfferRow(offer, row, cached, true)));
+        }
+        setHistoricalOffersExpanded(false, historicalOffers.length);
+    }
+
+    function buildSupplierOfferRow(offer, row, cached, isHistorical) {
             const price = Number.parseFloat(offer.unit_price);
             const isUsable = !offer.is_no_bid && Number.isFinite(price) && price >= 0 && offer.supplier_id && offer.currency_id;
             const sourceListId = Number.parseInt(offer.parts_list_id, 10);
             const sourceQuoteId = Number.parseInt(offer.quote_id, 10);
             const hasSource = Boolean(offer.has_source) && Number.isFinite(sourceListId) && Number.isFinite(sourceQuoteId);
-            const sourceLink = hasSource
-                ? `<a class="btn btn-sm btn-outline-secondary" href="/parts_list/parts-lists/${sourceListId}/supplier-quotes/${sourceQuoteId}/source" target="_blank" rel="noopener" title="${escapeHtml(offer.source_artifact_filename || 'Open saved source')}"><i class="bi bi-paperclip"></i><span class="visually-hidden">Open source</span></a>`
+            const sourceControl = hasSource
+                ? `<button type="button" class="btn btn-sm btn-outline-secondary preview-source-btn" title="Preview ${escapeHtml(offer.source_artifact_filename || 'saved source')}"><i class="bi bi-eye"></i><span class="visually-hidden">Preview source</span></button>`
                 : '<span class="text-muted">-</span>';
-            const isHistorical = Number.isFinite(sourceListId) && sourceListId !== Number.parseInt(LIST_ID, 10);
             const supplierMeta = [];
             if (isHistorical) {
                 supplierMeta.push(`<span title="${escapeHtml(offer.parts_list_name || '')}">From PL #${sourceListId}</span>`);
@@ -995,6 +1115,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 offer.test_certs ? `<div class="offer-detail"><span class="offer-detail-label">Test:</span> ${escapeHtml(offer.test_certs)}</div>` : ''
             ].filter(Boolean).join('');
             const tr = document.createElement('tr');
+            tr.className = isHistorical ? 'historical-offer-row d-none' : 'current-offer-row';
             tr.innerHTML = `
                 <td class="offer-supplier"><div class="offer-primary">${escapeHtml(offer.supplier_name || '-')}</div>${supplierMetaHtml}</td>
                 <td class="offer-part"><div class="offer-primary">${escapeHtml(offer.quoted_part_number || '-')}</div>${manufacturer}</td>
@@ -1008,15 +1129,21 @@ document.addEventListener('DOMContentLoaded', function() {
                     <div class="offer-detail"><span class="offer-detail-label">Cond:</span> ${escapeHtml(offer.condition_code || '-')}</div>
                 </td>
                 <td class="offer-certs">${certDetails || '<span class="text-muted">-</span>'}</td>
-                <td class="offer-source">${sourceLink}</td>
-                <td class="offer-actions"><button type="button" class="btn btn-sm btn-primary" ${isUsable ? '' : 'disabled'}>${offer.is_no_bid ? 'No bid' : 'Use'}</button></td>`;
+                <td class="offer-source">${sourceControl}</td>
+                <td class="offer-actions"><button type="button" class="btn btn-sm btn-primary use-offer-btn" ${isUsable ? '' : 'disabled'}>${offer.is_no_bid ? 'No bid' : 'Use'}</button></td>`;
+            const previewButton = tr.querySelector('.preview-source-btn');
+            if (previewButton) {
+                previewButton.addEventListener('click', () => showSupplierSourcePreview(offer, previewButton));
+            }
             if (isUsable) {
-                const useButton = tr.querySelector('button');
+                const useButton = tr.querySelector('.use-offer-btn');
                 useButton.addEventListener('click', () => applySupplierOffer(offer, row, cached, useButton));
             }
-            body.appendChild(tr);
-        });
+            return tr;
     }
+
+    document.getElementById('simple-source-preview-close')?.addEventListener('click', resetSupplierSourcePreview);
+    document.getElementById('simpleSupplierOfferModal')?.addEventListener('hidden.bs.modal', resetSupplierSourcePreview);
 
     async function applySupplierOffer(offer, row, cached, button) {
         if (button) {

@@ -156,6 +156,96 @@
     border-radius: 0.5rem;
 }
 
+#simpleSupplierOfferModal.source-preview-open #simple-offers-table-wrap {
+    max-height: 38vh;
+}
+
+.simple-offer-groups-toolbar {
+    min-height: 2.25rem;
+}
+
+.offer-group-row td {
+    padding: 0.55rem 0.65rem !important;
+    font-weight: 700;
+    vertical-align: middle;
+}
+
+.offer-group-current td {
+    color: #146c43;
+    background: #eaf7ef !important;
+    border-left: 4px solid #198754;
+}
+
+.offer-group-history td {
+    color: #495057;
+    background: #f1f3f5 !important;
+    border-left: 4px solid #6c757d;
+}
+
+.current-offer-row td:first-child {
+    border-left: 4px solid rgba(25, 135, 84, 0.45);
+}
+
+.historical-offer-row td:first-child {
+    border-left: 4px solid rgba(108, 117, 125, 0.35);
+}
+
+.offer-group-empty td {
+    padding: 0.75rem !important;
+    color: #6c757d;
+    background: #fbfcfc;
+    font-style: italic;
+}
+
+.simple-offer-source-preview {
+    border: 1px solid #ced4da;
+    border-radius: 0.5rem;
+    overflow: hidden;
+    background: #fff;
+}
+
+.simple-offer-source-preview .preview-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.55rem 0.75rem;
+    border-bottom: 1px solid #dee2e6;
+    background: #f8f9fa;
+}
+
+.simple-offer-source-preview .preview-filename {
+    min-width: 0;
+    overflow: hidden;
+    color: #495057;
+    font-size: 0.8rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.simple-offer-source-preview .preview-body {
+    position: relative;
+    height: 42vh;
+    min-height: 300px;
+    background: #eef1f4;
+}
+
+.simple-offer-source-preview iframe {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: #fff;
+}
+
+.simple-offer-source-preview .preview-status {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    text-align: center;
+}
+
 .supplier-offer-table {
     min-width: 980px;
     table-layout: fixed;
@@ -1277,6 +1367,10 @@
                 <div id="simple-offers-empty" class="alert alert-light border mb-0" style="display: none;">
                     No supplier offers for this part were found.
                 </div>
+                <div id="simple-offer-groups-toolbar" class="simple-offer-groups-toolbar d-flex align-items-center justify-content-between gap-2 mb-2" style="display: none !important;">
+                    <div id="simple-current-offers-summary" class="small fw-semibold text-success"></div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="simple-toggle-history-btn"></button>
+                </div>
                 <div id="simple-offers-table-wrap" class="table-responsive" style="display: none;">
                     <table class="table table-sm table-hover align-middle mb-0 supplier-offer-table">
                         <thead class="table-light">
@@ -1294,6 +1388,25 @@
                         <tbody id="simple-offers-table-body"></tbody>
                     </table>
                 </div>
+                <section id="simple-offer-source-preview" class="simple-offer-source-preview mt-3 d-none" aria-label="Supplier offer source preview">
+                    <div class="preview-header">
+                        <strong><i class="bi bi-eye me-1"></i>Source preview</strong>
+                        <span id="simple-source-preview-filename" class="preview-filename flex-grow-1"></span>
+                        <a id="simple-source-download-btn" class="btn btn-sm btn-outline-primary" href="#">
+                            <i class="bi bi-download me-1"></i>Download
+                        </a>
+                        <button type="button" id="simple-source-preview-close" class="btn btn-sm btn-outline-secondary" aria-label="Close source preview">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    </div>
+                    <div class="preview-body">
+                        <div id="simple-source-preview-loading" class="preview-status">
+                            <div><span class="spinner-border spinner-border-sm me-2"></span>Loading source…</div>
+                        </div>
+                        <div id="simple-source-preview-error" class="preview-status text-danger d-none"></div>
+                        <iframe id="simple-source-preview-frame" class="d-none" title="Supplier offer source"></iframe>
+                    </div>
+                </section>
             </div>
         </div>
     </div>
