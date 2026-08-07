@@ -239,7 +239,12 @@
                         </div>
                         <textarea class="form-control mailbox-inline-reply-message" id="mailboxInlineReplyMessage" rows="4" placeholder="Write a quick response…" aria-label="Reply message"></textarea>
                         <div class="mailbox-inline-reply-footer">
-                            <span class="small text-muted">Ctrl/Cmd + Enter to send</span>
+                            <div class="d-flex align-items-center gap-2">
+                                <button type="button" class="btn btn-sm btn-outline-primary" id="mailboxInlineReplyAiBtn" title="Generate a draft, or use typed text as instructions">
+                                    <i class="bi bi-stars me-1"></i>AI draft
+                                </button>
+                                <span class="small text-muted">Empty = suggest a reply; typed text = instructions</span>
+                            </div>
                             <div class="d-flex gap-2">
                                 <button type="button" class="btn btn-sm btn-link text-decoration-none" id="mailboxFullReplyBtn">Full composer</button>
                                 <button type="button" class="btn btn-sm btn-outline-secondary" id="mailboxInlineReplyCancelBtn">Cancel</button>
@@ -545,6 +550,7 @@ const mailboxInlineReply = document.getElementById('mailboxInlineReply');
 const mailboxInlineReplyMode = document.getElementById('mailboxInlineReplyMode');
 const mailboxInlineReplyRecipients = document.getElementById('mailboxInlineReplyRecipients');
 const mailboxInlineReplyMessage = document.getElementById('mailboxInlineReplyMessage');
+const mailboxInlineReplyAiBtn = document.getElementById('mailboxInlineReplyAiBtn');
 const mailboxInlineReplySendBtn = document.getElementById('mailboxInlineReplySendBtn');
 const mailboxFullReplyBtn = document.getElementById('mailboxFullReplyBtn');
 const mailboxInlineReplyCancelBtn = document.getElementById('mailboxInlineReplyCancelBtn');
@@ -796,6 +802,45 @@ async function sendMailboxInlineReply() {
         mailboxInlineReplySendBtn.disabled = false;
         mailboxInlineReplyMessage.disabled = false;
         mailboxInlineReplySendBtn.innerHTML = originalHtml;
+    }
+}
+
+async function generateMailboxInlineReply() {
+    const messageId = selectedMessage?.id;
+    if (!messageId) {
+        showToast('Select an email first', 'warning');
+        return;
+    }
+
+    const instruction = mailboxInlineReplyMessage?.value.trim() || '';
+    const originalHtml = mailboxInlineReplyAiBtn.innerHTML;
+    mailboxInlineReplyAiBtn.disabled = true;
+    mailboxInlineReplySendBtn.disabled = true;
+    mailboxInlineReplyMessage.disabled = true;
+    mailboxInlineReplyAiBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Drafting…';
+    try {
+        const response = await fetch('/emails/graph/reply/suggest', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({message_id: messageId, instruction})
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || 'AI draft failed');
+        }
+        mailboxInlineReplyMessage.value = result.draft || '';
+        mailboxInlineReplyMessage.focus();
+        mailboxInlineReplyMessage.setSelectionRange(
+            mailboxInlineReplyMessage.value.length,
+            mailboxInlineReplyMessage.value.length
+        );
+    } catch (error) {
+        showToast(error.message || 'AI draft failed', 'error');
+    } finally {
+        mailboxInlineReplyAiBtn.disabled = false;
+        mailboxInlineReplySendBtn.disabled = false;
+        mailboxInlineReplyMessage.disabled = false;
+        mailboxInlineReplyAiBtn.innerHTML = originalHtml;
     }
 }
 
@@ -3153,6 +3198,7 @@ mailboxReplyAllBtn?.addEventListener('click', () => {
 mailboxInlineReplyCancelBtn?.addEventListener('click', () => closeMailboxInlineReply());
 mailboxInlineReplyCloseBtn?.addEventListener('click', () => closeMailboxInlineReply());
 mailboxInlineReplySendBtn?.addEventListener('click', sendMailboxInlineReply);
+mailboxInlineReplyAiBtn?.addEventListener('click', generateMailboxInlineReply);
 mailboxFullReplyBtn?.addEventListener('click', () => {
     const replyAll = mailboxInlineReplyAll;
     closeMailboxInlineReply();
@@ -4378,6 +4424,7 @@ mailboxManualPartsInput?.addEventListener('keydown', (event) => {
 
 .mailbox-inline-reply-footer {
     margin-top: 10px;
+    flex-wrap: wrap;
 }
 
 .reading-supplier-actions {
