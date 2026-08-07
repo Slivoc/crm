@@ -6,6 +6,7 @@
     let extendedStoryIndex = 0;
     let shownStoryIds = new Set();
     let extendedBatchActive = false;
+    let lastFactId = null;
     let storyScrollTimer;
     // Retained by the dormant legacy scene helpers below; those scenes are no
     // longer scheduled now that the presentation has one deterministic loop.
@@ -264,8 +265,26 @@
 
     function sceneIsActive() {
         if (extendedBatchActive) return true;
-        return ['storyScreen', 'newsIntroScreen', 'portalScreen', 'headlineScreen', 'todayHeadlinesScreen']
+        return ['storyScreen', 'newsIntroScreen', 'portalScreen', 'headlineScreen', 'todayHeadlinesScreen', 'factScreen']
             .some(id => el(id).classList.contains('active'));
+    }
+
+    async function showAerospaceFact() {
+        const facts = data.aerospace_facts || [];
+        if (!facts.length || sceneIsActive()) return false;
+        let choices = facts.filter(item => item.id !== lastFactId);
+        if (!choices.length) choices = facts;
+        const item = choices[Math.floor(Math.random() * choices.length)];
+        lastFactId = item.id;
+        text('factTopic', item.topic); text('factTitle', item.title); text('factSubtitle', item.subtitle);
+        el('factList').innerHTML = (item.facts || []).map(fact => `<li>${escapeHtml(fact)}</li>`).join('');
+        text('factCredit', item.image_credit ? `Image: ${item.image_credit}` : '');
+        el('factImage').style.backgroundImage = item.image_url ? `url("${escapeAttribute(item.image_url)}")` : '';
+        el('factScreen').classList.toggle('has-image', Boolean(item.image_url));
+        el('sceneWipe').classList.add('active'); await wait(450); el('factScreen').classList.add('active');
+        await wait(600); el('sceneWipe').classList.remove('active'); await wait(18000);
+        el('sceneWipe').classList.add('active'); await wait(450); el('factScreen').classList.remove('active');
+        await wait(600); el('sceneWipe').classList.remove('active'); return true;
     }
 
     async function showTodayHeadlines() {
@@ -357,6 +376,7 @@
         while (true) {
             await wait(MAIN_DASHBOARD_DURATION);
             await showPortalActivity();
+            await showAerospaceFact();
             await showExtendedStoryBatch();
         }
     }
