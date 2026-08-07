@@ -5481,6 +5481,20 @@ def get_parts_list_quantity_suggestions(list_id):
         return jsonify(success=False, message=str(e)), 500
 
 
+def _get_email_part_price_guidance(part):
+    """Return the pricing guidance already calculated for a parts-list result."""
+    guide_prices = [
+        price
+        for bom in (part.get('bom_details') or [])
+        if (price := _safe_float(bom.get('guide_price'))) is not None and price > 0
+    ]
+    return {
+        # Match the parts-list table, which displays the highest BOM guide price.
+        'bom_guide_price': max(guide_prices) if guide_prices else None,
+        'avg_sale_price': _safe_float(part.get('avg_sale_price')),
+    }
+
+
 def process_ils_suppliers(email_data, cursor, cutoff_date, request_cutoff, list_id=None):
     """
     Process ILS supplier data (existing logic)
@@ -5560,6 +5574,7 @@ def process_ils_suppliers(email_data, cursor, cutoff_date, request_cutoff, list_
                 'line_id': line_id,
                 'line_number': part.get('line_number')
             }
+            part_data.update(_get_email_part_price_guidance(part))
 
             # Query status flags including supplier-specific email tracking
             if line_id:
@@ -5769,6 +5784,7 @@ def process_suggested_suppliers(email_data, cursor, request_cutoff, list_id=None
                 'supplier_last_quote_date': _format_date_display(status['supplier_last_quote_date']),
                 'recent_request_date': _format_date_display(status['recent_request_date']),
             }
+            part_data.update(_get_email_part_price_guidance(part))
 
             suppliers_map[supplier_id]['parts'].append(part_data)
             logging.info(

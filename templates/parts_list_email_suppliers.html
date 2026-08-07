@@ -564,7 +564,7 @@
             </div>
 
             <!-- Parts Table -->
-            <div>
+            <div class="table-responsive">
                 <div class="d-flex justify-content-between align-items-center mb-2">
                     <strong class="text-muted">
                         {{ supplier.parts|length }} part{{ 's' if supplier.parts|length != 1 else '' }} available:
@@ -589,6 +589,8 @@
                             <th class="text-center" style="width:70px;">Line #</th>
                             <th>Part Number</th>
                             <th class="text-center">Qty Needed</th>
+                            <th class="text-end text-nowrap">BOM Guide</th>
+                            <th class="text-end text-nowrap">Avg Sales Price</th>
                             {% if mode == 'ils' %}
                                 <th class="text-center">Their Qty</th>
                                 <th>Condition</th>
@@ -632,6 +634,20 @@
                             </td>
                             <td><strong>{{ part.part_number }}</strong></td>
                             <td class="text-center"><span class="badge bg-primary">{{ part.quantity }}</span></td>
+                            <td class="text-end text-nowrap">
+                                {% if part.bom_guide_price is not none %}
+                                    <strong class="text-primary">£{{ "%.2f"|format(part.bom_guide_price) }}</strong>
+                                {% else %}
+                                    <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end text-nowrap">
+                                {% if part.avg_sale_price is not none %}
+                                    <strong class="text-success">£{{ "%.2f"|format(part.avg_sale_price) }}</strong>
+                                {% else %}
+                                    <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
                             {% if mode == 'ils' %}
                                 <td class="text-center">{{ part.ils_quantity }}</td>
                                 <td><span class="badge bg-info">{{ part.condition or 'N/A' }}</span></td>
@@ -698,7 +714,7 @@
 
                         {% if recent_no_bid_parts %}
                         <tr>
-                            <td colspan="{% if mode == 'ils' %}8{% else %}7{% endif %}" class="bg-danger bg-opacity-10 text-danger fw-semibold">
+                            <td colspan="{% if mode == 'ils' %}10{% else %}9{% endif %}" class="bg-danger bg-opacity-10 text-danger fw-semibold">
                                 Recent No Bid (last 30 days)
                             </td>
                         </tr>
@@ -729,6 +745,20 @@
                             </td>
                             <td><strong>{{ part.part_number }}</strong></td>
                             <td class="text-center"><span class="badge bg-primary">{{ part.quantity }}</span></td>
+                            <td class="text-end text-nowrap">
+                                {% if part.bom_guide_price is not none %}
+                                    <strong class="text-primary">£{{ "%.2f"|format(part.bom_guide_price) }}</strong>
+                                {% else %}
+                                    <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end text-nowrap">
+                                {% if part.avg_sale_price is not none %}
+                                    <strong class="text-success">£{{ "%.2f"|format(part.avg_sale_price) }}</strong>
+                                {% else %}
+                                    <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
                             {% if mode == 'ils' %}
                                 <td class="text-center">{{ part.ils_quantity }}</td>
                                 <td><span class="badge bg-info">{{ part.condition or 'N/A' }}</span></td>
