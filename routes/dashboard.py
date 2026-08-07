@@ -9,11 +9,13 @@ import json
 import os
 import re
 import uuid
+from urllib.parse import urlparse
 from openai import OpenAI
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
 TV_IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png', 'webp'}
+TV_FACT_PROVIDER = 'perplexity_sonar_pro'
 
 
 def _monthly_target_pace(now=None):
@@ -72,6 +74,28 @@ def _tv_employee(conn):
         WHERE id = 1
     ''').fetchone()
     return dict(row) if row else {'name': '', 'description': '', 'image_path': ''}
+
+
+def _tv_facts(conn, status='approved'):
+    rows = conn.execute('''
+        SELECT id, topic, title, subtitle, facts, image_url, image_credit, source_urls
+        FROM office_dashboard_facts
+        WHERE status = ?
+        ORDER BY updated_at DESC, id DESC
+    ''', (status,)).fetchall()
+    facts = []
+    for row in rows:
+        item = dict(row)
+        for field in ('facts', 'source_urls'):
+            value = item.get(field)
+            if isinstance(value, str):
+                try:
+                    value = json.loads(value)
+                except json.JSONDecodeError:
+                    value = []
+            item[field] = value or []
+        facts.append(item)
+    return facts
 
 
 def _tv_payload(conn):
@@ -248,6 +272,7 @@ def _tv_payload(conn):
             'quote_requests': [dict(row) for row in portal_quote_requests],
         },
         'employee': employee,
+        'aerospace_facts': _tv_facts(conn),
     }
 
 
@@ -276,6 +301,7 @@ def tv_control():
     conn = get_db()
     try:
         payload = _tv_payload(conn)
+        draft_facts = _tv_facts(conn, 'draft')
         cached_briefings = conn.execute('''
             SELECT article_id, created_at
             FROM news_ai_summaries
@@ -296,6 +322,8 @@ def tv_control():
         employee=payload['employee'],
         news=payload['news'],
         updated_at=payload['updated_at'],
+        approved_facts=payload['aerospace_facts'],
+        draft_facts=draft_facts,
     )
 
 
@@ -320,6 +348,117 @@ def _perplexity_api_key(conn):
         ('PERPLEXITY_API_KEY', 'perplexity_api_key', 'PERPLEXITY_API_KEY'),
     ).fetchone()
     return row['value'] if row and row['value'] else None
+
+
+def _require_tv_admin():
+    return current_user.is_authenticated and current_user.is_administrator()
+
+
+def _clean_json_response(value):
+    value = (value or '').strip()
+    if value.startswith('```'):
+        value = value.split('\n', 1)[1].rsplit('```', 1)[0]
+    return json.loads(value)
+
+
+def _perplexity_json(api_key, prompt):
+    completion = OpenAI(api_key=api_key, base_url='https://api.perplexity.ai').chat.completions.create(
+        model='sonar-pro',
+        messages=[
+            {'role': 'system', 'content': 'You are a meticulous aerospace researcher. Return only valid JSON.'},
+            {'role': 'user', 'content': prompt},
+        ],
+    )
+    return _clean_json_response(completion.choices[0].message.content)
+
+
+@dashboard_bp.route('/tv/facts/suggestions', methods=['POST'])
+@login_required
+def suggest_tv_fact_topics():
+    if not _require_tv_admin():
+        return jsonify({'error': 'Administrator access required'}), 403
+    conn = get_db()
+    try:
+        key = _perplexity_api_key(conn)
+        if not key:
+            return jsonify({'error': 'Perplexity API key is not configured'}), 503
+        existing = conn.execute('SELECT topic FROM office_dashboard_facts ORDER BY created_at DESC LIMIT 30').fetchall()
+        topics = _perplexity_json(key, f'''Suggest 8 varied aerospace topics for short educational office-TV slides.
+Mix notable helicopters, aircraft, engineering milestones, spaceflight and unusual aerospace technology.
+Avoid these recent topics: {', '.join(row['topic'] for row in existing) or 'none'}.
+Return JSON exactly as {{"topics":[{{"topic":"specific subject","teaser":"one intriguing sentence, maximum 18 words"}}]}}.''')
+        suggestions = topics.get('topics', []) if isinstance(topics, dict) else []
+        return jsonify({'topics': suggestions[:8]})
+    except Exception:
+        current_app.logger.exception('Unable to suggest TV aerospace topics')
+        return jsonify({'error': 'Topic suggestions are temporarily unavailable'}), 502
+    finally:
+        conn.close()
+
+
+@dashboard_bp.route('/tv/facts/generate', methods=['POST'])
+@login_required
+def generate_tv_fact():
+    if not _require_tv_admin():
+        return jsonify({'error': 'Administrator access required'}), 403
+    topic = str((request.get_json(silent=True) or {}).get('topic') or '').strip()
+    if not topic or len(topic) > 180:
+        return jsonify({'error': 'Choose a topic of no more than 180 characters'}), 400
+    conn = get_db()
+    try:
+        key = _perplexity_api_key(conn)
+        if not key:
+            return jsonify({'error': 'Perplexity API key is not configured'}), 503
+        slide = _perplexity_json(key, f'''Research this aerospace topic and create a factual TV slide: {topic}
+Return JSON exactly with: "title" (max 8 words), "subtitle" (max 16 words), "facts" (array of exactly 4 concise facts, each max 20 words), "image_url" (optional direct HTTPS image URL from Wikimedia Commons only, otherwise empty), "image_credit" (creator/source/licence if an image is used, otherwise empty), and "source_urls" (2-4 authoritative HTTPS research URLs).
+Prefer manufacturer, museum, government and reputable reference sources. Every claim must be supported. Do not use markdown or invent specifications.''')
+        facts = slide.get('facts') if isinstance(slide, dict) else None
+        sources = slide.get('source_urls') if isinstance(slide, dict) else None
+        if not isinstance(facts, list) or len(facts) != 4 or not isinstance(sources, list):
+            raise ValueError('Invalid fact slide response')
+        image_url = str(slide.get('image_url') or '').strip()
+        if image_url and (urlparse(image_url).scheme != 'https' or 'wikimedia.org' not in urlparse(image_url).netloc.lower()):
+            image_url = ''
+        row = conn.execute('''
+            INSERT INTO office_dashboard_facts
+                (topic, title, subtitle, facts, image_url, image_credit, source_urls, model_provider, created_by)
+            VALUES (?, ?, ?, ?::jsonb, ?, ?, ?::jsonb, ?, ?)
+            RETURNING id
+        ''', (topic, str(slide.get('title') or topic)[:180], str(slide.get('subtitle') or '')[:240],
+              json.dumps([str(fact)[:240] for fact in facts]), image_url,
+              str(slide.get('image_credit') or '')[:300], json.dumps([str(url) for url in sources[:4]]),
+              TV_FACT_PROVIDER, current_user.id)).fetchone()
+        conn.commit()
+        return jsonify({'success': True, 'id': row['id']})
+    except Exception:
+        conn.rollback()
+        current_app.logger.exception('Unable to generate TV aerospace fact for %s', topic)
+        return jsonify({'error': 'The slide could not be generated'}), 502
+    finally:
+        conn.close()
+
+
+@dashboard_bp.route('/tv/facts/<int:fact_id>/status', methods=['POST'])
+@login_required
+def update_tv_fact_status(fact_id):
+    if not _require_tv_admin():
+        return jsonify({'error': 'Administrator access required'}), 403
+    status = request.form.get('status', '')
+    if status not in {'approved', 'archived'}:
+        return jsonify({'error': 'Invalid slide status'}), 400
+    conn = get_db()
+    try:
+        conn.execute('''
+            UPDATE office_dashboard_facts
+            SET status = ?, approved_by = CASE WHEN ? = 'approved' THEN ? ELSE approved_by END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ''', (status, status, current_user.id, fact_id))
+        conn.commit()
+        flash('Aerospace slide approved for TV.' if status == 'approved' else 'Aerospace slide removed.', 'success')
+    finally:
+        conn.close()
+    return redirect(url_for('dashboard.tv_control'))
 
 
 @dashboard_bp.route('/tv/news/<int:article_id>/extended')

@@ -5,11 +5,47 @@
     <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
         <div>
             <h2 class="fw-bold mb-1">TV Dashboard Control</h2>
-            <p class="text-muted mb-0">Manage the featured employee and preview the exact news queue shown on the office TV.</p>
+            <p class="text-muted mb-0">Manage the featured employee, AI aerospace slides and the news queue shown on the office TV.</p>
         </div>
         <a class="btn btn-outline-primary" href="{{ url_for('dashboard.tv_dashboard') }}" target="_blank" rel="noopener">
             <i class="bi bi-display me-1"></i> Open TV mode
         </a>
+    </div>
+
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-white py-3">
+            <h5 class="mb-1">AI aerospace facts</h5>
+            <small class="text-muted">Perplexity researches topics and drafts a slide. Nothing appears on TV until you approve it.</small>
+        </div>
+        <div class="card-body">
+            <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+                <button class="btn btn-primary" type="button" id="suggestFactTopics"><i class="bi bi-stars me-1"></i> Suggest topics</button>
+                <span class="small text-muted" id="factAiStatus">Choose a suggestion to generate a researched draft.</span>
+            </div>
+            <div class="row g-3 mb-4" id="factTopicSuggestions"></div>
+            {% if draft_facts %}
+            <h6 class="text-uppercase text-muted small fw-bold">Awaiting approval</h6>
+            <div class="row g-3">
+                {% for fact in draft_facts %}
+                <div class="col-lg-6">
+                    <article class="border rounded p-3 h-100">
+                        {% if fact.image_url %}<img src="{{ fact.image_url }}" class="rounded w-100 mb-3" alt="" style="height:180px;object-fit:cover">{% endif %}
+                        <span class="badge bg-warning text-dark mb-2">Draft</span><h5>{{ fact.title }}</h5>
+                        <p class="text-muted small">{{ fact.subtitle }}</p>
+                        <ul class="small">{% for item in fact.facts %}<li class="mb-1">{{ item }}</li>{% endfor %}</ul>
+                        {% if fact.image_credit %}<p class="small text-muted">Image: {{ fact.image_credit }}</p>{% endif %}
+                        <div class="small mb-3">{% for source in fact.source_urls %}<a href="{{ source }}" target="_blank" rel="noopener noreferrer" class="me-2">Source {{ loop.index }}</a>{% endfor %}</div>
+                        <div class="d-flex gap-2">
+                            <form method="post" action="{{ url_for('dashboard.update_tv_fact_status', fact_id=fact.id) }}"><input type="hidden" name="status" value="approved"><button class="btn btn-success btn-sm">Approve for TV</button></form>
+                            <form method="post" action="{{ url_for('dashboard.update_tv_fact_status', fact_id=fact.id) }}"><input type="hidden" name="status" value="archived"><button class="btn btn-outline-danger btn-sm">Reject</button></form>
+                        </div>
+                    </article>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            <p class="small text-muted mt-3 mb-0">{{ approved_facts|length }} approved slide{{ '' if approved_facts|length == 1 else 's' }} currently rotate on the TV. External pictures are accepted only from Wikimedia HTTPS URLs and remain subject to human review.</p>
+        </div>
     </div>
 
     <div class="row g-4">
@@ -108,4 +144,31 @@
         </div>
     </div>
 </div>
+<script>
+(() => {
+    const button = document.getElementById('suggestFactTopics');
+    const status = document.getElementById('factAiStatus');
+    const suggestions = document.getElementById('factTopicSuggestions');
+    const setBusy = (busy, message) => { button.disabled = busy; status.textContent = message; };
+    button.addEventListener('click', async () => {
+        setBusy(true, 'Researching a varied set of topics…'); suggestions.innerHTML = '';
+        try {
+            const response = await fetch('{{ url_for("dashboard.suggest_tv_fact_topics") }}', {method:'POST', headers:{'Accept':'application/json'}});
+            const body = await response.json(); if (!response.ok) throw new Error(body.error);
+            suggestions.innerHTML = body.topics.map(item => `<div class="col-md-6 col-xl-3"><button type="button" class="btn btn-outline-secondary text-start h-100 w-100 fact-topic" data-topic="${escapeHtml(item.topic)}"><strong>${escapeHtml(item.topic)}</strong><small class="d-block mt-1">${escapeHtml(item.teaser)}</small></button></div>`).join('');
+            status.textContent = 'Select a topic to create a draft slide.';
+        } catch (error) { status.textContent = error.message || 'Suggestions unavailable.'; }
+        finally { button.disabled = false; }
+    });
+    suggestions.addEventListener('click', async event => {
+        const topicButton = event.target.closest('.fact-topic'); if (!topicButton) return;
+        suggestions.querySelectorAll('button').forEach(item => item.disabled = true); status.textContent = `Researching ${topicButton.dataset.topic} and designing its slide…`;
+        try {
+            const response = await fetch('{{ url_for("dashboard.generate_tv_fact") }}', {method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'}, body:JSON.stringify({topic:topicButton.dataset.topic})});
+            const body = await response.json(); if (!response.ok) throw new Error(body.error); window.location.reload();
+        } catch (error) { status.textContent = error.message || 'Slide generation failed.'; suggestions.querySelectorAll('button').forEach(item => item.disabled = false); }
+    });
+    function escapeHtml(value) { const node=document.createElement('div'); node.textContent=value || ''; return node.innerHTML; }
+})();
+</script>
 {% endblock %}
