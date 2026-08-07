@@ -155,7 +155,7 @@
         try {
             const response = await fetch('{{ url_for("dashboard.suggest_tv_fact_topics") }}', {method:'POST', headers:{'Accept':'application/json'}});
             const body = await response.json(); if (!response.ok) throw new Error(body.error);
-            suggestions.innerHTML = body.topics.map(item => `<div class="col-md-6 col-xl-3"><button type="button" class="btn btn-outline-secondary text-start h-100 w-100 fact-topic" data-topic="${escapeHtml(item.topic)}"><strong>${escapeHtml(item.topic)}</strong><small class="d-block mt-1">${escapeHtml(item.teaser)}</small></button></div>`).join('');
+            suggestions.innerHTML = body.topics.map(item => `<div class="col-md-6 col-xl-3"><button type="button" class="btn btn-outline-secondary text-start h-100 w-100 fact-topic" data-topic="${escapeHtml(item.topic)}" data-image-query="${escapeHtml(item.image_query)}"><strong>${escapeHtml(item.topic)}</strong><small class="d-block mt-1">${escapeHtml(item.teaser)}</small></button></div>`).join('');
             status.textContent = 'Select a topic to create a draft slide.';
         } catch (error) { status.textContent = error.message || 'Suggestions unavailable.'; }
         finally { button.disabled = false; }
@@ -164,7 +164,7 @@
         const topicButton = event.target.closest('.fact-topic'); if (!topicButton) return;
         suggestions.querySelectorAll('button').forEach(item => item.disabled = true); status.textContent = `Researching ${topicButton.dataset.topic} and designing its slide…`;
         try {
-            const response = await fetch('{{ url_for("dashboard.generate_tv_fact") }}', {method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'}, body:JSON.stringify({topic:topicButton.dataset.topic})});
+            const response = await fetch('{{ url_for("dashboard.generate_tv_fact") }}', {method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'}, body:JSON.stringify({topic:topicButton.dataset.topic,image_query:topicButton.dataset.imageQuery || ''})});
             const body = await response.json(); if (!response.ok) throw new Error(body.error); window.location.reload();
         } catch (error) { status.textContent = error.message || 'Slide generation failed.'; suggestions.querySelectorAll('button').forEach(item => item.disabled = false); }
     });
