@@ -9,13 +9,17 @@ import json
 import os
 import re
 import uuid
-from urllib.parse import urlparse
 from openai import OpenAI
+import requests
+from PIL import Image
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
 TV_IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png', 'webp'}
 TV_FACT_PROVIDER = 'perplexity_sonar_pro'
+COMMONS_API_URL = 'https://commons.wikimedia.org/w/api.php'
+TV_FACT_FALLBACK_IMAGE = 'img/aerospace-fact-fallback.svg'
+IMAGE_DOWNLOAD_LIMIT = 12 * 1024 * 1024
 
 
 def _monthly_target_pace(now=None):
@@ -78,7 +82,11 @@ def _tv_employee(conn):
 
 def _tv_facts(conn, status='approved'):
     rows = conn.execute('''
-        SELECT id, topic, title, subtitle, facts, image_url, image_credit, source_urls
+        SELECT id, topic, title, subtitle, facts,
+               CASE WHEN image_file_path <> ''
+                    THEN '/dashboard/tv/facts/image/' || id
+                    ELSE image_url END AS image_url,
+               image_credit, source_urls
         FROM office_dashboard_facts
         WHERE status = ?
         ORDER BY updated_at DESC, id DESC
@@ -372,6 +380,131 @@ def _perplexity_json(api_key, prompt):
     return _clean_json_response(completion.choices[0].message.content)
 
 
+def _plain_metadata(value):
+    """Turn Commons HTML metadata into searchable, display-safe text."""
+    return re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', str(value or ''))).strip()
+
+
+def _commons_image_candidates(image_query):
+    response = requests.get(COMMONS_API_URL, params={
+        'action': 'query', 'generator': 'search', 'gsrsearch': image_query,
+        'gsrnamespace': 6, 'gsrlimit': 12, 'prop': 'imageinfo',
+        'iiprop': 'url|size|mime|extmetadata', 'format': 'json', 'formatversion': 2,
+    }, headers={'User-Agent': 'SprouttCRM/1.0 (office TV image retrieval)'}, timeout=12)
+    response.raise_for_status()
+    return (response.json().get('query') or {}).get('pages') or []
+
+
+def _commons_match(candidate, image_query, specific_subject=False):
+    info = (candidate.get('imageinfo') or [{}])[0]
+    metadata = info.get('extmetadata') or {}
+    searchable = ' '.join([
+        candidate.get('title', ''),
+        _plain_metadata((metadata.get('ImageDescription') or {}).get('value')),
+        _plain_metadata((metadata.get('Categories') or {}).get('value')),
+    ]).lower()
+    words = [word for word in re.findall(r'[a-z0-9]+', image_query.lower()) if len(word) > 2]
+    matched = sum(word in searchable for word in words)
+    confidence = 'HIGH' if words and matched >= max(2, len(words) - 1) else 'MEDIUM'
+    if specific_subject and confidence != 'HIGH':
+        return None
+    width, height = int(info.get('width') or 0), int(info.get('height') or 0)
+    mime = str(info.get('mime') or '')
+    if width < 1200 or height < 600 or width <= height or mime not in {'image/jpeg', 'image/png', 'image/webp'}:
+        return None
+    return {'info': info, 'metadata': metadata, 'confidence': confidence, 'score': matched + width / 10000}
+
+
+def _specific_image_subject(topic, image_query):
+    """Be conservative when a query appears to name a model, standard, or component."""
+    text = f'{topic} {image_query}'
+    return bool(re.search(r'\b[A-Z]{1,5}[- ]?\d{2,4}[A-Z0-9-]*\b', text) or
+                re.search(r'\b(?:Airbus|Boeing|Bell|Leonardo|Sikorsky|Robinson|AW\d|H\d{3})\b', text, re.I))
+
+
+def _download_fact_image(url, fact_id, mime):
+    response = requests.get(url, stream=True, timeout=20,
+                            headers={'User-Agent': 'SprouttCRM/1.0 (office TV image cache)'})
+    response.raise_for_status()
+    content = response.content
+    if len(content) > IMAGE_DOWNLOAD_LIMIT:
+        raise ValueError('Image exceeds download limit')
+    extension = {'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp'}.get(mime)
+    if not extension:
+        raise ValueError('Unsupported image format')
+    folder = os.path.join(current_app.config['UPLOAD_FOLDER'], 'office-dashboard', 'facts')
+    os.makedirs(folder, exist_ok=True)
+    filename = f'fact-{fact_id}-{uuid.uuid4().hex}.{extension}'
+    path = os.path.join(folder, filename)
+    with open(path, 'wb') as image_file:
+        image_file.write(content)
+    with Image.open(path) as image:
+        image.verify()
+    return f'office-dashboard/facts/{filename}'
+
+
+def _generic_stock_image(image_query, fact_id):
+    """Try configured stock-photo APIs for generic subjects, in stated priority order."""
+    pexels_key = os.getenv('PEXELS_API_KEY') or current_app.config.get('PEXELS_API_KEY')
+    if pexels_key:
+        response = requests.get('https://api.pexels.com/v1/search',
+                                params={'query': image_query, 'orientation': 'landscape', 'per_page': 10},
+                                headers={'Authorization': pexels_key}, timeout=12)
+        response.raise_for_status()
+        for photo in response.json().get('photos') or []:
+            if int(photo.get('width') or 0) >= 1200 and int(photo.get('width') or 0) > int(photo.get('height') or 0):
+                path = _download_fact_image((photo.get('src') or {}).get('large2x'), fact_id, 'image/jpeg')
+                author = str(photo.get('photographer') or '')[:300]
+                return {'image_file_path': path, 'image_source': 'Pexels',
+                        'image_source_url': photo.get('url', ''), 'image_author': author,
+                        'image_license': 'Pexels licence',
+                        'image_attribution': f'{author} / Pexels' if author else 'Pexels'}
+    pixabay_key = os.getenv('PIXABAY_API_KEY') or current_app.config.get('PIXABAY_API_KEY')
+    if pixabay_key:
+        response = requests.get('https://pixabay.com/api/', params={
+            'key': pixabay_key, 'q': image_query, 'image_type': 'photo',
+            'orientation': 'horizontal', 'safesearch': 'true', 'per_page': 10,
+        }, timeout=12)
+        response.raise_for_status()
+        for photo in response.json().get('hits') or []:
+            if int(photo.get('imageWidth') or 0) >= 1200:
+                path = _download_fact_image(photo.get('largeImageURL'), fact_id, 'image/jpeg')
+                author = str(photo.get('user') or '')[:300]
+                return {'image_file_path': path, 'image_source': 'Pixabay',
+                        'image_source_url': photo.get('pageURL', ''), 'image_author': author,
+                        'image_license': 'Pixabay content licence',
+                        'image_attribution': f'{author} / Pixabay' if author else 'Pixabay'}
+    return None
+
+
+def _retrieve_fact_image(image_query, topic, fact_id):
+    """Select and locally cache a defensibly matched Commons image."""
+    specific = _specific_image_subject(topic, image_query)
+    matches = []
+    for candidate in _commons_image_candidates(image_query):
+        match = _commons_match(candidate, image_query, specific)
+        if match:
+            matches.append((match, candidate))
+    if not matches:
+        stock_image = None if specific else _generic_stock_image(image_query, fact_id)
+        if stock_image:
+            return stock_image
+        return {'image_file_path': TV_FACT_FALLBACK_IMAGE, 'image_source': 'local',
+                'image_attribution': 'MGC Aerospace educational slide fallback'}
+    match, candidate = max(matches, key=lambda item: item[0]['score'])
+    info, metadata = match['info'], match['metadata']
+    path = _download_fact_image(info['url'], fact_id, info.get('mime'))
+    author = _plain_metadata((metadata.get('Artist') or {}).get('value'))[:300]
+    licence = _plain_metadata((metadata.get('LicenseShortName') or {}).get('value'))[:120]
+    attribution = _plain_metadata((metadata.get('Attribution') or {}).get('value'))[:500]
+    if not attribution:
+        attribution = ', '.join(value for value in (author, licence, 'Wikimedia Commons') if value)
+    return {'image_file_path': path, 'image_source': 'Wikimedia Commons',
+            'image_source_url': info.get('descriptionurl') or info.get('url'),
+            'image_author': author, 'image_license': licence,
+            'image_attribution': attribution, 'image_confidence': match['confidence']}
+
+
 @dashboard_bp.route('/tv/facts/suggestions', methods=['POST'])
 @login_required
 def suggest_tv_fact_topics():
@@ -383,10 +516,47 @@ def suggest_tv_fact_topics():
         if not key:
             return jsonify({'error': 'Perplexity API key is not configured'}), 503
         existing = conn.execute('SELECT topic FROM office_dashboard_facts ORDER BY created_at DESC LIMIT 30').fetchall()
-        topics = _perplexity_json(key, f'''Suggest 8 varied aerospace topics for short educational office-TV slides.
-Mix notable helicopters, aircraft, engineering milestones, spaceflight and unusual aerospace technology.
+        topics = _perplexity_json(key, f'''Suggest 8 varied topics for short educational office-TV slides for an aerospace hardware distributor serving helicopter operators, MROs and aviation customers.
+
+The purpose is to make staff gradually more knowledgeable about the aircraft, customers, missions, components, engineering and commercial realities behind the parts we sell.
+
+Choose a genuinely varied mix. Do NOT default mainly to random aircraft types.
+
+Across each batch, aim to cover several of these categories:
+
+- Aircraft and helicopter types relevant to commercial, HEMS, SAR, offshore and military aviation
+- Aerospace hardware: rivets, blind rivets, solid rivets, lockbolts, screws, nuts, washers, inserts and other fasteners
+- Engineering concepts: grip length, countersinking, fatigue, vibration, load paths, galvanic corrosion, material selection
+- Materials and finishes: aluminium, titanium, stainless steel, cadmium plating, passivation, anodising, corrosion protection
+- Maintenance and MRO: inspections, component replacement, repair practices, aircraft downtime
+- Quality and traceability: EASA Form 1, FAA 8130-3, certificates of conformity, batch traceability, approved parts
+- Aviation terminology: AOG, MRO, operator, OEM, rotable, consumable, shipset, line maintenance, base maintenance
+- Missions: HEMS, SAR, offshore transport, firefighting, police aviation, military support
+- Customer/industry knowledge: helicopter operators, maintenance organisations, aviation hubs and why particular regions use certain aircraft
+- Supply-chain/commercial concepts: MOQ, lead time, obsolescence, spot buying, strategic pricing, why apparently simple parts can become scarce
+- Manufacturing: thread rolling, riveting, machining, heat treatment, plating and aerospace fastener production
+- Engineering curiosities and 'small part, big consequence' examples
+- Occasional wider aerospace subjects such as spaceflight, historic engineering milestones or unusual aircraft technology
+
+Prefer topics which answer questions such as:
+'What is a blind rivet?'
+'Why are aerospace fasteners traceable?'
+'Why does corrosion matter so much offshore?'
+'What does AOG actually mean?'
+'Why can a £5 fastener ground a £10m aircraft?'
+'How can a helicopter glide after engine failure?'
+'Why do some helicopters have skids and others wheels?'
+
+Aircraft-specific topics should normally have a reason they are interesting to our business, customers or missions rather than simply being a random aircraft.
+
 Avoid these recent topics: {', '.join(row['topic'] for row in existing) or 'none'}.
-Return JSON exactly as {{"topics":[{{"topic":"specific subject","teaser":"one intriguing sentence, maximum 18 words"}}]}}.''')
+
+Make topics specific enough that another AI can later research and write a factual slide about them.
+
+Return JSON exactly as:
+{{"topics":[{{"topic":"specific subject","teaser":"one intriguing sentence, maximum 18 words","image_query":"concise literal image search query"}}]}}
+
+Do not include category names, explanations or any text outside the JSON.''')
         suggestions = topics.get('topics', []) if isinstance(topics, dict) else []
         return jsonify({'topics': suggestions[:8]})
     except Exception:
@@ -401,7 +571,9 @@ Return JSON exactly as {{"topics":[{{"topic":"specific subject","teaser":"one in
 def generate_tv_fact():
     if not _require_tv_admin():
         return jsonify({'error': 'Administrator access required'}), 403
-    topic = str((request.get_json(silent=True) or {}).get('topic') or '').strip()
+    request_data = request.get_json(silent=True) or {}
+    topic = str(request_data.get('topic') or '').strip()
+    image_query = str(request_data.get('image_query') or '').strip()[:180]
     if not topic or len(topic) > 180:
         return jsonify({'error': 'Choose a topic of no more than 180 characters'}), 400
     conn = get_db()
@@ -410,24 +582,33 @@ def generate_tv_fact():
         if not key:
             return jsonify({'error': 'Perplexity API key is not configured'}), 503
         slide = _perplexity_json(key, f'''Research this aerospace topic and create a factual TV slide: {topic}
-Return JSON exactly with: "title" (max 8 words), "subtitle" (max 16 words), "facts" (array of exactly 4 concise facts, each max 20 words), "image_url" (optional direct HTTPS image URL from Wikimedia Commons only, otherwise empty), "image_credit" (creator/source/licence if an image is used, otherwise empty), and "source_urls" (2-4 authoritative HTTPS research URLs).
+Return JSON exactly with: "title" (max 8 words), "subtitle" (max 16 words), "facts" (array of exactly 4 concise facts, each max 20 words), "image_query" (a concise literal search phrase for a relevant photograph), and "source_urls" (2-4 authoritative HTTPS research URLs).
 Prefer manufacturer, museum, government and reputable reference sources. Every claim must be supported. Do not use markdown or invent specifications.''')
         facts = slide.get('facts') if isinstance(slide, dict) else None
         sources = slide.get('source_urls') if isinstance(slide, dict) else None
         if not isinstance(facts, list) or len(facts) != 4 or not isinstance(sources, list):
             raise ValueError('Invalid fact slide response')
-        image_url = str(slide.get('image_url') or '').strip()
-        if image_url and (urlparse(image_url).scheme != 'https' or 'wikimedia.org' not in urlparse(image_url).netloc.lower()):
-            image_url = ''
+        image_query = image_query or str(slide.get('image_query') or '').strip()[:180] or topic
         row = conn.execute('''
             INSERT INTO office_dashboard_facts
-                (topic, title, subtitle, facts, image_url, image_credit, source_urls, model_provider, created_by)
-            VALUES (?, ?, ?, ?::jsonb, ?, ?, ?::jsonb, ?, ?)
+                (topic, title, subtitle, facts, image_query, source_urls, model_provider, created_by)
+            VALUES (?, ?, ?, ?::jsonb, ?, ?::jsonb, ?, ?)
             RETURNING id
         ''', (topic, str(slide.get('title') or topic)[:180], str(slide.get('subtitle') or '')[:240],
-              json.dumps([str(fact)[:240] for fact in facts]), image_url,
-              str(slide.get('image_credit') or '')[:300], json.dumps([str(url) for url in sources[:4]]),
+              json.dumps([str(fact)[:240] for fact in facts]), image_query, json.dumps([str(url) for url in sources[:4]]),
               TV_FACT_PROVIDER, current_user.id)).fetchone()
+        try:
+            image = _retrieve_fact_image(image_query, topic, row['id'])
+        except Exception:
+            current_app.logger.exception('Unable to retrieve TV fact image for %s', topic)
+            image = {'image_file_path': TV_FACT_FALLBACK_IMAGE, 'image_source': 'local',
+                     'image_attribution': 'MGC Aerospace educational slide fallback'}
+        conn.execute('''UPDATE office_dashboard_facts SET
+            image_file_path = ?, image_source = ?, image_source_url = ?, image_author = ?,
+            image_license = ?, image_attribution = ?, image_credit = ?, image_retrieved_at = CURRENT_TIMESTAMP
+            WHERE id = ?''', (image.get('image_file_path', ''), image.get('image_source', ''),
+            image.get('image_source_url', ''), image.get('image_author', ''), image.get('image_license', ''),
+            image.get('image_attribution', ''), image.get('image_attribution', '')[:300], row['id']))
         conn.commit()
         return jsonify({'success': True, 'id': row['id']})
     except Exception:
@@ -436,6 +617,22 @@ Prefer manufacturer, museum, government and reputable reference sources. Every c
         return jsonify({'error': 'The slide could not be generated'}), 502
     finally:
         conn.close()
+
+
+@dashboard_bp.route('/tv/facts/image/<int:fact_id>')
+@login_required
+def tv_fact_image(fact_id):
+    conn = get_db()
+    try:
+        row = conn.execute('SELECT image_file_path FROM office_dashboard_facts WHERE id = ?', (fact_id,)).fetchone()
+    finally:
+        conn.close()
+    path = row['image_file_path'] if row else ''
+    if path == TV_FACT_FALLBACK_IMAGE:
+        return send_from_directory(current_app.static_folder, path)
+    if not path.startswith('office-dashboard/facts/'):
+        return send_from_directory(current_app.static_folder, TV_FACT_FALLBACK_IMAGE)
+    return send_from_directory(current_app.config['UPLOAD_FOLDER'], path)
 
 
 @dashboard_bp.route('/tv/facts/<int:fact_id>/status', methods=['POST'])
