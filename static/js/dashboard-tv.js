@@ -344,14 +344,11 @@
 
     function initialiseDeepDivePreview() {
         const params = new URLSearchParams(window.location.search);
-        const previewFrame = window.frameElement;
-        const embeddedPreview = previewFrame?.dataset.preview === 'deepdive';
-        if (params.get('preview') !== 'deepdive' && !embeddedPreview) return false;
+        if (params.get('preview') !== 'deepdive') return false;
 
         const slides = buildDeepDiveSlides();
-        const deepdiveId = embeddedPreview ? previewFrame.dataset.deepdiveId : params.get('deepdive_id');
-        const pageValue = embeddedPreview ? previewFrame.dataset.page : params.get('page');
-        const requestedPage = Math.max(Number.parseInt(pageValue || '1', 10) - 1, 0);
+        const deepdiveId = params.get('deepdive_id');
+        const requestedPage = Math.max(Number.parseInt(params.get('page') || '1', 10) - 1, 0);
         const matchingSlides = slides.filter(slide => String(slide.deepdive.id) === String(deepdiveId));
         const slide = matchingSlides.find(item => item.pageIndex === requestedPage) || matchingSlides[0] || slides[0];
         if (!slide) {
