@@ -22,7 +22,7 @@
     const CUSTOMER_FOCUS_DURATION = 16000;
     const DEEPDIVE_DURATION = 16000;
     const DEEPDIVE_PAGE_DURATION = 6500;
-    const DEEPDIVE_SLIDES_PER_CYCLE = 3;
+    const DEEPDIVE_SLIDES_PER_CYCLE = 1;
     const DEEPDIVE_COMPANIES_PER_SLIDE = 7;
     const EXTENDED_STORIES_PER_CYCLE = 5;
     const el = id => document.getElementById(id);
