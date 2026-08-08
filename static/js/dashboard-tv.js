@@ -342,6 +342,27 @@
         }).join('');
     }
 
+    function initialiseDeepDivePreview() {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('preview') !== 'deepdive') return false;
+
+        const slides = buildDeepDiveSlides();
+        const deepdiveId = params.get('deepdive_id');
+        const requestedPage = Math.max(Number.parseInt(params.get('page') || '1', 10) - 1, 0);
+        const matchingSlides = slides.filter(slide => String(slide.deepdive.id) === String(deepdiveId));
+        const slide = matchingSlides.find(item => item.pageIndex === requestedPage) || matchingSlides[0] || slides[0];
+        if (!slide) {
+            document.body.classList.remove('deepdive-preview-mode');
+            return true;
+        }
+
+        const position = slides.indexOf(slide);
+        renderDeepDiveSlide(slide, position, slides.length);
+        text('deepDivePosition', `Paused preview · Landscape ${position + 1} of ${slides.length}`);
+        el('deepDiveScreen').classList.add('active');
+        return true;
+    }
+
     async function showGeographicDeepDive() {
         const slides = buildDeepDiveSlides();
         if (!slides.length || sceneIsActive()) return false;
@@ -605,7 +626,9 @@
     fitDashboard();
     render(data);
     window.addEventListener('resize', fitDashboard);
+    const deepDivePreviewMode = initialiseDeepDivePreview();
     window.addEventListener('keydown', event => {
+        if (deepDivePreviewMode) return;
         if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
         if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
             event.preventDefault();
@@ -614,8 +637,10 @@
             leaveManualFactMode();
         }
     });
-    setInterval(() => { newsIndex += 1; renderNews(); }, 9000);
-    setInterval(refresh, 15000);
-    runPresentation();
+    if (!deepDivePreviewMode) {
+        setInterval(() => { newsIndex += 1; renderNews(); }, 9000);
+        setInterval(refresh, 15000);
+        runPresentation();
+    }
 
 })();

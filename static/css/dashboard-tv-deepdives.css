@@ -30,6 +30,9 @@
 .deepdive-screen.active { opacity: 1; visibility: visible; }
 .deepdive-screen > * { position: relative; z-index: 1; }
 
+.deepdive-preview-mode .tv-shell { visibility: hidden; }
+.deepdive-preview-mode .deepdive-screen.active { transition: none; }
+
 .deepdive-screen > header,
 .deepdive-screen > footer {
     display: flex;

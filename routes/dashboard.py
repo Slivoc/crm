@@ -590,6 +590,7 @@ def tv_control():
         approved_facts=payload['aerospace_facts'],
         draft_facts=draft_facts,
         previously_approved_facts=previously_approved_facts,
+        geographic_deepdives=payload['geographic_deepdives'],
     )
 
 

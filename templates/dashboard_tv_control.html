@@ -1,11 +1,22 @@
 {% extends "base.html" %}
 
+{% block head %}
+<style>
+    .tv-landscape-row { transition: background-color .15s ease; }
+    .tv-landscape-row:hover { background: var(--bs-light); }
+    .tv-landscape-metric { min-width: 92px; }
+    .tv-preview-frame { width: 100%; aspect-ratio: 16 / 9; border: 0; background: #061424; }
+    .tv-preview-modal .modal-dialog { max-width: min(1500px, 96vw); }
+    .tv-preview-modal .modal-body { padding: 0; overflow: hidden; background: #061424; }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid py-3">
     <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
         <div>
             <h2 class="fw-bold mb-1">TV Dashboard Control</h2>
-            <p class="text-muted mb-0">Manage the featured employee, AI aerospace slides and the news queue shown on the office TV.</p>
+            <p class="text-muted mb-0">Manage the featured employee, preview geographic landscapes, and review the AI and news slides shown on the office TV.</p>
         </div>
         <a class="btn btn-outline-primary" href="{{ url_for('dashboard.tv_dashboard') }}" target="_blank" rel="noopener">
             <i class="bi bi-display me-1"></i> Open TV mode
@@ -20,6 +31,61 @@
             </div>
             <a class="btn btn-primary" href="{{ url_for('dashboard.tv_fact_control') }}"><i class="bi bi-stars me-1"></i> Manage fact slides</a>
         </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mb-4" id="geographicDeepDivePreviews">
+        <div class="card-header bg-white py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <div>
+                <h5 class="mb-1">Geographic deep-dive slides</h5>
+                <small class="text-muted">Preview the exact, paused slide that will appear in the TV rotation. Each page contains up to seven organisations.</small>
+            </div>
+            <span class="badge bg-light text-dark">{{ geographic_deepdives|length }} landscapes</span>
+        </div>
+        {% if geographic_deepdives %}
+        <div class="list-group list-group-flush">
+            {% for deepdive in geographic_deepdives %}
+            {% set page_count = ((deepdive.companies|length + 6) // 7) %}
+            <article class="list-group-item tv-landscape-row p-3 p-lg-4">
+                <div class="d-flex flex-column flex-xl-row justify-content-between gap-3">
+                    <div class="flex-grow-1 min-width-0">
+                        <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                            <h6 class="mb-0">{{ deepdive.title }}</h6>
+                            <span class="badge bg-primary-subtle text-primary-emphasis">{{ deepdive.country }}</span>
+                            {% if deepdive.focus %}<span class="badge bg-light text-dark">{{ deepdive.focus }}</span>{% endif %}
+                        </div>
+                        <div class="d-flex flex-wrap gap-3 mt-3">
+                            <div class="tv-landscape-metric"><strong class="d-block">{{ deepdive.company_count }}</strong><small class="text-muted">Organisations</small></div>
+                            <div class="tv-landscape-metric"><strong class="d-block text-success">{{ deepdive.matched_count }}</strong><small class="text-muted">Confirmed</small></div>
+                            <div class="tv-landscape-metric"><strong class="d-block text-warning">{{ deepdive.review_count }}</strong><small class="text-muted">Review</small></div>
+                            <div class="tv-landscape-metric"><strong class="d-block text-danger">{{ deepdive.gap_count }}</strong><small class="text-muted">Gaps</small></div>
+                            <div class="tv-landscape-metric"><strong class="d-block">£{{ '{:,.0f}'.format(deepdive.lifetime_spend or 0) }}</strong><small class="text-muted">Lifetime spend</small></div>
+                        </div>
+                    </div>
+                    <div class="d-flex flex-wrap align-items-center justify-content-xl-end gap-2">
+                        {% for page_number in range(1, page_count + 1) %}
+                        <button type="button"
+                                class="btn btn-sm btn-primary tv-deepdive-preview"
+                                data-bs-toggle="modal"
+                                data-bs-target="#deepDivePreviewModal"
+                                data-preview-title="{{ deepdive.title }} · Page {{ page_number }} of {{ page_count }}"
+                                data-preview-url="{{ url_for('dashboard.tv_dashboard', preview='deepdive', deepdive_id=deepdive.id, page=page_number) }}">
+                            <i class="bi bi-play-fill me-1"></i> Preview{% if page_count > 1 %} {{ page_number }}{% endif %}
+                        </button>
+                        {% endfor %}
+                        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('geo_deepdive.view_deepdive', deepdive_id=deepdive.id) }}">
+                            Open document
+                        </a>
+                    </div>
+                </div>
+            </article>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="card-body p-5 text-center text-muted">
+            <i class="bi bi-map fs-2 d-block mb-2"></i>
+            No structured geographic company data is available for TV preview yet.
+        </div>
+        {% endif %}
     </div>
 
     <div class="row g-4">
@@ -118,8 +184,46 @@
         </div>
     </div>
 </div>
+
+<div class="modal fade tv-preview-modal" id="deepDivePreviewModal" tabindex="-1" aria-labelledby="deepDivePreviewTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg">
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title" id="deepDivePreviewTitle">TV landscape preview</h5>
+                    <small class="text-muted">Paused at the selected slide. The live TV advances automatically.</small>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <a class="btn btn-sm btn-outline-primary" id="deepDivePreviewNewTab" href="#" target="_blank" rel="noopener">
+                        <i class="bi bi-box-arrow-up-right me-1"></i> Full screen
+                    </a>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <iframe class="tv-preview-frame" id="deepDivePreviewFrame" title="Geographic deep-dive TV slide preview"></iframe>
+            </div>
+        </div>
+    </div>
+</div>
 <script>
 (() => {
+    const previewModal = document.getElementById('deepDivePreviewModal');
+    const previewFrame = document.getElementById('deepDivePreviewFrame');
+    const previewTitle = document.getElementById('deepDivePreviewTitle');
+    const previewNewTab = document.getElementById('deepDivePreviewNewTab');
+    previewModal?.addEventListener('show.bs.modal', event => {
+        const button = event.relatedTarget;
+        const previewUrl = button?.dataset.previewUrl || '';
+        previewTitle.textContent = button?.dataset.previewTitle || 'TV landscape preview';
+        previewFrame.src = previewUrl;
+        previewNewTab.href = previewUrl;
+    });
+    previewModal?.addEventListener('hidden.bs.modal', () => {
+        previewFrame.removeAttribute('src');
+        previewNewTab.href = '#';
+    });
+
     const button = document.getElementById('suggestFactTopics');
     const status = document.getElementById('factAiStatus');
     const suggestions = document.getElementById('factTopicSuggestions');

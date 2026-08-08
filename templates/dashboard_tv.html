@@ -8,9 +8,9 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-pace.css') }}?v=20260802-1">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-customers.css') }}?v=20260801-1">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-focus.css') }}?v=20260808-3">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-deepdives.css') }}?v=20260808-1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-deepdives.css') }}?v=20260808-2">
 </head>
-<body>
+<body{% if request.args.get('preview') == 'deepdive' %} class="deepdive-preview-mode"{% endif %}>
 <main class="tv-shell" id="tvDashboard">
     <header class="tv-header">
         <div class="brand"><span class="brand-mark">S</span><span>SPROUTT</span></div>
@@ -197,6 +197,6 @@
 
 <div class="wipe" id="sceneWipe"></div>
 <script>window.TV_DASHBOARD_DATA = {{ initial_data|tojson }};</script>
-<script src="{{ url_for('static', filename='js/dashboard-tv.js') }}?v=20260808-6"></script>
+<script src="{{ url_for('static', filename='js/dashboard-tv.js') }}?v=20260808-7"></script>
 </body>
 </html>
