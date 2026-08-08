@@ -3589,9 +3589,14 @@ def get_country_customers_by_tag(country, tag_id):
     db = get_db_connection()
     try:
         query = """
-            SELECT DISTINCT c.*, s.name as assigned_salesperson_name
+            SELECT DISTINCT c.*, s.name as assigned_salesperson_name,
+                   cs.status as status,
+                   p.name as priority_name,
+                   p.color as priority_color
             FROM customers c
             LEFT JOIN salespeople s ON c.salesperson_id = s.id
+            LEFT JOIN customer_status cs ON c.status_id = cs.id
+            LEFT JOIN priorities p ON c.priority = p.id
             JOIN customer_industry_tags ct ON c.id = ct.customer_id
             WHERE LOWER(c.country) = LOWER(?) AND ct.tag_id = ?
             ORDER BY c.name

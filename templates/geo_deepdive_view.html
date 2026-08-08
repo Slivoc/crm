@@ -1,2099 +1,565 @@
-<!-- templates/geo_deepdive_view.html -->
 {% extends "base.html" %}
+
+{% macro status_badge(customer) -%}
+{% set status_label = customer.status or 'Not set' %}
+<button type="button"
+        class="status-badge clickable"
+        data-status="{{ status_label|lower }}"
+        data-status-id="{{ customer.status_id or '' }}"
+        data-customer-id="{{ customer.id }}"
+        title="Advance customer status">
+    <span class="status-dot" aria-hidden="true"></span>{{ status_label }}
+</button>
+{%- endmacro %}
 
 {% block title %}{{ deepdive.title }}{% endblock %}
 
-{% block content %}
-<div class="container-fluid">
-    <div class="row">
-        <!-- Content Column -->
-        <div class="col-lg-8">
-            <div class="d-flex justify-content-between align-items-center mb-4">
-               <h2 class="fw-bold mb-1">{{ deepdive.title }}</h2>
-                <div class="btn-group">
-                    <button type="button" class="btn btn-primary" onclick="showImproveContentModal()">
-                        <i class="fas fa-magic"></i> Improve Content
-                    </button>
-                    <a href="{{ url_for('geo_deepdive.edit_deepdive', deepdive_id=deepdive.id) }}"
-                       class="btn btn-outline-primary">
-                        <i class="fas fa-edit"></i> Edit
-                    </a>
-                    <a href="{{ url_for('geo_deepdive.list_deepdives') }}" class="btn btn-secondary">
-                        <i class="fas fa-arrow-left"></i> Back
-                    </a>
-                </div>
-            </div>
+{% block extra_css %}
+{{ super() }}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/geo_deepdive.css') }}">
+{% endblock %}
 
-            <div class="card mb-3">
-                <div class="card-header d-flex justify-content-between align-items-center gap-2">
-                    <h6 class="mb-0"><i class="fas fa-building"></i> Companies Mentioned by AI</h6>
-                    <div class="d-flex align-items-center gap-2">
-                        <span class="badge bg-secondary">{{ mentioned_companies|length }}</span>
-                        {% if mentioned_companies %}<button class="btn btn-sm btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#companySummaryModal"><i class="fas fa-chart-pie me-1"></i>Summary</button>{% endif %}
-                        <form method="post" action="{{ url_for('geo_deepdive.extract_deepdive_companies_route', deepdive_id=deepdive.id) }}">
-                            <button class="btn btn-sm btn-outline-primary" type="submit"><i class="fas fa-magic me-1"></i>{{ 'Refresh' if mentioned_companies else 'Extract companies' }}</button>
-                        </form>
+{% block content %}
+<main class="geo-workspace"
+      id="geoDeepDiveWorkspace"
+      data-deepdive-id="{{ deepdive.id }}"
+      data-penetration-url="{{ url_for('geo_deepdive.get_market_penetration_data', deepdive_id=deepdive.id) }}"
+      data-customer-search-url="{{ url_for('customers.customer_search') }}"
+      data-curated-url="{{ url_for('geo_deepdive.add_customer_to_deepdive_api', deepdive_id=deepdive.id) }}"
+      data-customer-link-url="{{ url_for('geo_deepdive.add_customer_link_api', deepdive_id=deepdive.id) }}"
+      data-improve-url="{{ url_for('geo_deepdive.improve_deepdive_content_api', deepdive_id=deepdive.id) }}"
+      data-apply-url="{{ url_for('geo_deepdive.apply_improvement_route', deepdive_id=deepdive.id) }}">
+
+    <header class="deepdive-hero">
+        <div class="deepdive-hero-main">
+            <a class="hero-back" href="{{ url_for('geo_deepdive.list_deepdives') }}">
+                <i class="bi bi-arrow-left" aria-hidden="true"></i> All geographic deep dives
+            </a>
+            <div class="hero-kicker">
+                <span class="fi fi-{{ deepdive.country|lower }}" aria-hidden="true"></span>
+                Market intelligence / {{ deepdive.country_name }} / {{ deepdive.tag_description or 'Aviation' }}
+            </div>
+            <h1>{{ deepdive.title }}</h1>
+            <p class="hero-description">A living view of the organisations shaping this market and where they intersect with the CRM.</p>
+            <div class="hero-meta">
+                <span><i class="bi bi-arrow-repeat"></i> Updated
+                    {% if deepdive.updated_at and deepdive.updated_at.strftime is defined %}
+                        {{ deepdive.updated_at.strftime('%d %b %Y') }}
+                    {% else %}
+                        {{ deepdive.updated_at or 'Unknown' }}
+                    {% endif %}
+                </span>
+                <span><i class="bi bi-database"></i> {{ company_summary.total }} market records</span>
+                <span><i class="bi bi-link-45deg"></i> {{ customer_links|length }} narrative links</span>
+            </div>
+        </div>
+        <div class="hero-actions">
+            <button type="button" class="btn btn-light" data-action="improve-content">
+                <i class="bi bi-stars"></i> Refresh intelligence
+            </button>
+            <a class="btn btn-outline-light" href="{{ url_for('geo_deepdive.edit_deepdive', deepdive_id=deepdive.id) }}">
+                <i class="bi bi-pencil"></i> Edit document
+            </a>
+        </div>
+    </header>
+
+    <section class="coverage-strip" aria-label="Market coverage summary">
+        <article class="coverage-metric">
+            <span class="metric-label">Mapped organisations</span>
+            <strong>{{ company_summary.total }}</strong>
+            <small>{{ company_summary.main_count }} principal participants</small>
+        </article>
+        <article class="coverage-metric coverage-metric-emphasis">
+            <span class="metric-label">Confirmed CRM coverage</span>
+            <strong>{{ company_summary.coverage_percent }}%</strong>
+            <div class="metric-progress" aria-label="{{ company_summary.coverage_percent }} percent confirmed coverage">
+                <span style="width: {{ company_summary.coverage_percent }}%"></span>
+            </div>
+            <small>{{ company_summary.matched_count }} of {{ company_summary.total }} market records</small>
+        </article>
+        <article class="coverage-metric">
+            <span class="metric-label">CRM records in segment</span>
+            <strong>{{ country_customers|length }}</strong>
+            <small>{{ deepdive.country_name }} / {{ deepdive.tag_description or 'Aviation' }}</small>
+        </article>
+        <article class="coverage-metric {% if company_summary.unmatched_main %}coverage-metric-alert{% endif %}">
+            <span class="metric-label">Priority coverage gaps</span>
+            <strong>{{ company_summary.unmatched_main|length }}</strong>
+            <small>{{ company_summary.suggested_count }} possible CRM {{ 'match' if company_summary.suggested_count == 1 else 'matches' }}</small>
+        </article>
+        <article class="coverage-metric">
+            <span class="metric-label">Focus accounts</span>
+            <strong>{{ curated_customers|length }}</strong>
+            <small>Manually curated for follow-up</small>
+        </article>
+    </section>
+
+    <nav class="workspace-nav" aria-label="Deep dive sections">
+        <div class="nav nav-tabs" role="tablist">
+            <button class="nav-link active" id="briefing-tab" data-bs-toggle="tab" data-bs-target="#briefing-pane"
+                    data-section="briefing" type="button" role="tab" aria-controls="briefing-pane" aria-selected="true">
+                <i class="bi bi-file-earmark-text"></i> Briefing
+            </button>
+            <button class="nav-link" id="market-map-tab" data-bs-toggle="tab" data-bs-target="#market-map-pane"
+                    data-section="market-map" type="button" role="tab" aria-controls="market-map-pane" aria-selected="false">
+                <i class="bi bi-buildings"></i> Market map <span>{{ company_summary.total }}</span>
+            </button>
+            <button class="nav-link" id="crm-coverage-tab" data-bs-toggle="tab" data-bs-target="#crm-coverage-pane"
+                    data-section="crm-coverage" type="button" role="tab" aria-controls="crm-coverage-pane" aria-selected="false">
+                <i class="bi bi-bullseye"></i> CRM coverage <span>{{ country_customers|length }}</span>
+            </button>
+            <button class="nav-link" id="connections-tab" data-bs-toggle="tab" data-bs-target="#connections-pane"
+                    data-section="connections" type="button" role="tab" aria-controls="connections-pane" aria-selected="false">
+                <i class="bi bi-link-45deg"></i> Connections <span>{{ customer_links|length }}</span>
+            </button>
+        </div>
+    </nav>
+
+    <div class="tab-content workspace-content">
+        <section class="tab-pane fade show active" id="briefing-pane" role="tabpanel" aria-labelledby="briefing-tab" tabindex="0">
+            <div class="briefing-layout">
+                <article class="document-panel">
+                    <header class="panel-heading document-heading">
+                        <div>
+                            <span class="section-eyebrow">Research document</span>
+                            <h2>Market briefing</h2>
+                        </div>
+                        <div class="document-hint">
+                            <i class="bi bi-link-45deg"></i>
+                            Select text or click a bold organisation to connect it to the CRM.
+                        </div>
+                    </header>
+                    <div class="markdown-content" id="contentDisplay">
+                        {{ deepdive.processed_content | markdown | safe }}
+                    </div>
+                </article>
+
+                <aside class="briefing-rail">
+                    <section class="rail-panel">
+                        <header class="rail-heading">
+                            <div>
+                                <span class="section-eyebrow">Account value</span>
+                                <h3>Pipeline footprint</h3>
+                            </div>
+                            <i class="bi bi-bar-chart-line"></i>
+                        </header>
+                        <div id="penetrationChart" class="penetration-chart" aria-live="polite">
+                            <div class="loading-state"><span class="spinner-border spinner-border-sm"></span> Loading CRM value…</div>
+                        </div>
+                    </section>
+
+                    <section class="rail-panel gap-panel">
+                        <header class="rail-heading">
+                            <div>
+                                <span class="section-eyebrow">Next best work</span>
+                                <h3>Priority gaps</h3>
+                            </div>
+                            <span class="count-box">{{ company_summary.unmatched_main|length }}</span>
+                        </header>
+                        {% if company_summary.unmatched_main %}
+                        <div class="gap-list">
+                            {% for company in company_summary.unmatched_main[:6] %}
+                            <button type="button" class="gap-item" data-open-market-search="{{ company.company_name }}">
+                                <span>
+                                    <strong>{{ company.company_name }}</strong>
+                                    <small>{{ company.company_type or 'Market participant' }}</small>
+                                </span>
+                                <i class="bi bi-arrow-right"></i>
+                            </button>
+                            {% endfor %}
+                        </div>
+                        {% if company_summary.unmatched_main|length > 6 %}
+                        <button type="button" class="text-action" data-open-market-gaps>
+                            View all {{ company_summary.unmatched_main|length }} gaps
+                        </button>
+                        {% endif %}
+                        {% else %}
+                        <div class="empty-compact">
+                            <i class="bi bi-check2-circle"></i>
+                            <span>Every principal participant is matched to a CRM record.</span>
+                        </div>
+                        {% endif %}
+                    </section>
+
+                    <section class="rail-panel intelligence-key">
+                        <span class="section-eyebrow">How to read this</span>
+                        <div><span class="key-dot key-dot-confirmed"></span><strong>Confirmed</strong><small>Linked to an existing CRM customer</small></div>
+                        <div><span class="key-dot key-dot-possible"></span><strong>Possible</strong><small>A match worth reviewing</small></div>
+                        <div><span class="key-dot key-dot-gap"></span><strong>Gap</strong><small>No CRM relationship found</small></div>
+                    </section>
+                </aside>
+            </div>
+        </section>
+
+        <section class="tab-pane fade" id="market-map-pane" role="tabpanel" aria-labelledby="market-map-tab" tabindex="0">
+            <section class="workspace-panel market-map-panel">
+                <header class="panel-heading market-map-heading">
+                    <div>
+                        <span class="section-eyebrow">Structured market objects</span>
+                        <h2>Organisations in the landscape</h2>
+                        <p>Research entities reconciled against live CRM records.</p>
+                    </div>
+                    <form method="post" action="{{ url_for('geo_deepdive.extract_deepdive_companies_route', deepdive_id=deepdive.id) }}">
+                        <button class="btn btn-outline-primary" type="submit">
+                            <i class="bi bi-stars"></i> {{ 'Re-extract records' if mentioned_companies else 'Extract records' }}
+                        </button>
+                    </form>
+                </header>
+
+                <div class="market-controls">
+                    <label class="market-search">
+                        <i class="bi bi-search"></i>
+                        <input type="search" id="marketOrganisationSearch" placeholder="Search organisations, roles or types…" autocomplete="off">
+                    </label>
+                    <div class="filter-group" aria-label="Filter market organisations">
+                        <button class="filter-button active" type="button" data-market-filter="all">All <span>{{ company_summary.total }}</span></button>
+                        <button class="filter-button" type="button" data-market-filter="main">Principal <span>{{ company_summary.main_count }}</span></button>
+                        <button class="filter-button" type="button" data-market-filter="matched">In CRM <span>{{ company_summary.matched_count }}</span></button>
+                        <button class="filter-button" type="button" data-market-filter="suggested">Review <span>{{ company_summary.suggested_count }}</span></button>
+                        <button class="filter-button" type="button" data-market-filter="gap">Gaps <span>{{ company_summary.unmatched_count }}</span></button>
                     </div>
                 </div>
-                <div class="card-body p-0">
-                    {% if mentioned_companies %}
+
+                {% if mentioned_companies %}
+                <div class="organisation-grid" id="marketOrganisationGrid">
+                    {% for company in mentioned_companies %}
+                    {% set relationship = 'matched' if company.match_status in ('matched', 'confirmed') else ('suggested' if company.match_status == 'suggested' else 'gap') %}
+                    <article class="organisation-card"
+                             data-market-organisation
+                             data-name="{{ company.company_name|lower }}"
+                             data-search="{{ (company.company_name ~ ' ' ~ (company.company_type or '') ~ ' ' ~ (company.role_summary or '') ~ ' ' ~ (company.why_relevant or ''))|lower }}"
+                             data-relationship="{{ relationship }}"
+                             data-main="{{ 'true' if company.is_main else 'false' }}">
+                        <header>
+                            <div class="organisation-title">
+                                <div class="organisation-mark">{{ company.company_name[:1]|upper }}</div>
+                                <div>
+                                    <h3>{{ company.company_name }}</h3>
+                                    <div class="organisation-meta">
+                                        <span>{{ company.company_type or 'Other organisation' }}</span>
+                                        {% if company.is_main %}<span class="principal-label"><i class="bi bi-star-fill"></i> Principal</span>{% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                            {% if company.website %}
+                            <a href="{{ company.website }}" target="_blank" rel="noopener" class="external-link" title="Open company website">
+                                <i class="bi bi-box-arrow-up-right"></i>
+                            </a>
+                            {% endif %}
+                        </header>
+
+                        <p class="organisation-role">{{ company.role_summary or 'No role summary has been recorded yet.' }}</p>
+
+                        <div class="relationship-block relationship-{{ relationship }}">
+                            {% if relationship == 'matched' %}
+                            <span class="relationship-label"><i class="bi bi-check2-circle"></i> Confirmed in CRM</span>
+                            <a href="{{ url_for('customers.get_customer_details', customer_id=company.matched_customer_id) }}">{{ company.matched_customer_name }}</a>
+                            {% if company.matched_customer_status %}<small>{{ company.matched_customer_status }}</small>{% endif %}
+                            {% elif relationship == 'suggested' %}
+                            <span class="relationship-label"><i class="bi bi-question-circle"></i> Possible match</span>
+                            <a href="{{ url_for('customers.get_customer_details', customer_id=company.matched_customer_id) }}">{{ company.matched_customer_name }}</a>
+                            <small>{{ company.match_method|replace('_', ' ') }}</small>
+                            {% else %}
+                            <span class="relationship-label"><i class="bi bi-dash-circle"></i> CRM coverage gap</span>
+                            <button type="button" class="text-action" data-link-organisation="{{ company.company_name }}">Find or create customer</button>
+                            {% endif %}
+                        </div>
+
+                        <footer>
+                            <span>Commercial relevance</span>
+                            <p>{{ company.why_relevant or 'Relevance has not been assessed.' }}</p>
+                        </footer>
+                    </article>
+                    {% endfor %}
+                </div>
+                <div class="market-empty-filter" id="marketEmptyFilter" hidden>No organisations match this view.</div>
+                {% else %}
+                <div class="empty-state">
+                    <i class="bi bi-buildings"></i>
+                    <h3>No structured organisations yet</h3>
+                    <p>Extract the named market participants from the briefing to start measuring CRM coverage.</p>
+                </div>
+                {% endif %}
+            </section>
+        </section>
+
+        <section class="tab-pane fade" id="crm-coverage-pane" role="tabpanel" aria-labelledby="crm-coverage-tab" tabindex="0">
+            <div class="coverage-layout">
+                <section class="workspace-panel focus-panel">
+                    <header class="panel-heading table-heading">
+                        <div>
+                            <span class="section-eyebrow">Working set</span>
+                            <h2>Focus accounts</h2>
+                            <p>The customers this team has deliberately pulled into the deep dive.</p>
+                        </div>
+                        <button type="button" class="btn btn-primary" data-action="add-focus-account">
+                            <i class="bi bi-plus-lg"></i> Add account
+                        </button>
+                    </header>
                     <div class="table-responsive">
-                        <table class="table table-hover align-middle mb-0">
+                        <table class="deepdive-table focus-table">
                             <thead>
-                                <tr><th>Company</th><th>Type and role</th><th>CRM match</th><th>Why relevant</th></tr>
+                                <tr>
+                                    <th>Account</th>
+                                    <th>Status</th>
+                                    <th>Fleet</th>
+                                    <th>Est. value</th>
+                                    <th>Working note</th>
+                                    <th><span class="visually-hidden">Actions</span></th>
+                                </tr>
                             </thead>
                             <tbody>
-                                {% for company in mentioned_companies %}
-                                <tr>
-                                    <td style="min-width:190px">
-                                        <strong>{{ company.company_name }}</strong>
-                                        {% if company.is_main %}<span class="badge bg-primary ms-1">Main</span>{% endif %}
-                                        {% if company.website %}<a href="{{ company.website }}" target="_blank" rel="noopener" class="ms-1"><i class="bi bi-box-arrow-up-right"></i></a>{% endif %}
-                                        {% if company.country %}<small class="text-muted d-block">{{ company.country }}</small>{% endif %}
+                                {% for customer in curated_customers %}
+                                <tr data-customer-id="{{ customer.id }}">
+                                    <td>
+                                        <a class="account-link" href="{{ url_for('customers.get_customer_details', customer_id=customer.id) }}">{{ customer.name }}</a>
+                                        <small>{{ customer.assigned_salesperson_name or 'Unassigned' }}</small>
                                     </td>
-                                    <td style="min-width:230px">
-                                        {% if company.company_type %}<span class="badge bg-light text-dark border mb-1">{{ company.company_type }}</span>{% endif %}
-                                        <div class="small">{{ company.role_summary or 'No role summary provided.' }}</div>
+                                    <td>{{ status_badge(customer) }}</td>
+                                    <td>
+                                        <div class="editable-field" data-field="fleet_size" data-customer-id="{{ customer.id }}">
+                                            <span class="field-value">{{ customer.fleet_size if customer.fleet_size is not none else '—' }}</span>
+                                            <input type="number" class="field-input" value="{{ customer.fleet_size or '' }}" min="0" aria-label="Fleet size">
+                                            <button type="button" class="edit-field" title="Edit fleet size"><i class="bi bi-pencil"></i></button>
+                                        </div>
                                     </td>
-                                    <td style="min-width:180px">
-                                        {% if company.matched_customer_id %}
-                                        <a href="{{ url_for('customers.get_customer_details', customer_id=company.matched_customer_id) }}" class="fw-semibold text-decoration-none">{{ company.matched_customer_name }}</a>
-                                        <span class="badge {{ 'bg-success' if company.match_status in ('matched', 'confirmed') else 'bg-warning text-dark' }} d-block mt-1">{{ 'CRM customer' if company.match_status in ('matched', 'confirmed') else 'Possible CRM match' }}</span>
-                                        {% if company.matched_customer_status %}<small class="text-muted">{{ company.matched_customer_status }}</small>{% endif %}
-                                        {% if company.match_method %}<small class="text-muted d-block">Matched by {{ company.match_method|replace('_', ' ') }}</small>{% endif %}
-                                        {% else %}<span class="badge bg-secondary">Not matched</span>{% endif %}
+                                    <td>
+                                        <div class="editable-field" data-field="estimated_revenue" data-customer-id="{{ customer.id }}">
+                                            <span class="field-value">{{ '£{:,.0f}'.format(customer.estimated_revenue) if customer.estimated_revenue else '—' }}</span>
+                                            <input type="number" class="field-input" value="{{ customer.estimated_revenue or '' }}" min="0" step="1000" aria-label="Estimated value">
+                                            <button type="button" class="edit-field" title="Edit estimated value"><i class="bi bi-pencil"></i></button>
+                                        </div>
                                     </td>
-                                    <td class="small" style="min-width:230px">{{ company.why_relevant or 'Not specified.' }}</td>
+                                    <td class="notes-cell">
+                                        <div class="editable-field" data-field="notes" data-customer-id="{{ customer.id }}">
+                                            <span class="field-value">{{ customer.deepdive_notes or 'Add context…' }}</span>
+                                            <textarea class="field-input" rows="2" aria-label="Working note">{{ customer.deepdive_notes or '' }}</textarea>
+                                            <button type="button" class="edit-field" title="Edit working note"><i class="bi bi-pencil"></i></button>
+                                        </div>
+                                    </td>
+                                    <td class="row-actions">
+                                        <button type="button" class="icon-button" onclick="showApolloLeadFinder({{ customer.id }})" title="Find contacts"><i class="bi bi-person-search"></i></button>
+                                        <button type="button" class="icon-button danger" data-remove-focus-account="{{ customer.id }}" title="Remove from focus accounts"><i class="bi bi-x-lg"></i></button>
+                                    </td>
                                 </tr>
+                                {% else %}
+                                <tr><td colspan="6"><div class="table-empty">No focus accounts yet. Add the highest-value organisations you want the team to work.</div></td></tr>
                                 {% endfor %}
                             </tbody>
                         </table>
                     </div>
-                    {% else %}
-                    <div class="p-3 text-muted small">No structured company records are stored for this deep dive. Newly AI-generated deep dives will populate this table.</div>
-                    {% endif %}
-                </div>
-            </div>
+                </section>
 
-            {% if mentioned_companies %}
-            <div class="modal fade" id="companySummaryModal" tabindex="-1" aria-hidden="true">
-                <div class="modal-dialog modal-xl modal-dialog-scrollable">
-                    <div class="modal-content">
-                        <div class="modal-header">
-                            <div><h5 class="modal-title">Market company summary</h5><small class="text-muted">{{ deepdive.title }}</small></div>
-                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                <section class="workspace-panel segment-panel">
+                    <header class="panel-heading table-heading">
+                        <div>
+                            <span class="section-eyebrow">Existing customer base</span>
+                            <h2>{{ deepdive.country_name }} / {{ deepdive.tag_description or 'Aviation' }}</h2>
+                            <p>All CRM records tagged into this geographic segment, whether or not the research mentions them.</p>
                         </div>
-                        <div class="modal-body">
-                            <div class="row g-3 mb-4">
-                                <div class="col-6 col-lg"><div class="border rounded p-3 h-100"><small class="text-muted">Mentioned</small><strong class="fs-3 d-block">{{ company_summary.total }}</strong></div></div>
-                                <div class="col-6 col-lg"><div class="border rounded p-3 h-100"><small class="text-muted">Main participants</small><strong class="fs-3 d-block text-primary">{{ company_summary.main_count }}</strong></div></div>
-                                <div class="col-6 col-lg"><div class="border rounded p-3 h-100"><small class="text-muted">CRM customers</small><strong class="fs-3 d-block text-success">{{ company_summary.matched_count }}</strong></div></div>
-                                <div class="col-6 col-lg"><div class="border rounded p-3 h-100"><small class="text-muted">Possible matches</small><strong class="fs-3 d-block text-warning">{{ company_summary.suggested_count }}</strong></div></div>
-                                <div class="col-6 col-lg"><div class="border rounded p-3 h-100"><small class="text-muted">Unmatched</small><strong class="fs-3 d-block text-secondary">{{ company_summary.unmatched_count }}</strong></div></div>
-                            </div>
-
-                            {% if company_summary.unmatched_main %}
-                            <div class="alert alert-warning">
-                                <strong class="d-block mb-2">Main market participants not matched to CRM</strong>
-                                <div class="d-flex flex-wrap gap-2">{% for company in company_summary.unmatched_main %}<span class="badge bg-warning text-dark">{{ company.company_name }}</span>{% endfor %}</div>
-                            </div>
-                            {% endif %}
-
-                            <div class="accordion" id="companyCategoryAccordion">
-                                {% for category in company_summary.categories %}
-                                <div class="accordion-item">
-                                    <h2 class="accordion-header">
-                                        <button class="accordion-button {{ '' if loop.first else 'collapsed' }}" type="button" data-bs-toggle="collapse" data-bs-target="#companyCategory{{ loop.index }}">
-                                            {{ category.name }} <span class="badge bg-secondary ms-2">{{ category.companies|length }}</span>{% if category.main_count %}<span class="badge bg-primary ms-1">{{ category.main_count }} main</span>{% endif %}
-                                        </button>
-                                    </h2>
-                                    <div id="companyCategory{{ loop.index }}" class="accordion-collapse collapse {{ 'show' if loop.first }}" data-bs-parent="#companyCategoryAccordion">
-                                        <div class="accordion-body p-0">
-                                            <div class="table-responsive"><table class="table table-sm align-middle mb-0">
-                                                <thead><tr><th>Company</th><th>Market importance</th><th>CRM relationship</th><th>Customer status</th></tr></thead>
-                                                <tbody>{% for company in category.companies %}<tr>
-                                                    <td><strong>{{ company.company_name }}</strong></td>
-                                                    <td>{{ 'Main participant' if company.is_main else 'Other mentioned organisation' }}</td>
-                                                    <td>{% if company.matched_customer_id %}<a href="{{ url_for('customers.get_customer_details', customer_id=company.matched_customer_id) }}">{{ company.matched_customer_name }}</a><div><small class="text-muted">{{ company.match_method|replace('_', ' ') }}</small></div>{% else %}<span class="text-muted">Not matched</span>{% endif %}</td>
-                                                    <td>{{ company.matched_customer_status or '—' }}</td>
-                                                </tr>{% endfor %}</tbody>
-                                            </table></div>
-                                        </div>
-                                    </div>
-                                </div>
+                        <label class="compact-search">
+                            <i class="bi bi-search"></i>
+                            <input type="search" id="segmentCustomerSearch" placeholder="Filter {{ country_customers|length }} CRM records…">
+                        </label>
+                    </header>
+                    <div class="table-responsive segment-table-wrap">
+                        <table class="deepdive-table" id="segmentCustomerTable">
+                            <thead>
+                                <tr><th>CRM account</th><th>Status</th><th>Fleet</th><th>Est. value</th><th>Owner</th></tr>
+                            </thead>
+                            <tbody>
+                                {% for customer in country_customers %}
+                                <tr data-segment-customer data-search="{{ (customer.name ~ ' ' ~ (customer.status or '') ~ ' ' ~ (customer.assigned_salesperson_name or ''))|lower }}">
+                                    <td><a class="account-link" href="{{ url_for('customers.get_customer_details', customer_id=customer.id) }}">{{ customer.name }}</a></td>
+                                    <td>{{ status_badge(customer) }}</td>
+                                    <td>{{ customer.fleet_size if customer.fleet_size is not none else '—' }}</td>
+                                    <td>{{ '£{:,.0f}'.format(customer.estimated_revenue) if customer.estimated_revenue else '—' }}</td>
+                                    <td>{{ customer.assigned_salesperson_name or 'Unassigned' }}</td>
+                                </tr>
+                                {% else %}
+                                <tr><td colspan="5"><div class="table-empty">No CRM accounts currently match this country and segment tag.</div></td></tr>
                                 {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="table-filter-empty" id="segmentFilterEmpty" hidden>No CRM records match that filter.</div>
+                </section>
+            </div>
+        </section>
+
+        <section class="tab-pane fade" id="connections-pane" role="tabpanel" aria-labelledby="connections-tab" tabindex="0">
+            <div class="connections-layout">
+                <section class="workspace-panel">
+                    <header class="panel-heading">
+                        <div>
+                            <span class="section-eyebrow">Narrative ↔ CRM</span>
+                            <h2>Linked mentions</h2>
+                            <p>Exact phrases in the briefing that resolve to a customer record.</p>
+                        </div>
+                    </header>
+                    {% if customer_links %}
+                    <div class="connection-list" id="linkedTextPanel">
+                        {% for linked_text, info in customer_links|dictsort %}
+                        <article class="connection-row">
+                            <div class="connection-phrase"><span>Briefing text</span><strong>“{{ linked_text }}”</strong></div>
+                            <i class="bi bi-arrow-left-right connection-arrow" aria-hidden="true"></i>
+                            <div class="connection-customer">
+                                <span>CRM account</span>
+                                <a href="{{ url_for('customers.get_customer_details', customer_id=info.customer_id) }}">{{ info.customer_name }}</a>
+                                <small>{{ info.status or 'Not set' }}</small>
                             </div>
+                            <button type="button" class="icon-button danger remove-linked-text"
+                                    data-customer-id="{{ info.customer_id }}" data-linked-text="{{ linked_text }}" title="Remove connection">
+                                <i class="bi bi-trash3"></i>
+                            </button>
+                        </article>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <div class="empty-state compact">
+                        <i class="bi bi-link-45deg"></i>
+                        <h3>No linked mentions yet</h3>
+                        <p>Connect organisation names in the briefing to CRM accounts to make this a living document.</p>
+                    </div>
+                    {% endif %}
+                </section>
+
+                <aside class="workspace-panel connection-builder">
+                    <header class="panel-heading">
+                        <div>
+                            <span class="section-eyebrow">Create connection</span>
+                            <h2>Link a phrase manually</h2>
+                            <p>Use the exact wording found in the research document.</p>
                         </div>
-                        <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button></div>
+                    </header>
+                    <div class="builder-form">
+                        <label>
+                            <span>Briefing text</span>
+                            <input type="text" id="manualLinkedText" placeholder="e.g. Bristow Group" autocomplete="off">
+                        </label>
+                        <label>
+                            <span>CRM customer</span>
+                            <input type="search" id="manualCustomerSearch" placeholder="Search customer records…" autocomplete="off">
+                        </label>
+                        <div id="manualCustomerResults" class="customer-search-results"></div>
+                        <div id="manualSelectedCustomer" class="selected-customer" hidden></div>
+                        <button class="btn btn-primary" id="manualAddLink" type="button" disabled>
+                            <i class="bi bi-link-45deg"></i> Create connection
+                        </button>
                     </div>
-                </div>
+                </aside>
             </div>
-            {% endif %}
-
-            <div class="card">
-                <div class="card-body">
-                    <div class="mb-3">
-                        <span class="badge badge-primary">{{ deepdive.country }}</span>
-                        <span class="badge badge-info">{{ deepdive.tag_description or 'Unknown' }}</span>
-                        <small class="text-muted ms-2">
-                            Created: {{ deepdive.created_at }} | Updated: {{ deepdive.updated_at }}
-                        </small>
-                    </div>
-
-                    <div class="content-display markdown-content" id="contentDisplay">
-    <!-- Use processed_content instead of raw content -->
-    {{ deepdive.processed_content | markdown | safe }}
-</div>
-                </div>
-            </div>
-        </div>
-
-      <!-- Curated Customer List Column -->
-        <div class="col-lg-4">
-            <!-- Market Penetration Analytics Card -->
-            <div class="card mb-3">
-                <div class="card-header">
-                    <h6 class="mb-0"><i class="fas fa-chart-bar"></i> Market Penetration</h6>
-                </div>
-                <div class="card-body p-3">
-                    <div id="penetrationChart">
-                        <div class="text-center text-muted">
-                            <i class="fas fa-spinner fa-spin"></i> Loading analytics...
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-
-          <!-- Curated Customers Section -->
-<div class="card">
-  <div class="card-header d-flex justify-content-between align-items-center">
-    <h6 class="mb-0"><i class="fas fa-users"></i> Curated Customers</h6>
-    <button class="btn btn-sm btn-primary" onclick="showGeoDeepDiveAddCustomerModal()">
-      <i class="fas fa-plus"></i> Add
-    </button>
-  </div>
-  <div class="card-body table-container p-0">
-    <div class="table-responsive">
-      <table class="table table-hover mb-0">
-        <thead>
-          <tr>
-            <th style="width: 45%;">Customer</th>
-            <th style="width: 12%;">Fleet Size</th>
-            <th style="width: 15%;">Est. Revenue</th>
-            <th style="width: 28%;">Notes</th>
-          </tr>
-        </thead>
-      <tbody id="curatedCustomersTable">
-        {% for customer in curated_customers %}
-        <tr data-customer-id="{{ customer.id }}">
-<td>
-  <div class="d-flex align-items-center">
-
-    <div>
-      <a href="/customers/{{ customer.id }}" class="text-decoration-none">
-        {{ customer.name }}
-      </a>
-      {% if customer.website %}
-      <a href="{{ customer.website }}" target="_blank" class="ms-1" title="Visit website">
-        <i class="bi bi-box-arrow-up-right" style="font-size: 0.7rem;"></i>
-      </a>
-      {% endif %}
-      <br>
-      <small class="text-muted">
-        <span class="badge badge-sm status-badge clickable"
-              data-status="{{ customer.status|lower if customer.status else 'unknown' }}"
-              data-status-id="{{ customer.status_id or '' }}"
-              data-customer-id="{{ customer.id }}"
-              title="Click to advance status">
-          {{ customer.status or 'Unknown' }}
-        </span>
-        <button class="btn btn-link btn-sm p-0 ms-2"
-                onclick="showApolloLeadFinder({{ customer.id }})"
-                title="Find leads for {{ customer.name }}">
-          <i class="bi bi-search"></i>
-        </button>
-      </small>
+        </section>
     </div>
-  </div>
-</td>
-          <td>
-            <div class="editable-field" data-field="fleet_size" data-customer-id="{{ customer.id }}">
-              <span class="field-value">{{ customer.fleet_size or '-' }}</span>
-              <input type="number" class="form-control form-control-sm field-input" style="display: none;"
-                     value="{{ customer.fleet_size or '' }}" min="0">
-              <button class="btn btn-sm btn-link edit-btn p-0 ms-1" title="Edit fleet size">
-                <i class="bi bi-pencil"></i>
-              </button>
-            </div>
-          </td>
-          <td>
-            <div class="editable-field" data-field="estimated_revenue" data-customer-id="{{ customer.id }}">
-              <span class="field-value">£{{ '{:,.0f}'.format(customer.estimated_revenue) if customer.estimated_revenue else '-' }}</span>
-              <input type="number" class="form-control form-control-sm field-input" style="display: none;"
-                     value="{{ customer.estimated_revenue or '' }}" min="0" step="1000">
-              <button class="btn btn-sm btn-link edit-btn p-0 ms-1" title="Edit estimated revenue">
-                <i class="bi bi-pencil"></i>
-              </button>
-            </div>
-          </td>
-          <td>
-  <div class="editable-field" data-field="notes" data-customer-id="{{ customer.id }}">
-    <span class="field-value">{{ customer.deepdive_notes or '-' }}</span>
-    <textarea class="form-control form-control-sm field-input" style="display: none;" rows="2">{{ customer.deepdive_notes or '' }}</textarea>
-    <button class="btn btn-sm btn-link edit-btn p-0 ms-1" title="Edit notes">
-      <i class="bi bi-pencil"></i>
-    </button>
-    <button class="btn btn-sm btn-link text-danger remove-btn p-0 ms-2"
-            onclick="removeCuratedCustomer({{ customer.id }})"
-            title="Remove customer">
-      <i class="bi bi-x-circle"></i>
-    </button>
-  </div>
-</td>
+</main>
 
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
-
-        </div>
-            <!-- All Matching Customers Section -->
-<div class="card mt-3">
-  <div class="card-header d-flex justify-content-between align-items-center">
-    <h6 class="mb-0"><i class="fas fa-globe"></i> All {{ deepdive.country_name }} Customers - {{ deepdive.tag_description }}</h6>
-    <span class="badge bg-secondary">{{ country_customers|length }} total</span>
-  </div>
-  <div class="card-body table-container p-0">
-    <div class="table-responsive">
-      <table class="table table-hover table-sm mb-0">
-        <thead>
-          <tr>
-            <th style="width: 45%;">Customer</th>
-            <th style="width: 12%;">Fleet Size</th>
-            <th style="width: 15%;">Est. Revenue</th>
-            <th style="width: 28%;">Salesperson</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for customer in country_customers %}
-          <tr>
-            <td>
-              <div class="d-flex align-items-center">
+<div class="modal fade deepdive-modal" id="geoDeepDiveCustomerModal" tabindex="-1" aria-labelledby="geoDeepDiveCustomerModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
                 <div>
-                  <a href="/customers/{{ customer.id }}" class="text-decoration-none">
-                    {{ customer.name }}
-                  </a>
-                  {% if customer.website %}
-                  <a href="{{ customer.website }}" target="_blank" class="ms-1" title="Visit website">
-                    <i class="bi bi-box-arrow-up-right" style="font-size: 0.7rem;"></i>
-                  </a>
-                  {% endif %}
-                  <br>
-                  <small class="text-muted">
-                    <span class="badge badge-sm status-badge clickable"
-                          data-status="{{ customer.status|lower if customer.status else 'unknown' }}"
-                          data-status-id="{{ customer.status_id or '' }}"
-                          data-customer-id="{{ customer.id }}"
-                          title="Click to advance status">
-                      {{ customer.status or 'Unknown' }}
-                    </span>
-                  </small>
+                    <span class="section-eyebrow">Focus accounts</span>
+                    <h2 class="modal-title" id="geoDeepDiveCustomerModalLabel">Add an existing CRM account</h2>
                 </div>
-              </div>
-            </td>
-            <td>{{ customer.fleet_size or '-' }}</td>
-            <td>£{{ '{:,.0f}'.format(customer.estimated_revenue) if customer.estimated_revenue else '-' }}</td>
-            <td>
-              <small class="text-muted">
-                {{ customer.assigned_salesperson_name or 'Unassigned' }}
-              </small>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
-</div>
-
-<div class="card mt-3" id="linkedTextPanel">
-  <div class="card-header d-flex justify-content-between align-items-center">
-    <h6 class="mb-0"><i class="fas fa-link"></i> Linked Text Entries</h6>
-    <span class="badge bg-secondary">{{ customer_links|length }} total</span>
-  </div>
-  <div class="card-body">
-    {% if customer_links %}
-    <div class="table-responsive mb-3">
-      <table class="table table-sm table-hover mb-0">
-        <thead>
-          <tr>
-            <th style="width: 40%;">Text</th>
-            <th style="width: 45%;">Customer</th>
-            <th style="width: 15%;">Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for linked_text, info in customer_links|dictsort %}
-          <tr>
-            <td><strong>{{ linked_text }}</strong></td>
-            <td>
-              <a href="/customers/{{ info.customer_id }}" class="text-decoration-none">
-                {{ info.customer_name }}
-              </a>
-              <span class="badge badge-sm status-badge clickable ms-1"
-                    data-status="{{ info.status|lower if info.status else 'unknown' }}"
-                    data-status-id="{{ info.status_id or '' }}"
-                    data-customer-id="{{ info.customer_id }}"
-                    title="Click to advance status">
-                {{ info.status or 'Unknown' }}
-              </span>
-            </td>
-            <td>
-              <button class="btn btn-link p-0 text-muted remove-linked-text"
-                      type="button"
-                      title="Remove link"
-                      aria-label="Remove link"
-                      data-customer-id="{{ info.customer_id }}"
-                      data-linked-text="{{ linked_text }}">
-                <i class="fas fa-unlink fa-sm"></i>
-              </button>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% else %}
-    <p class="text-muted small mb-3">No linked text entries yet.</p>
-    {% endif %}
-
-    <div class="border-top pt-3">
-      <h6 class="mb-2">Add Link Manually</h6>
-      <div class="mb-2">
-        <label class="form-label mb-1">Linked Text</label>
-        <input type="text" class="form-control form-control-sm" id="manualLinkedText" placeholder="Enter the exact text to link">
-      </div>
-      <div class="mb-2">
-        <label class="form-label mb-1">Search Customer</label>
-        <input type="text" class="form-control form-control-sm" id="manualCustomerSearch" placeholder="Type to search customers...">
-        <div id="manualCustomerResults" class="mt-2"></div>
-        <div id="manualSelectedCustomer" class="small text-muted mt-1" style="display: none;"></div>
-      </div>
-      <button class="btn btn-sm btn-primary" id="manualAddLink" disabled>
-        <i class="fas fa-link"></i> Add Link
-      </button>
-    </div>
-  </div>
-</div>
-    </div>
-</div>
-<!-- GeoDeepDive Customer Search Modal -->
-<div class="modal fade" id="geoDeepDiveCustomerModal" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">Add Customer to DeepDive</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
-                <div class="form-group">
-                    <label>Search Customers</label>
-                    <input type="text" class="form-control" id="geoCustomerSearch" placeholder="Type to search...">
-                    <div id="geoSearchResults" class="mt-2"></div>
-                </div>
-                <div class="form-group">
-                    <label>Notes (optional)</label>
-                    <textarea class="form-control" id="geoCustomerNotes" rows="2" placeholder="Add any notes about this customer..."></textarea>
-                </div>
+                <label class="modal-field">
+                    <span>Search customers</span>
+                    <input type="search" id="geoCustomerSearch" placeholder="Start typing a customer name…" autocomplete="off">
+                </label>
+                <div id="geoSearchResults" class="customer-search-results modal-results"></div>
+                <label class="modal-field">
+                    <span>Working note <small>optional</small></span>
+                    <textarea id="geoCustomerNotes" rows="3" placeholder="Why should this account be in focus?"></textarea>
+                </label>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-primary" id="geoConfirmAddCustomer" disabled>Add Customer</button>
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="geoConfirmAddCustomer" disabled>Add to focus accounts</button>
             </div>
         </div>
     </div>
 </div>
 
-<!-- Text Selection Modal for Customer Matching -->
-<div class="modal fade" id="textSelectionModal" tabindex="-1">
-    <div class="modal-dialog">
+<div class="modal fade deepdive-modal" id="textSelectionModal" tabindex="-1" aria-labelledby="textSelectionModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">Link Customer</h5>
+                <div>
+                    <span class="section-eyebrow">Narrative ↔ CRM</span>
+                    <h2 class="modal-title" id="textSelectionModalLabel">Connect an organisation</h2>
+                </div>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
-                <div class="mb-3">
-                    <strong>Selected Text:</strong>
-                    <span id="selectedText" class="text-primary font-weight-bold"></span>
-                </div>
+                <div class="selected-phrase"><span>Selected briefing text</span><strong id="selectedText"></strong></div>
+                <label class="modal-field">
+                    <span>Find an existing customer</span>
+                    <input type="search" id="textSelectionSearch" placeholder="Search CRM…" autocomplete="off">
+                </label>
+                <div id="textSelectionResults" class="customer-search-results modal-results"></div>
+                <button type="button" class="text-action create-customer-action" id="createNewCustomerFromText">
+                    <i class="bi bi-plus-circle"></i> Create a new customer from this name
+                </button>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="confirmTextSelection" disabled>Create connection</button>
+            </div>
+        </div>
+    </div>
+</div>
 
-                <div class="btn-group w-100 mb-3">
-                    <button type="button" class="btn btn-outline-primary" id="searchExistingBtn">
-                        <i class="fas fa-search"></i> Search Existing
+<div class="modal fade deepdive-modal" id="improveContentModal" tabindex="-1" aria-labelledby="improveContentModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <span class="section-eyebrow">AI research assistant</span>
+                    <h2 class="modal-title" id="improveContentModalLabel">Refresh the market intelligence</h2>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body improve-modal-body">
+                <section class="improve-request">
+                    <label class="modal-field">
+                        <span>What should be investigated or improved?</span>
+                        <textarea id="improvementRequest" rows="6" placeholder="For example: check for new Part-145 MROs, expand fixed-wing operators, or verify recent fleet changes."></textarea>
+                    </label>
+                    <p><i class="bi bi-info-circle"></i> The assistant searches for current information and returns a replacement draft for review.</p>
+                    <button type="button" class="btn btn-primary" id="generateImprovedContent">
+                        <i class="bi bi-stars"></i> Research and draft
                     </button>
-                    <button type="button" class="btn btn-primary" id="createNewBtn">
-                        <i class="fas fa-plus"></i> Create New
-                    </button>
-                </div>
+                </section>
+                <section class="current-preview">
+                    <span class="section-eyebrow">Current briefing</span>
+                    <pre>{{ deepdive.content[:1200] }}{% if deepdive.content|length > 1200 %}…{% endif %}</pre>
+                </section>
 
-                <!-- Search Existing Customer Section -->
-                <div id="searchExistingSection">
-                    <div class="form-group">
-                        <label>Search Customers</label>
-                        <input type="text" class="form-control" id="textSelectionSearch" placeholder="Type to search for existing customers...">
-                        <div id="textSelectionResults" class="mt-2"></div>
-                    </div>
-                </div>
+                <section class="improved-result" id="improvedContentSection" hidden>
+                    <header>
+                        <div><span class="section-eyebrow">Proposed replacement</span><h3>Updated briefing draft</h3></div>
+                        <div>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="toggleContentDiff"><i class="bi bi-layout-split"></i> Compare</button>
+                            <button type="button" class="btn btn-success btn-sm" id="applyImprovedContent"><i class="bi bi-check2"></i> Apply update</button>
+                        </div>
+                    </header>
+                    <pre id="improvedContentPreview"></pre>
+                </section>
 
-                <!-- Create New Customer Section -->
-                <div id="createNewSection" style="display: none;">
-                    <div class="alert alert-info">
-                        <i class="fas fa-info-circle"></i> This will open the customer creation modal.
-                        <br><small>The selected text will be pre-filled as the company name.</small>
-                    </div>
-                </div>
+                <section class="content-comparison" id="contentDiffSection" hidden>
+                    <div><span>Current</span><pre id="originalContentDiff"></pre></div>
+                    <div><span>Proposed</span><pre id="enhancedContentDiff"></pre></div>
+                </section>
             </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-primary" id="confirmTextSelection" disabled>Link Customer</button>
-                <!--<button type="button" class="btn btn-success" id="confirmCreateNew" style="display: none;">Create Customer</button>-->
-            </div>
+            <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button></div>
         </div>
     </div>
 </div>
-
-<!-- Improve Content Modal -->
-<div class="modal fade" id="improveContentModal" tabindex="-1">
-    <div class="modal-dialog modal-xl">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">
-                    <i class="fas fa-magic"></i> Improve Content with AI
-                </h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <div class="modal-body">
-                <div class="row">
-                    <div class="col-md-6">
-                        <div class="form-group">
-                            <label for="improvementRequest"><strong>What would you like to improve or add?</strong></label>
-                            <textarea class="form-control" id="improvementRequest" rows="4"
-                                placeholder="Examples:&#10;• What about Airbus Helicopters presence?&#10;• Add information about cargo operators&#10;• Include more details on maintenance facilities&#10;• What about military helicopter operations?&#10;• Tell me about training schools in this region"></textarea>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center">
-                            <button type="button" class="btn btn-primary" id="generateImprovedContent">
-                                <i class="fas fa-robot"></i> Generate Improved Content
-                            </button>
-                            <small class="text-muted">AI will search for current information and enhance the content</small>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="bg-light p-3 rounded" style="height: 200px; overflow-y: auto;">
-                            <h6 class="text-muted mb-2">Current Content Preview:</h6>
-                            <div class="small text-muted">
-                                {{ deepdive.content[:500] }}{% if deepdive.content|length > 500 %}...{% endif %}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div id="improvedContentSection" class="mt-4" style="display: none;">
-                    <hr>
-                    <div class="d-flex justify-content-between align-items-center mb-3">
-                        <h6><i class="fas fa-sparkles"></i> AI-Enhanced Content</h6>
-                        <div class="btn-group">
-                            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="showContentDiff()">
-                                <i class="fas fa-eye"></i> Show Changes
-                            </button>
-                            <button type="button" class="btn btn-sm btn-success" id="applyImprovedContent">
-                                <i class="fas fa-check"></i> Apply Changes
-                            </button>
-                        </div>
-                    </div>
-                    <div class="card">
-                        <div class="card-body">
-                            <div id="improvedContentPreview" style="max-height: 400px; overflow-y: auto;"></div>
-                        </div>
-                    </div>
-                </div>
-
-                <div id="contentDiffSection" class="mt-4" style="display: none;">
-                    <hr>
-                    <h6><i class="fas fa-code-compare"></i> Content Comparison</h6>
-                    <div class="row">
-                        <div class="col-md-6">
-                            <div class="card">
-                                <div class="card-header bg-danger text-white">
-                                    <small><i class="fas fa-minus"></i> Original Content</small>
-                                </div>
-                                <div class="card-body" style="max-height: 300px; overflow-y: auto;">
-                                    <pre id="originalContentDiff" class="small"></pre>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <div class="card">
-                                <div class="card-header bg-success text-white">
-                                    <small><i class="fas fa-plus"></i> Enhanced Content</small>
-                                </div>
-                                <div class="card-body" style="max-height: 300px; overflow-y: auto;">
-                                    <pre id="enhancedContentDiff" class="small"></pre>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<script>
-let geoSelectedCustomerId = null;
-let textSelectionSelectedCustomer = null;
-let improvedContentData = null;
-let selectedTextForCustomer = '';
-let manualSelectedCustomerId = null;
-
-document.addEventListener('DOMContentLoaded', function() {
-    initializeStatusBadgeHandlers();
-    initializeImproveContentHandlers();
-    initializeTextSelectionHandlers();
-    initializeLinkedTextPanel();
-    loadMarketPenetrationData();
-    attachSearchListeners();
-    makeContentInteractive();
-});
-
-function makeContentInteractive() {
-    // Make all bold text clickable in the content
-    const contentDiv = document.getElementById('contentDisplay');
-    const boldElements = contentDiv.querySelectorAll('strong, b');
-
-    boldElements.forEach(element => {
-        element.classList.add('clickable-text');
-        element.addEventListener('click', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            handleTextClick(this.textContent.trim());
-        });
-    });
-
-    // Also enable text selection for any text
-    contentDiv.addEventListener('mouseup', function(e) {
-        const selection = window.getSelection();
-        const selectedText = selection.toString().trim();
-
-        if (selectedText && selectedText.length > 2) {
-            // Show a small tooltip or context menu
-            showSelectionTooltip(e, selectedText);
-        }
-    });
-}
-
-function showSelectionTooltip(event, text) {
-    // Remove any existing tooltip
-    const existingTooltip = document.querySelector('.selection-tooltip');
-    if (existingTooltip) {
-        existingTooltip.remove();
-    }
-
-    // Create tooltip
-    const tooltip = document.createElement('div');
-    tooltip.className = 'selection-tooltip';
-    tooltip.innerHTML = `
-        <button class="btn btn-sm btn-primary" onclick="handleTextClick('${text.replace(/'/g, "\\'")}'); removeSelectionTooltip();">
-            <i class="fas fa-link"></i> Link Customer
-        </button>
-    `;
-
-    // Position tooltip
-    tooltip.style.position = 'absolute';
-    tooltip.style.left = event.pageX + 'px';
-    tooltip.style.top = (event.pageY - 40) + 'px';
-    tooltip.style.zIndex = '9999';
-    tooltip.style.backgroundColor = 'white';
-    tooltip.style.border = '1px solid #ddd';
-    tooltip.style.borderRadius = '4px';
-    tooltip.style.padding = '4px';
-    tooltip.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)';
-
-    document.body.appendChild(tooltip);
-
-    // Remove tooltip after 3 seconds or on click elsewhere
-    setTimeout(() => removeSelectionTooltip(), 3000);
-
-    // Remove on click elsewhere
-    document.addEventListener('click', function removeOnClick(e) {
-        if (!tooltip.contains(e.target)) {
-            removeSelectionTooltip();
-            document.removeEventListener('click', removeOnClick);
-        }
-    });
-}
-
-function removeSelectionTooltip() {
-    const tooltip = document.querySelector('.selection-tooltip');
-    if (tooltip) {
-        tooltip.remove();
-    }
-    // Clear text selection
-    window.getSelection().removeAllRanges();
-}
-
-function handleTextClick(text) {
-    selectedTextForCustomer = text;
-    document.getElementById('selectedText').textContent = text;
-    document.getElementById('textSelectionSearch').value = text;
-
-    // Reset modal state
-    document.getElementById('searchExistingSection').style.display = 'block';
-    document.getElementById('createNewSection').style.display = 'none';
-    document.getElementById('confirmTextSelection').style.display = 'inline-block';
-    // Remove this line - the button doesn't exist anymore:
-    // document.getElementById('confirmCreateNew').style.display = 'none';
-    document.getElementById('searchExistingBtn').classList.add('active');
-    document.getElementById('createNewBtn').classList.remove('active');
-
-    // Clear previous results
-    document.getElementById('textSelectionResults').innerHTML = '';
-    textSelectionSelectedCustomer = null;
-    document.getElementById('confirmTextSelection').disabled = true;
-
-    // Show modal
-    const modal = new bootstrap.Modal(document.getElementById('textSelectionModal'));
-    modal.show();
-
-    // Trigger search
-    setTimeout(() => {
-        handleTextSelectionSearch();
-    }, 100);
-}
-function initializeTextSelectionHandlers() {
-    // Tab switching
-    document.getElementById('searchExistingBtn').addEventListener('click', function() {
-        document.getElementById('searchExistingSection').style.display = 'block';
-        document.getElementById('createNewSection').style.display = 'none';
-        document.getElementById('confirmTextSelection').style.display = 'inline-block';
-        document.getElementById('confirmCreateNew').style.display = 'none';
-        this.classList.add('active');
-        document.getElementById('createNewBtn').classList.remove('active');
-    });
-
-    document.getElementById('createNewBtn').addEventListener('click', function() {
-        // Don't just show a section - IMMEDIATELY open the customer modal
-        const textSelectionModal = bootstrap.Modal.getInstance(document.getElementById('textSelectionModal'));
-        if (textSelectionModal) {
-            textSelectionModal.hide();
-        }
-
-        // Wait for modal to close, then open customer modal
-        setTimeout(() => {
-            openAddCustomerModal(selectedTextForCustomer);
-        }, 300);
-    });
-
-    // Search input
-    document.getElementById('textSelectionSearch').addEventListener('input', handleTextSelectionSearch);
-
-    // Confirm button for linking existing customer
-    document.getElementById('confirmTextSelection').addEventListener('click', function() {
-        if (textSelectionSelectedCustomer) {
-            createCustomerLink(textSelectionSelectedCustomer, selectedTextForCustomer);
-            $('#textSelectionModal').modal('hide');
-        }
-    });
-
-    // Remove the confirmCreateNew listener entirely - it's not needed anymore
-}
-
-
-function createCustomerLink(customerId, linkedText) {
-    fetch(`/api/geographic-deepdives/{{ deepdive.id }}/customer-links`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            customer_id: customerId,
-            linked_text: linkedText
-        })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            // Reload page to show the updated content with customer tags
-            window.location.reload();
-        } else {
-            console.error('Failed to create customer link:', data.error);
-        }
-    })
-    .catch(error => {
-        console.error('Error creating customer link:', error);
-    });
-}
-
-function escapeCustomerSearchValue(value) {
-    return String(value || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
-
-function renderCustomerSearchResult(customer, selectFunctionName) {
-    const statusName = customer.status_name || customer.status || 'No Status';
-    const country = customer.country || 'Unknown';
-    const safeCustomerName = JSON.stringify(String(customer.name || ''));
-    const salesperson = customer.assigned_salesperson_name
-        ? `<small class="text-muted">Rep: ${escapeCustomerSearchValue(customer.assigned_salesperson_name)}</small>`
-        : '<small class="text-muted">No Rep Assigned</small>';
-
-    return `
-        <div class="search-result p-2 border rounded mb-2 cursor-pointer" onclick='${selectFunctionName}(${Number(customer.id)}, ${safeCustomerName}, this)'>
-            <div class="d-flex justify-content-between align-items-start gap-2">
-                <div class="flex-grow-1">
-                    <strong>${escapeCustomerSearchValue(customer.name)}</strong>
-                    <div class="mt-1 d-flex flex-wrap gap-1">
-                        <span class="badge badge-info badge-sm">${escapeCustomerSearchValue(country)}</span>
-                        <span class="badge bg-secondary badge-sm">${escapeCustomerSearchValue(statusName)}</span>
-                    </div>
-                    <div class="mt-1">${salesperson}</div>
-                </div>
-            </div>
-        </div>
-    `;
-}
-
-
-function handleTextSelectionSearch() {
-    const query = document.getElementById('textSelectionSearch').value.trim();
-    const resultsDiv = document.getElementById('textSelectionResults');
-
-    if (query.length < 2) {
-        resultsDiv.innerHTML = '';
-        document.getElementById('confirmTextSelection').disabled = true;
-        textSelectionSelectedCustomer = null;
-        return;
-    }
-
-    fetch(`/customers/search?q=${encodeURIComponent(query)}&limit=10`)
-        .then(response => response.json())
-        .then(data => {
-            const results = Array.isArray(data) ? data : (data && data.customers ? data.customers : []);
-            displayTextSelectionResults(results);
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            resultsDiv.innerHTML = '<small class="text-danger">Error searching customers</small>';
-        });
-}
-
-function displayTextSelectionResults(customers) {
-    const resultsDiv = document.getElementById('textSelectionResults');
-    const customerList = Array.isArray(customers) ? customers : [];
-    const fallbackName = (selectedTextForCustomer || document.getElementById('textSelectionSearch').value || '').trim();
-
-    if (customerList.length === 0) {
-        resultsDiv.innerHTML = `
-            <div class="text-muted small mb-2">No customers found.</div>
-            ${renderCreateNewLinkButton(fallbackName)}
-        `;
-        return;
-    }
-
-    const html = customerList
-        .map(customer => renderCustomerSearchResult(customer, 'selectTextSelectionCustomer'))
-        .join('');
-
-    resultsDiv.innerHTML = html;
-}
-
-function selectTextSelectionCustomer(customerId, customerName, element) {
-    textSelectionSelectedCustomer = customerId;
-    document.getElementById('confirmTextSelection').disabled = false;
-
-    // Highlight selected result
-    document.querySelectorAll('#textSelectionResults .search-result').forEach(el => {
-        el.classList.remove('selected');
-    });
-    element.classList.add('selected');
-}
-
-function openCreateNewFromLinkModal(prefillName) {
-    const textSelectionModal = bootstrap.Modal.getInstance(document.getElementById('textSelectionModal'));
-    if (textSelectionModal) {
-        textSelectionModal.hide();
-    }
-    setTimeout(() => {
-        openAddCustomerModal(prefillName || selectedTextForCustomer);
-    }, 300);
-}
-
-function renderCreateNewLinkButton(prefillName) {
-    const safeName = (prefillName || '').replace(/'/g, "\\'");
-    return `
-        <button type="button" class="btn btn-sm btn-outline-primary" onclick="openCreateNewFromLinkModal('${safeName}')">
-            <i class="fas fa-plus"></i> Create New Customer
-        </button>
-    `;
-}
-
-function initializeLinkedTextPanel() {
-    const manualTextInput = document.getElementById('manualLinkedText');
-    const manualSearchInput = document.getElementById('manualCustomerSearch');
-    const manualAddButton = document.getElementById('manualAddLink');
-
-    if (manualTextInput) {
-        manualTextInput.addEventListener('input', updateManualAddLinkState);
-    }
-
-    if (manualSearchInput) {
-        manualSearchInput.addEventListener('input', handleManualCustomerSearch);
-    }
-
-    if (manualAddButton) {
-        manualAddButton.addEventListener('click', function() {
-            const linkedText = (manualTextInput.value || '').trim();
-            if (!manualSelectedCustomerId || linkedText.length < 2) {
-                return;
-            }
-            createCustomerLink(manualSelectedCustomerId, linkedText);
-        });
-    }
-
-    const panel = document.getElementById('linkedTextPanel');
-    if (panel) {
-        panel.addEventListener('click', function(e) {
-            const button = e.target.closest('.remove-linked-text');
-            if (!button) {
-                return;
-            }
-            const linkedText = button.getAttribute('data-linked-text');
-            const customerId = button.getAttribute('data-customer-id');
-            if (linkedText && customerId) {
-                removeCustomerLink(linkedText, customerId);
-            }
-        });
-    }
-}
-
-function updateManualAddLinkState() {
-    const manualTextInput = document.getElementById('manualLinkedText');
-    const manualAddButton = document.getElementById('manualAddLink');
-    if (!manualTextInput || !manualAddButton) {
-        return;
-    }
-    const linkedText = (manualTextInput.value || '').trim();
-    manualAddButton.disabled = !manualSelectedCustomerId || linkedText.length < 2;
-}
-
-function handleManualCustomerSearch() {
-    const query = document.getElementById('manualCustomerSearch').value.trim();
-    const resultsDiv = document.getElementById('manualCustomerResults');
-
-    if (query.length < 2) {
-        const fallbackName = (selectedTextForCustomer || query).trim();
-        resultsDiv.innerHTML = renderCreateNewLinkButton(fallbackName);
-        manualSelectedCustomerId = null;
-        document.getElementById('manualSelectedCustomer').style.display = 'none';
-        updateManualAddLinkState();
-        return;
-    }
-
-    fetch(`/customers/search?q=${encodeURIComponent(query)}&limit=10`)
-        .then(response => response.json())
-        .then(data => {
-            displayManualCustomerResults(data || []);
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            resultsDiv.innerHTML = '<small class="text-danger">Error searching customers</small>';
-        });
-}
-
-function displayManualCustomerResults(customers) {
-    const resultsDiv = document.getElementById('manualCustomerResults');
-    const fallbackName = (selectedTextForCustomer || document.getElementById('manualCustomerSearch').value || '').trim();
-
-    if (customers.length === 0) {
-        resultsDiv.innerHTML = `
-            <div class="text-muted small mb-2">No customers found.</div>
-            ${renderCreateNewLinkButton(fallbackName)}
-        `;
-        return;
-    }
-
-    const html = customers
-        .map(customer => renderCustomerSearchResult(customer, 'selectManualCustomer'))
-        .join('');
-
-    resultsDiv.innerHTML = html + `
-        <div class="mt-2">
-            ${renderCreateNewLinkButton(fallbackName)}
-        </div>
-    `;
-}
-
-function selectManualCustomer(customerId, customerName, element) {
-    manualSelectedCustomerId = customerId;
-    updateManualAddLinkState();
-
-    const selected = document.getElementById('manualSelectedCustomer');
-    selected.textContent = `Selected: ${customerName}`;
-    selected.style.display = 'block';
-
-    document.querySelectorAll('#manualCustomerResults .search-result').forEach(el => {
-        el.classList.remove('selected');
-    });
-    element.classList.add('selected');
-}
-
-function removeCustomerLink(linkedText, customerId) {
-    fetch(`/api/geographic-deepdives/{{ deepdive.id }}/customer-links`, {
-        method: 'DELETE',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            customer_id: parseInt(customerId, 10),
-            linked_text: linkedText
-        })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            window.location.reload();
-        } else {
-            console.error('Failed to remove customer link:', data.error);
-        }
-    })
-    .catch(error => {
-        console.error('Error removing customer link:', error);
-    });
-}
-
-function attachSearchListeners() {
-    // Geo search
-    document.getElementById('geoCustomerSearch').addEventListener('input', handleSearchInput.bind(null, 'geo'));
-    document.getElementById('geoConfirmAddCustomer').addEventListener('click', handleGeoConfirmAdd);
-}
-
-function handleSearchInput(type) {
-    const inputId = type === 'geo' ? 'geoCustomerSearch' : 'textSelectionSearch';
-    const resultsId = type === 'geo' ? 'geoSearchResults' : 'textSelectionResults';
-    const confirmId = type === 'geo' ? 'geoConfirmAddCustomer' : 'confirmTextSelection';
-    const selectedVar = type === 'geo' ? 'geoSelectedCustomerId' : 'textSelectionSelectedCustomer';
-
-    const query = document.getElementById(inputId).value.trim();
-    const resultsDiv = document.getElementById(resultsId);
-    const confirmBtn = document.getElementById(confirmId);
-
-    if (query.length < 2) {
-        resultsDiv.innerHTML = '';
-        confirmBtn.disabled = true;
-        window[selectedVar] = null;
-        return;
-    }
-
-    fetch(`/customers/search?q=${encodeURIComponent(query)}&limit=10`)
-        .then(response => response.json())
-        .then(data => {
-            displaySearchResults(data || [], type);
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            resultsDiv.innerHTML = '<small class="text-danger">Error searching customers</small>';
-        });
-}
-
-function displaySearchResults(customers, type) {
-    const resultsId = type === 'geo' ? 'geoSearchResults' : 'textSelectionResults';
-    const resultsDiv = document.getElementById(resultsId);
-
-    if (customers.length === 0) {
-        resultsDiv.innerHTML = '<small class="text-muted">No customers found</small>';
-        return;
-    }
-
-    const selectFunction = type === 'geo' ? 'selectCustomer' : 'selectTextSelectionCustomer';
-    const html = customers
-        .map(customer => renderCustomerSearchResult(customer, selectFunction))
-        .join('');
-
-    resultsDiv.innerHTML = html;
-}
-
-function selectCustomer(customerId, customerName, element) {
-    geoSelectedCustomerId = customerId;
-    document.getElementById('geoConfirmAddCustomer').disabled = false;
-
-    // Highlight selected result
-    document.querySelectorAll('#geoSearchResults .search-result').forEach(el => {
-        el.classList.remove('selected');
-    });
-    element.classList.add('selected');
-}
-
-function handleGeoConfirmAdd() {
-    if (geoSelectedCustomerId) {
-        const notes = document.getElementById('geoCustomerNotes').value.trim();
-        addCuratedCustomer(geoSelectedCustomerId, '', notes);
-        $('#geoDeepDiveCustomerModal').modal('hide');
-
-        // Reset modal
-        resetGeoModal();
-    }
-}
-
-function resetGeoModal() {
-    document.getElementById('geoCustomerSearch').value = '';
-    document.getElementById('geoCustomerNotes').value = '';
-    document.getElementById('geoSearchResults').innerHTML = '';
-    geoSelectedCustomerId = null;
-    document.getElementById('geoConfirmAddCustomer').disabled = true;
-}
-
-function initializeImproveContentHandlers() {
-    // Generate improved content button
-    document.getElementById('generateImprovedContent').addEventListener('click', function() {
-        const request = document.getElementById('improvementRequest').value.trim();
-
-        if (!request) {
-            alert('Please enter what you would like to improve or add to the content.');
-            return;
-        }
-
-        generateImprovedContent(request);
-    });
-
-    // Apply improved content button
-    document.getElementById('applyImprovedContent').addEventListener('click', function() {
-        if (improvedContentData) {
-            applyImprovedContent();
-        }
-    });
-}
-
-function generateImprovedContent(request) {
-    const button = document.getElementById('generateImprovedContent');
-    const originalText = button.innerHTML;
-
-    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating...';
-    button.disabled = true;
-
-    fetch(`/api/geographic-deepdives/{{ deepdive.id }}/improve-content`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            request: request
-        })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            improvedContentData = data;
-            displayImprovedContent(data.improved_content);
-            document.getElementById('improvedContentSection').style.display = 'block';
-    } else {
-            alert('Failed to generate improved content: ' + (data.error || 'Unknown error'));
-        }
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        alert('Error generating improved content');
-    })
-    .finally(() => {
-        button.innerHTML = originalText;
-        button.disabled = false;
-    });
-}
-
-function displayImprovedContent(content) {
-    // Convert markdown to HTML for preview (basic conversion)
-    const htmlContent = content
-        .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-        .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-        .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .replace(/\*(.+?)\*/g, '<em>$1</em>')
-        .replace(/^- (.+)$/gm, '<li>$1</li>')
-        .replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
-        .replace(/^---$/gm, '<hr>')
-        .replace(/\n\n/g, '</p><p>')
-        .replace(/^(?!<[h|u|l|p|d])(.+)$/gm, '<p>$1</p>')
-        .replace(/<p><\/p>/g, '');
-
-    document.getElementById('improvedContentPreview').innerHTML = htmlContent;
-}
-
-function showContentDiff() {
-    const diffSection = document.getElementById('contentDiffSection');
-
-    if (diffSection.style.display === 'none') {
-        if (improvedContentData) {
-            document.getElementById('originalContentDiff').textContent = improvedContentData.original_content;
-            document.getElementById('enhancedContentDiff').textContent = improvedContentData.improved_content;
-        }
-        diffSection.style.display = 'block';
-    } else {
-        diffSection.style.display = 'none';
-    }
-}
-
-function applyImprovedContent() {
-    if (!improvedContentData) return;
-
-    const button = document.getElementById('applyImprovedContent');
-    const originalText = button.innerHTML;
-
-    if (!confirm('This will replace the current content with the AI-enhanced version. Continue?')) {
-        return;
-    }
-
-    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Applying...';
-    button.disabled = true;
-
-    const formData = new FormData();
-    formData.append('improved_content', improvedContentData.improved_content);
-
-    fetch(`/geographic-deepdives/{{ deepdive.id }}/apply-improvement`, {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => {
-        if (response.ok) {
-            window.location.href = `/geographic-deepdives/{{ deepdive.id }}`;
-        } else {
-            throw new Error('Failed to apply improvements');
-        }
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        alert('Error applying improved content');
-        button.innerHTML = originalText;
-        button.disabled = false;
-    });
-}
-
-function initializeStatusBadgeHandlers() {
-    // Apply to ALL status badges on the page, not just in curated list
-    document.querySelectorAll('.status-badge.clickable').forEach(badge => {
-        badge.addEventListener('click', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-
-            const customerId = this.getAttribute('data-customer-id');
-            if (customerId && !this.classList.contains('updating')) {
-                bumpCustomerStatus(parseInt(customerId), this);
-            }
-        });
-    });
-}
-
-function reinitializeStatusBadges() {
-    // Remove existing listeners and reapply to all badges
-    document.querySelectorAll('.status-badge.clickable').forEach(badge => {
-        // Clone node to remove existing listeners
-        const newBadge = badge.cloneNode(true);
-        badge.parentNode.replaceChild(newBadge, badge);
-    });
-
-    // Reapply listeners
-    initializeStatusBadgeHandlers();
-}
-
-async function bumpCustomerStatus(customerId, statusBadge) {
-    statusBadge.classList.add('updating');
-    statusBadge.setAttribute('title', 'Updating status...');
-
-    try {
-        const response = await fetch(`/customers/${customerId}/bump_status`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Requested-With': 'XMLHttpRequest'
-            }
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-            throw new Error(data.error || 'Failed to update status');
-        }
-
-        if (data.success && data.new_status) {
-            statusBadge.textContent = data.new_status.name;
-            statusBadge.setAttribute('data-status', data.new_status.name.toLowerCase());
-            statusBadge.setAttribute('title', 'Click to advance status');
-
-            const cell = statusBadge.closest('td');
-            if (cell) {
-                cell.classList.add('field-updated');
-                setTimeout(() => {
-                    cell.classList.remove('field-updated');
-                }, 1000);
-            }
-
-            showSuccessToast('Status updated successfully');
-        } else {
-            throw new Error('Invalid response from server');
-        }
-
-    } catch (error) {
-        console.error('Error bumping status:', error);
-        showErrorToast('Failed to update status: ' + error.message);
-    } finally {
-        statusBadge.classList.remove('updating');
-    }
-}
-
-// Utility functions for toast notifications
-function showSuccessToast(message) {
-    showToast(message, 'success');
-}
-
-function showErrorToast(message) {
-    showToast(message, 'danger');
-}
-
-function showToast(message, type) {
-    const toast = document.createElement('div');
-    toast.className = 'toast show position-fixed bottom-0 end-0 m-3';
-    toast.setAttribute('role', 'alert');
-    toast.innerHTML = `
-        <div class="toast-header bg-${type} text-white">
-            <i class="fas fa-${type === 'success' ? 'check-circle' : 'exclamation-triangle'} me-2"></i>
-            <strong class="me-auto">${type === 'success' ? 'Success' : 'Error'}</strong>
-            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast"></button>
-        </div>
-        <div class="toast-body">
-            ${message}
-        </div>
-    `;
-    document.body.appendChild(toast);
-
-    setTimeout(() => {
-        if (toast.parentNode) {
-            toast.remove();
-        }
-    }, 5000);
-}
-
-function loadMarketPenetrationData() {
-    fetch(`/api/geographic-deepdives/{{ deepdive.id }}/market-penetration`)
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                displayPenetrationChart(data);
-            } else {
-                document.getElementById('penetrationChart').innerHTML =
-                    '<div class="text-center text-muted small">No penetration data available</div>';
-            }
-        })
-        .catch(error => {
-            console.error('Error loading penetration data:', error);
-            document.getElementById('penetrationChart').innerHTML =
-                '<div class="text-center text-muted small">Error loading analytics</div>';
-        });
-}
-
-function displayPenetrationChart(data) {
-    const chartDiv = document.getElementById('penetrationChart');
-
-    if (!data.penetration_data || data.penetration_data.length === 0) {
-        if (Number(data.total_revenue) > 0) {
-            chartDiv.innerHTML = `
-                <div class="text-center">
-                    <div class="mb-2">
-                        <small class="text-muted font-weight-bold">Total Market Value</small>
-                        <div class="font-weight-bold text-primary">${formatRevenue(data.total_revenue)}</div>
-                    </div>
-                    <div class="text-muted small">
-                        Status information not available for customers in this deepdive
-                    </div>
-                </div>
-            `;
-        } else {
-            chartDiv.innerHTML = '<div class="text-center text-muted small">No customer data available</div>';
-        }
-        return;
-    }
-
-    const totalRevenue = Number(data.total_revenue) || 0;
-    let chartHtml = `
-        <div class="mb-3">
-            <div class="d-flex justify-content-between align-items-center mb-2">
-                <small class="text-muted font-weight-bold">Total Market Value</small>
-                <small class="font-weight-bold text-primary">${formatRevenue(totalRevenue)}</small>
-            </div>
-        </div>
-    `;
-
-    data.penetration_data.forEach((statusData, index) => {
-        const statusLabel = statusData.status_name || statusData.status || `Status ${statusData.status}`;
-        const percentage = Number(statusData.percentage) || 0;
-        const revenue = Number(statusData.revenue) || 0;
-        const count = Number(statusData.customer_count) || 0;
-        const barColor = getStatusColor(statusData.status);
-
-        chartHtml += `
-            <div class="mb-3">
-                <div class="d-flex justify-content-between align-items-center mb-1">
-                    <small class="font-weight-medium">${statusLabel}</small>
-                    <small class="text-muted">${count} customer${count !== 1 ? 's' : ''}</small>
-                </div>
-                <div class="progress mb-1" style="height: 24px; border-radius: 4px;">
-                    <div class="progress-bar d-flex align-items-center justify-content-center"
-                         style="width: ${percentage}%; background-color: ${barColor}; min-width: ${percentage > 0 ? '30px' : '0'};"
-                         title="${statusLabel}: ${formatRevenue(revenue)} (${percentage.toFixed(1)}%)">
-                        <small class="text-white font-weight-bold" style="font-size: 11px;">${percentage.toFixed(1)}%</small>
-                    </div>
-                </div>
-                <div class="d-flex justify-content-between">
-                    <small class="text-muted">${formatRevenue(revenue)}</small>
-                    <small class="text-muted">${percentage.toFixed(1)}% of total</small>
-                </div>
-            </div>
-        `;
-    });
-
-    chartDiv.innerHTML = chartHtml;
-}
-
-function formatRevenue(amount) {
-    const numericAmount = Number(amount);
-    if (!Number.isFinite(numericAmount)) {
-        return '-';
-    }
-    if (numericAmount >= 1000000) {
-        return (numericAmount / 1000000).toFixed(1) + 'M';
-    } else if (numericAmount >= 1000) {
-        return (numericAmount / 1000).toFixed(0) + 'K';
-    } else {
-        return numericAmount.toLocaleString();
-    }
-}
-
-function getStatusColor(status) {
-  // Use the same color scheme as the customers page
-  const statusColors = {
-    1: '#17a2b8',  // Target - Teal
-    2: '#fd7e14',  // Contact Identified - Orange
-    3: '#ffc107',  // Initial Contact - Yellow
-    4: '#007bff',  // Engaged - Blue
-    5: '#6f42c1',  // Qualified - Purple
-    6: '#28a745',  // Active Customer - Green
-  };
-  return statusColors[status] || '#6c757d';
-}
-
-function showImproveContentModal() {
-    $('#improveContentModal').modal('show');
-    $('#improvementRequest').focus();
-}
-
-function showGeoDeepDiveAddCustomerModal() {
-    $('#geoDeepDiveCustomerModal').modal('show');
-    $('#geoCustomerSearch').focus();
-}
-
-function addCuratedCustomer(customerId, customerName, notes = '') {
-    fetch(`/api/geographic-deepdives/{{ deepdive.id }}/customers`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            customer_id: customerId,
-            notes: notes
-        })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            window.location.reload();
-        } else {
-            alert('Failed to add customer: ' + (data.error || 'Unknown error'));
-        }
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        alert('Error adding customer');
-    });
-}
-
-function removeCuratedCustomer(customerId) {
-    if (!confirm('Remove this customer from the list?')) return;
-
-    fetch(`/api/geographic-deepdives/{{ deepdive.id }}/customers/${customerId}`, {
-        method: 'DELETE'
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            window.location.reload();
-        } else {
-            alert('Failed to remove customer: ' + (data.error || 'Unknown error'));
-        }
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        alert('Error removing customer');
-    });
-}
-
-// Inline editing for customer fields
-document.addEventListener('DOMContentLoaded', function() {
-    initializeInlineEditing();
-});
-
-function initializeInlineEditing() {
-    const editableFields = document.querySelectorAll('.editable-field');
-
-    editableFields.forEach(field => {
-        const editBtn = field.querySelector('.edit-btn');
-        const valueSpan = field.querySelector('.field-value');
-        const input = field.querySelector('.field-input');
-        const fieldName = field.dataset.field;
-        const customerId = field.dataset.customerId;
-
-        editBtn.addEventListener('click', function(e) {
-            e.preventDefault();
-            enterEditMode(field, valueSpan, input, editBtn);
-        });
-
-        // Save on blur
-        input.addEventListener('blur', function() {
-            saveFieldValue(field, valueSpan, input, editBtn, fieldName, customerId);
-        });
-
-        // Save on Enter key
-        input.addEventListener('keydown', function(e) {
-            if (e.key === 'Enter' && fieldName !== 'notes') {
-                e.preventDefault();
-                input.blur();
-            }
-            if (e.key === 'Escape') {
-                cancelEdit(field, valueSpan, input, editBtn);
-            }
-        });
-    });
-}
-
-function enterEditMode(field, valueSpan, input, editBtn) {
-    valueSpan.style.display = 'none';
-    editBtn.style.display = 'none';
-    input.style.display = 'block';
-    input.focus();
-
-    // Select text for easy replacement
-    if (input.tagName === 'TEXTAREA') {
-        input.select();
-    }
-}
-
-function cancelEdit(field, valueSpan, input, editBtn) {
-    valueSpan.style.display = 'inline';
-    editBtn.style.display = 'inline';
-    input.style.display = 'none';
-}
-
-async function saveFieldValue(field, valueSpan, input, editBtn, fieldName, customerId) {
-    const newValue = input.value.trim();
-    const deepdiveId = {{ deepdive.id }};
-
-    try {
-        const response = await fetch(`/api/geographic-deepdives/${deepdiveId}/customers/${customerId}/quick-update`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                field: fieldName,
-                value: newValue
-            })
-        });
-
-        if (response.ok) {
-            // Update display value
-            if (fieldName === 'fleet_size') {
-                valueSpan.textContent = newValue || '-';
-            } else if (fieldName === 'estimated_revenue') {
-                const formatted = newValue ? `£${parseFloat(newValue).toLocaleString('en-GB', {minimumFractionDigits: 0, maximumFractionDigits: 0})}` : '-';
-                valueSpan.textContent = formatted;
-            } else {
-                valueSpan.textContent = newValue || '-';
-            }
-
-            cancelEdit(field, valueSpan, input, editBtn);
-
-            // Show success feedback
-            showToast('Updated successfully', 'success');
-        } else {
-            const error = await response.json();
-            showToast(error.error || 'Failed to update', 'danger');
-            cancelEdit(field, valueSpan, input, editBtn);
-        }
-    } catch (error) {
-        console.error('Error updating field:', error);
-        showToast('Failed to update field', 'danger');
-        cancelEdit(field, valueSpan, input, editBtn);
-    }
-}
-
-function showToast(message, type = 'info') {
-    // Simple toast notification
-    const toast = document.createElement('div');
-    toast.className = `alert alert-${type} position-fixed top-0 end-0 m-3`;
-    toast.style.zIndex = '9999';
-    toast.textContent = message;
-
-    document.body.appendChild(toast);
-
-    setTimeout(() => {
-        toast.remove();
-    }, 3000);
-}
-</script>
-<style>
-/* Interactive Text Styles */
-.clickable-text {
-    cursor: pointer;
-    position: relative;
-    transition: all 0.2s ease;
-    border-radius: 3px;
-    padding: 1px 2px;
-}
-
-.clickable-text:hover {
-    background-color: #e3f2fd;
-    color: #1976d2;
-    box-shadow: 0 1px 3px rgba(25, 118, 210, 0.2);
-}
-
-.clickable-text:active {
-    background-color: #bbdefb;
-    transform: scale(0.98);
-}
-
-.selection-tooltip {
-    z-index: 9999;
-    animation: fadeIn 0.2s ease-in;
-}
-
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(-5px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-/* Modal Tab Styles */
-.btn-group .btn.active {
-    background-color: #007bff;
-    color: white;
-    border-color: #007bff;
-}
-
-.markdown-content {
-    line-height: 1.6;
-}
-
-.markdown-content h1, .markdown-content h2, .markdown-content h3 {
-    color: var(--text-dark);
-    margin-top: 2rem;
-    margin-bottom: 1rem;
-}
-
-.markdown-content h1 {
-    font-size: 1.8rem;
-    border-bottom: 3px solid var(--border-color);
-    padding-bottom: 0.5rem;
-}
-
-.markdown-content h2 {
-    font-size: 1.5rem;
-    border-bottom: 2px solid var(--border-color);
-    padding-bottom: 0.3rem;
-}
-
-.markdown-content h3 {
-    font-size: 1.2rem;
-    color: var(--text-dark);
-}
-
-.markdown-content strong {
-    color: var(--primary) !important;
-    font-weight: 600;
-}
-
-.markdown-content ul, .markdown-content ol {
-    margin-left: 1.5rem;
-    margin-bottom: 1rem;
-}
-
-.markdown-content li {
-    margin-bottom: 0.5rem;
-}
-
-.markdown-content hr {
-    border: none;
-    border-top: 2px solid var(--border-color);
-    margin: 2rem 0;
-}
-
-.markdown-content p {
-    margin-bottom: 1rem;
-}
-
-.markdown-content table {
-    width: 100%;
-    border-collapse: collapse;
-    margin: 1rem 0;
-}
-
-.markdown-content table th,
-.markdown-content table td {
-    border: 1px solid var(--border-color);
-    padding: 0.5rem;
-    text-align: left;
-}
-
-.markdown-content table th {
-    background-color: var(--sidebar-bg);
-    font-weight: bold;
-}
-
-.markdown-content em {
-    color: var(--primary-dark);
-    font-style: italic;
-}
-
-.markdown-content a {
-    color: var(--primary);
-    text-decoration: none;
-}
-
-.markdown-content a:hover {
-    color: var(--primary-dark);
-    text-decoration: underline;
-}
-
-.customer-item {
-    transition: all 0.2s ease;
-    border: 1px solid #dee2e6;
-}
-
-.customer-item:hover {
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    border-color: #007bff;
-}
-
-.max-height-300 {
-    max-height: 300px;
-}
-
-.badge-sm {
-    font-size: 0.7rem;
-    padding: 0.2em 0.4em;
-}
-
-.search-result {
-    cursor: pointer;
-    transition: all 0.2s ease;
-    border: 1px solid #dee2e6;
-}
-
-.search-result:hover {
-    background-color: #f8f9fa;
-    border-color: #007bff;
-}
-
-.search-result.selected {
-    background-color: #007bff;
-    color: white;
-    border-color: #007bff;
-}
-
-.search-result.selected .text-muted {
-    color: rgba(255, 255, 255, 0.8) !important;
-}
-
-.search-result.selected .badge-info {
-    background-color: rgba(255, 255, 255, 0.2);
-    color: white;
-}
-
-.cursor-pointer {
-    cursor: pointer;
-}
-
-.btn-xs {
-    padding: 0.125rem 0.25rem;
-    font-size: 0.75rem;
-}
-
-.customer-item .row.text-muted {
-    font-size: 0.85rem;
-}
-
-.customer-item .row.text-muted strong {
-    font-weight: 600;
-}
-
-.customer-item .fas {
-    width: 12px;
-    text-align: center;
-    margin-right: 4px;
-}
-
-#geoSearchResults, #textSelectionResults {
-    max-height: 300px;
-    overflow-y: auto;
-    border: 1px solid #dee2e6;
-    border-radius: 0.25rem;
-    background-color: white;
-}
-
-#geoSearchResults:empty, #textSelectionResults:empty {
-    border: none;
-}
-
-/* Unified Status Badge Styles for Both Pages */
-
-.status-badge {
-  font-weight: 600;
-  text-transform: capitalize;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  position: relative;
-  display: inline-block;
-  white-space: nowrap;
-  margin-left: 4px;
-}
-
-.status-badge.clickable {
-  cursor: pointer;
-  user-select: none;
-}
-
-.status-badge.clickable:hover {
-  transform: scale(1.05);
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-}
-
-.status-badge.clickable:active {
-  transform: scale(0.98);
-}
-
-.status-badge.updating {
-  opacity: 0.6;
-  pointer-events: none;
-}
-
-.status-badge.updating::before {
-  content: '';
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border: 1px solid currentColor;
-  border-radius: 50%;
-  border-top-color: transparent;
-  animation: spin 0.8s linear infinite;
-  margin-right: 4px;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-/* Unified Status-Specific Colors */
-/* Target - Teal */
-.status-badge[data-status*="target"],
-.status-badge[data-status="1"] {
-  background-color: #17a2b8 !important;
-  color: white !important;
-}
-
-/* Contact Identified - Orange */
-.status-badge[data-status*="contact identified"],
-.status-badge[data-status="2"] {
-  background-color: #fd7e14 !important;
-  color: white !important;
-}
-
-/* Initial Contact - Yellow */
-.status-badge[data-status*="initial contact"],
-.status-badge[data-status="3"] {
-  background-color: #ffc107 !important;
-  color: #212529 !important;
-}
-
-/* Engaged - Blue */
-.status-badge[data-status*="engaged"],
-.status-badge[data-status="4"] {
-  background-color: #007bff !important;
-  color: white !important;
-}
-
-/* Qualified - Purple */
-.status-badge[data-status*="qualified"],
-.status-badge[data-status="5"] {
-  background-color: #6f42c1 !important;
-  color: white !important;
-}
-
-/* Active Customer - Green */
-.status-badge[data-status*="active"],
-.status-badge[data-status="6"] {
-  background-color: #28a745 !important;
-  color: white !important;
-}
-
-/* Additional status variations for compatibility */
-.status-badge[data-status*="negotiat"] {
-  background-color: #ffc107 !important;
-  color: #212529 !important;
-}
-
-.status-badge[data-status*="prospect"] {
-  background-color: #dc3545 !important;
-  color: white !important;
-}
-
-.status-badge[data-status*="cold"] {
-  background-color: #6f42c1 !important;
-  color: white !important;
-}
-
-.status-badge[data-status*="inactive"],
-.status-badge[data-status*="dormant"] {
-  background-color: #6c757d !important;
-  color: white !important;
-}
-
-.status-badge[data-status*="lost"],
-.status-badge[data-status*="reject"] {
-  background-color: #495057 !important;
-  color: #adb5bd !important;
-}
-
-.status-badge[data-status*="hold"] {
-  background-color: #e9ecef !important;
-  color: #495057 !important;
-  border: 1px solid #adb5bd !important;
-}
-
-.status-badge[data-status="not set"],
-.status-badge[data-status=""] {
-  background-color: #f8f9fa !important;
-  color: #6c757d !important;
-  border: 1px dashed #dee2e6 !important;
-}
-
-
-
-.badge.status-unknown {
-  background-color: #6c757d !important;
-  color: white !important;
-}
-
-/* Priority Badge Styles */
-.priority-badge {
-  font-weight: 500;
-  font-size: 0.75rem;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  user-select: none;
-  display: inline-block;
-  white-space: nowrap;
-}
-
-.priority-badge.clickable:hover {
-  transform: scale(1.05);
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-}
-
-.priority-badge.clickable:active {
-  transform: scale(0.98);
-}
-
-.priority-badge.updating {
-  opacity: 0.6;
-  pointer-events: none;
-}
-
-/* Customer Link Indicators */
-.customer-link-indicator {
-  display: inline !important;
-  margin-left: 6px !important;
-  white-space: nowrap !important;
-  vertical-align: baseline !important;
-}
-
-.customer-link-indicator .fas {
-  font-size: 0.7rem;
-  color: #28a745;
-  margin-right: 3px;
-}
-
-.customer-link-indicator .badge {
-  font-size: 0.7rem;
-  padding: 0.2em 0.4em;
-  vertical-align: baseline;
-}
-
-.customer-linked-text:hover {
-  background-color: #e8f5e8;
-  border-radius: 3px;
-  padding: 1px 3px;
-}
-
-/* Responsive adjustments */
-@media (max-width: 768px) {
-  .status-badge {
-    font-size: 0.7rem;
-    padding: 0.2em 0.4em;
-  }
-
-  .priority-badge {
-    font-size: 0.7rem;
-  }
-}
-#penetrationChart .progress {
-    background-color: #f8f9fa;
-    border: 1px solid #e9ecef;
-    box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);
-}
-
-#penetrationChart .progress-bar {
-    transition: width 0.6s ease;
-    border-radius: 3px;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-}
-
-
-/* Simple inline customer tag indicator */
-.customer-link-indicator {
-    display: inline !important;
-    margin-left: 6px !important;
-    white-space: nowrap !important;
-    vertical-align: baseline !important;
-}
-
-.customer-link-indicator .fas {
-    font-size: 0.7rem;
-    color: #28a745;
-    margin-right: 3px;
-}
-
-.customer-link-indicator .badge {
-    font-size: 0.7rem;
-    padding: 0.2em 0.4em;
-    vertical-align: baseline;
-}
-
-.customer-link-indicator .fas {
-    font-size: 0.7rem;
-    color: #28a745;
-}
-
-.customer-linked-text:hover {
-    background-color: #e8f5e8;
-    border-radius: 3px;
-    padding: 1px 3px;
-}
-
-/* If you have a container for multiple customer tags, ensure they flow horizontally */
-.customer-tags-container {
-    display: flex;
-    flex-wrap: wrap; /* Allow wrapping to next line if needed */
-    gap: 8px; /* Space between tags */
-    align-items: center;
-}
-
-/* Alternative: If you want them to stay on one line with horizontal scroll */
-.customer-tags-container-horizontal {
-    display: flex;
-    flex-wrap: nowrap; /* No wrapping */
-    gap: 8px;
-    align-items: center;
-    overflow-x: auto; /* Horizontal scroll if content overflows */
-    white-space: nowrap;
-    padding-bottom: 4px; /* Space for scrollbar */
-}
-
-/* For the badges within customer tags */
-.customer-linked-text .badge {
-    margin-left: 4px;
-    white-space: nowrap;
-}
-
-
-
-/* For any parent containers that might contain customer linked text */
-.markdown-content .customer-linked-text,
-.content-display .customer-linked-text {
-    display: inline;
-    vertical-align: baseline;
-}
-.editable-field {
-    display: flex;
-    align-items: center;
-    gap: 0.25rem;
-}
-
-.editable-field .field-value {
-    flex: 1;
-    min-height: 1.5rem;
-}
-
-.editable-field .field-input {
-    flex: 1;
-}
-
-.editable-field .edit-btn {
-    opacity: 0;
-    transition: opacity 0.2s;
-}
-
-.editable-field:hover .edit-btn {
-    opacity: 0.6;
-}
-
-.editable-field .edit-btn:hover {
-    opacity: 1 !important;
-}
-
-.editable-field .edit-btn i {
-    font-size: 0.875rem;
-    color: #6c757d;
-}
-.editable-field .remove-btn {
-    opacity: 0;
-    transition: opacity 0.2s;
-}
-
-.editable-field:hover .remove-btn {
-    opacity: 0.6;
-}
-
-.editable-field .remove-btn:hover {
-    opacity: 1 !important;
-}
-
-.editable-field .remove-btn i {
-    font-size: 0.875rem;
-}
-</style>
-
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script src="{{ url_for('static', filename='js/geo_deepdive.js') }}"></script>
 {% endblock %}

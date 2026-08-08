@@ -129,6 +129,15 @@ def test_company_summary_prioritises_main_categories_and_unmatched_companies():
     assert summary['main_count'] == 2
     assert summary['matched_count'] == 1
     assert summary['suggested_count'] == 1
+    assert summary['coverage_percent'] == 33
     assert summary['unmatched_count'] == 1
     assert [row['company_name'] for row in summary['unmatched_main']] == ['Unmatched Air']
     assert [category['name'] for category in summary['categories']] == ['Operator', 'MRO']
+
+
+def test_company_summary_handles_an_empty_market_map():
+    summary = _build_deepdive_company_summary([])
+
+    assert summary['total'] == 0
+    assert summary['matched_count'] == 0
+    assert summary['coverage_percent'] == 0

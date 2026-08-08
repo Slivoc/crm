@@ -77,11 +77,15 @@ def _build_deepdive_company_summary(companies):
     ]
     category_rows.sort(key=lambda row: (-row['main_count'], -len(row['companies']), row['name'].lower()))
     matched_statuses = {'matched', 'confirmed'}
+    total = len(companies)
+    matched_count = sum(company.get('match_status') in matched_statuses for company in companies)
+    suggested_count = sum(company.get('match_status') == 'suggested' for company in companies)
     return {
-        'total': len(companies),
+        'total': total,
         'main_count': sum(bool(company.get('is_main')) for company in companies),
-        'matched_count': sum(company.get('match_status') in matched_statuses for company in companies),
-        'suggested_count': sum(company.get('match_status') == 'suggested' for company in companies),
+        'matched_count': matched_count,
+        'suggested_count': suggested_count,
+        'coverage_percent': round((matched_count / total) * 100) if total else 0,
         'unmatched_count': sum(not company.get('matched_customer_id') for company in companies),
         'unmatched_main': [
             company for company in companies
@@ -444,8 +448,6 @@ def create_deepdive_route():
 @geo_deepdive_bp.route('/geographic-deepdives/<int:deepdive_id>')
 def view_deepdive(deepdive_id):
     """View a specific deep dive with curated customer list"""
-    print(f"DEBUG: view_deepdive called with ID: {deepdive_id}")
-
     deepdive = get_deepdive_by_id(deepdive_id)
 
     if not deepdive:
@@ -454,15 +456,14 @@ def view_deepdive(deepdive_id):
 
     # Get customer links for this deepdive
     customer_links = get_customer_links_for_deepdive(deepdive_id)
-    print(f"DEBUG: Customer links: {customer_links}")
 
     # Process content to add customer tags
     processed_content = process_deepdive_content_with_customer_tags(deepdive['content'], customer_links)
-    print(f"DEBUG: Processed content exists: {bool(processed_content)}")
 
     # Create a new deepdive dict with processed content
     deepdive_with_tags = dict(deepdive)
     deepdive_with_tags['processed_content'] = processed_content
+    deepdive_with_tags['country_name'] = get_country_name(deepdive['country'])
 
     # Get curated customers for this deepdive
     curated_customers = get_curated_customers_for_deepdive(deepdive_id)
@@ -476,7 +477,7 @@ def view_deepdive(deepdive_id):
     # Add breadcrumbs
     breadcrumbs = [
         ('Geographic Deepdives', url_for('geo_deepdive.list_deepdives')),
-        (deepdive['title'], None)  # Current page
+        (f"{deepdive['country']} · {deepdive['tag_description'] or 'Aviation'}", None)
     ]
 
     return render_template('geo_deepdive_view.html',
