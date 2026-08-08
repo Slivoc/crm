@@ -29,6 +29,7 @@
                     <h6 class="mb-0"><i class="fas fa-building"></i> Companies Mentioned by AI</h6>
                     <div class="d-flex align-items-center gap-2">
                         <span class="badge bg-secondary">{{ mentioned_companies|length }}</span>
+                        {% if mentioned_companies %}<button class="btn btn-sm btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#companySummaryModal"><i class="fas fa-chart-pie me-1"></i>Summary</button>{% endif %}
                         <form method="post" action="{{ url_for('geo_deepdive.extract_deepdive_companies_route', deepdive_id=deepdive.id) }}">
                             <button class="btn btn-sm btn-outline-primary" type="submit"><i class="fas fa-magic me-1"></i>{{ 'Refresh' if mentioned_companies else 'Extract companies' }}</button>
                         </form>
@@ -59,6 +60,7 @@
                                         <a href="{{ url_for('customers.get_customer_details', customer_id=company.matched_customer_id) }}" class="fw-semibold text-decoration-none">{{ company.matched_customer_name }}</a>
                                         <span class="badge {{ 'bg-success' if company.match_status in ('matched', 'confirmed') else 'bg-warning text-dark' }} d-block mt-1">{{ 'CRM customer' if company.match_status in ('matched', 'confirmed') else 'Possible CRM match' }}</span>
                                         {% if company.matched_customer_status %}<small class="text-muted">{{ company.matched_customer_status }}</small>{% endif %}
+                                        {% if company.match_method %}<small class="text-muted d-block">Matched by {{ company.match_method|replace('_', ' ') }}</small>{% endif %}
                                         {% else %}<span class="badge bg-secondary">Not matched</span>{% endif %}
                                     </td>
                                     <td class="small" style="min-width:230px">{{ company.why_relevant or 'Not specified.' }}</td>
@@ -72,6 +74,61 @@
                     {% endif %}
                 </div>
             </div>
+
+            {% if mentioned_companies %}
+            <div class="modal fade" id="companySummaryModal" tabindex="-1" aria-hidden="true">
+                <div class="modal-dialog modal-xl modal-dialog-scrollable">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <div><h5 class="modal-title">Market company summary</h5><small class="text-muted">{{ deepdive.title }}</small></div>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="row g-3 mb-4">
+                                <div class="col-6 col-lg"><div class="border rounded p-3 h-100"><small class="text-muted">Mentioned</small><strong class="fs-3 d-block">{{ company_summary.total }}</strong></div></div>
+                                <div class="col-6 col-lg"><div class="border rounded p-3 h-100"><small class="text-muted">Main participants</small><strong class="fs-3 d-block text-primary">{{ company_summary.main_count }}</strong></div></div>
+                                <div class="col-6 col-lg"><div class="border rounded p-3 h-100"><small class="text-muted">CRM customers</small><strong class="fs-3 d-block text-success">{{ company_summary.matched_count }}</strong></div></div>
+                                <div class="col-6 col-lg"><div class="border rounded p-3 h-100"><small class="text-muted">Possible matches</small><strong class="fs-3 d-block text-warning">{{ company_summary.suggested_count }}</strong></div></div>
+                                <div class="col-6 col-lg"><div class="border rounded p-3 h-100"><small class="text-muted">Unmatched</small><strong class="fs-3 d-block text-secondary">{{ company_summary.unmatched_count }}</strong></div></div>
+                            </div>
+
+                            {% if company_summary.unmatched_main %}
+                            <div class="alert alert-warning">
+                                <strong class="d-block mb-2">Main market participants not matched to CRM</strong>
+                                <div class="d-flex flex-wrap gap-2">{% for company in company_summary.unmatched_main %}<span class="badge bg-warning text-dark">{{ company.company_name }}</span>{% endfor %}</div>
+                            </div>
+                            {% endif %}
+
+                            <div class="accordion" id="companyCategoryAccordion">
+                                {% for category in company_summary.categories %}
+                                <div class="accordion-item">
+                                    <h2 class="accordion-header">
+                                        <button class="accordion-button {{ '' if loop.first else 'collapsed' }}" type="button" data-bs-toggle="collapse" data-bs-target="#companyCategory{{ loop.index }}">
+                                            {{ category.name }} <span class="badge bg-secondary ms-2">{{ category.companies|length }}</span>{% if category.main_count %}<span class="badge bg-primary ms-1">{{ category.main_count }} main</span>{% endif %}
+                                        </button>
+                                    </h2>
+                                    <div id="companyCategory{{ loop.index }}" class="accordion-collapse collapse {{ 'show' if loop.first }}" data-bs-parent="#companyCategoryAccordion">
+                                        <div class="accordion-body p-0">
+                                            <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+                                                <thead><tr><th>Company</th><th>Market importance</th><th>CRM relationship</th><th>Customer status</th></tr></thead>
+                                                <tbody>{% for company in category.companies %}<tr>
+                                                    <td><strong>{{ company.company_name }}</strong></td>
+                                                    <td>{{ 'Main participant' if company.is_main else 'Other mentioned organisation' }}</td>
+                                                    <td>{% if company.matched_customer_id %}<a href="{{ url_for('customers.get_customer_details', customer_id=company.matched_customer_id) }}">{{ company.matched_customer_name }}</a><div><small class="text-muted">{{ company.match_method|replace('_', ' ') }}</small></div>{% else %}<span class="text-muted">Not matched</span>{% endif %}</td>
+                                                    <td>{{ company.matched_customer_status or '—' }}</td>
+                                                </tr>{% endfor %}</tbody>
+                                            </table></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button></div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
 
             <div class="card">
                 <div class="card-body">

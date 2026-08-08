@@ -13,6 +13,7 @@ from collections import Counter
 from typing import List, Dict, Tuple, Optional, Any
 import datetime
 import os
+from urllib.parse import urlparse
 from werkzeug.utils import secure_filename
 from datetime import datetime
 from routes.upload import parse_email
@@ -3292,17 +3293,114 @@ def _normalise_deepdive_company_name(value):
     return re.sub(r'[^a-z0-9]+', '', str(value or '').lower())
 
 
+def _deepdive_company_domain(value):
+    value = str(value or '').strip()
+    if not value:
+        return ''
+    parsed = urlparse(value if '://' in value else f'https://{value}')
+    return (parsed.netloc or '').lower().removeprefix('www.').split(':')[0]
+
+
+def _deepdive_company_match_context(db, deepdive_id):
+    customers = [dict(row) for row in db.execute(
+        'SELECT id, name, website FROM customers ORDER BY id'
+    ).fetchall()]
+    for customer in customers:
+        customer['normalised_name'] = _normalise_deepdive_company_name(customer['name'])
+        customer['domain'] = _deepdive_company_domain(customer.get('website'))
+    aliases = [dict(row) for row in db.execute('''
+        SELECT customer_id, alias, weight
+        FROM customer_aliases
+        WHERE active = TRUE
+    ''').fetchall()]
+    links = [dict(row) for row in db.execute('''
+        SELECT customer_id, linked_text
+        FROM deepdive_customer_links
+        WHERE deepdive_id = ?
+    ''', (deepdive_id,)).fetchall()]
+
+    def grouped(rows, key_getter):
+        result = {}
+        for row in rows:
+            key = key_getter(row)
+            if key:
+                result.setdefault(key, []).append(row)
+        return result
+
+    return {
+        'customers': customers,
+        'customer_by_id': {customer['id']: customer for customer in customers},
+        'canonical': grouped(customers, lambda row: row['normalised_name']),
+        'domains': grouped(customers, lambda row: row['domain']),
+        'aliases': grouped(aliases, lambda row: _normalise_deepdive_company_name(row['alias'])),
+        'links': grouped(links, lambda row: _normalise_deepdive_company_name(row['linked_text'])),
+    }
+
+
+def _match_geographic_deepdive_company(company, context):
+    name = company.get('name') or company.get('company_name') or ''
+    normalised_name = _normalise_deepdive_company_name(name)
+    website_domain = _deepdive_company_domain(company.get('website'))
+
+    explicit_links = context['links'].get(normalised_name, [])
+    explicit_ids = {row['customer_id'] for row in explicit_links}
+    if len(explicit_ids) == 1:
+        customer_id = next(iter(explicit_ids))
+        return context['customer_by_id'].get(customer_id), 1.0, 'explicit_text_link', 'confirmed'
+
+    alias_matches = context['aliases'].get(normalised_name, [])
+    alias_ids = {row['customer_id'] for row in alias_matches}
+    if len(alias_ids) == 1:
+        customer_id = next(iter(alias_ids))
+        weight = max(int(row.get('weight') or 80) for row in alias_matches if row['customer_id'] == customer_id)
+        return context['customer_by_id'].get(customer_id), min(weight / 100, 1), 'customer_alias', ('matched' if weight >= 90 else 'suggested')
+
+    exact_matches = context['canonical'].get(normalised_name, [])
+    if len(exact_matches) == 1:
+        return exact_matches[0], 1.0, 'normalised_exact', 'matched'
+
+    domain_matches = context['domains'].get(website_domain, []) if website_domain else []
+    if len(domain_matches) == 1:
+        return domain_matches[0], 0.98, 'website_domain', 'matched'
+
+    if len(normalised_name) >= 6:
+        candidates = [
+            customer for customer in context['customers']
+            if len(customer['normalised_name']) >= 6
+            and (normalised_name in customer['normalised_name']
+                 or customer['normalised_name'] in normalised_name)
+        ]
+        if len(candidates) == 1:
+            return candidates[0], 0.82, 'name_containment', 'suggested'
+    return None, None, '', 'unmatched'
+
+
+def _reconcile_geographic_deepdive_company_matches(db, deepdive_id):
+    context = _deepdive_company_match_context(db, deepdive_id)
+    rows = db.execute('''
+        SELECT id, company_name, website
+        FROM geographic_deepdive_companies
+        WHERE deepdive_id = ?
+    ''', (deepdive_id,)).fetchall()
+    for row in rows:
+        customer, confidence, method, status = _match_geographic_deepdive_company(dict(row), context)
+        db.execute('''
+            UPDATE geographic_deepdive_companies
+            SET matched_customer_id = ?, match_confidence = ?, match_method = ?,
+                match_status = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+              AND (matched_customer_id IS DISTINCT FROM ?
+                   OR match_confidence IS DISTINCT FROM ?
+                   OR match_method IS DISTINCT FROM ?
+                   OR match_status IS DISTINCT FROM ?)
+        ''', (customer['id'] if customer else None, confidence, method, status, row['id'],
+              customer['id'] if customer else None, confidence, method, status))
+
+
 def _replace_geographic_deepdive_companies(db, deepdive_id, companies):
     """Replace generated mentions and conservatively match them to CRM customers."""
     db.execute('DELETE FROM geographic_deepdive_companies WHERE deepdive_id = ?', (deepdive_id,))
-    customer_rows = db.execute('SELECT id, name FROM customers ORDER BY id').fetchall()
-    customers = [
-        {**dict(row), 'normalised_name': _normalise_deepdive_company_name(row['name'])}
-        for row in customer_rows
-    ]
-    exact_customers = {}
-    for customer in customers:
-        exact_customers.setdefault(customer['normalised_name'], []).append(customer)
+    match_context = _deepdive_company_match_context(db, deepdive_id)
 
     seen = set()
     for display_order, company in enumerate(companies or [], start=1):
@@ -3311,28 +3409,9 @@ def _replace_geographic_deepdive_companies(db, deepdive_id, companies):
         if not company_name or not normalised_name or normalised_name in seen:
             continue
         seen.add(normalised_name)
-        matched_customer = None
-        match_confidence = None
-        match_method = ''
-        match_status = 'unmatched'
-        exact_matches = exact_customers.get(normalised_name, [])
-        if len(exact_matches) == 1:
-            matched_customer = exact_matches[0]
-            match_confidence = 1.0
-            match_method = 'normalised_exact'
-            match_status = 'matched'
-        elif len(normalised_name) >= 6:
-            candidates = [
-                customer for customer in customers
-                if len(customer['normalised_name']) >= 6
-                and (normalised_name in customer['normalised_name']
-                     or customer['normalised_name'] in normalised_name)
-            ]
-            if len(candidates) == 1:
-                matched_customer = candidates[0]
-                match_confidence = 0.82
-                match_method = 'name_containment'
-                match_status = 'suggested'
+        matched_customer, match_confidence, match_method, match_status = (
+            _match_geographic_deepdive_company(company, match_context)
+        )
 
         db.execute('''
             INSERT INTO geographic_deepdive_companies (
@@ -3367,6 +3446,19 @@ def get_geographic_deepdive_companies(deepdive_id):
         ORDER BY gdc.is_main DESC, gdc.display_order, gdc.company_name
     ''', (deepdive_id,), fetch='all') or []
     return [dict(row) for row in rows]
+
+
+def reconcile_geographic_deepdive_company_matches(deepdive_id):
+    db = get_db_connection()
+    try:
+        _reconcile_geographic_deepdive_company_matches(db, deepdive_id)
+        db.commit()
+        return True
+    except Exception:
+        db.rollback()
+        return False
+    finally:
+        db.close()
 
 
 def replace_geographic_deepdive_companies(deepdive_id, companies):
@@ -3783,6 +3875,7 @@ def add_customer_link_to_deepdive(deepdive_id, customer_id, linked_text):
                 (deepdive_id, customer_id, None, next_order),
             )
 
+        _reconcile_geographic_deepdive_company_matches(db, deepdive_id)
         db.commit()
         return True, None
     except Exception as e:
@@ -3839,10 +3932,12 @@ def remove_customer_link_from_deepdive(deepdive_id, customer_id, linked_text):
             DELETE FROM deepdive_customer_links 
             WHERE deepdive_id = ? AND customer_id = ? AND linked_text = ?
         """, (deepdive_id, customer_id, linked_text))
-
+        removed = cursor.rowcount > 0
+        if removed:
+            _reconcile_geographic_deepdive_company_matches(conn, deepdive_id)
         conn.commit()
         conn.close()
-        return cursor.rowcount > 0
+        return removed
     except Exception as e:
         print(f"Error removing customer link: {e}")
         return False

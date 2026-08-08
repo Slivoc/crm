@@ -9,6 +9,7 @@ from helpers.geo_deepdive import deepdive_summary_text
 from models import (get_countries_by_continent, get_all_deepdives, get_deepdive_mentioned_company_summaries, get_customer_links_for_deepdive, add_customer_link_to_deepdive, remove_customer_link_from_deepdive,
                     get_deepdive_by_id, create_deepdive, update_deepdive, delete_deepdive,
                     get_geographic_deepdive_companies,
+                    reconcile_geographic_deepdive_company_matches,
                     replace_geographic_deepdive_companies,
                     get_all_tags_flat, get_all_countries, get_country_customers_by_tag,
                     match_companies_to_customers, get_curated_customers_for_deepdive, add_customer_to_deepdive, remove_customer_from_deepdive, update_customer_notes_in_deepdive, search_customers_for_deepdive, get_country_name)
@@ -60,6 +61,34 @@ def _parse_deepdive_ai_result(raw):
     if not content:
         raise ValueError('Perplexity returned no deep-dive content')
     return content, _normalise_deepdive_companies(result.get('mentioned_companies'))
+
+
+def _build_deepdive_company_summary(companies):
+    companies = [dict(company) for company in (companies or [])]
+    categories = {}
+    for company in companies:
+        category = company.get('company_type') or 'Other organisations'
+        categories.setdefault(category, []).append(company)
+    for rows in categories.values():
+        rows.sort(key=lambda row: (not bool(row.get('is_main')), row.get('company_name', '').lower()))
+    category_rows = [
+        {'name': name, 'companies': rows, 'main_count': sum(bool(row.get('is_main')) for row in rows)}
+        for name, rows in categories.items()
+    ]
+    category_rows.sort(key=lambda row: (-row['main_count'], -len(row['companies']), row['name'].lower()))
+    matched_statuses = {'matched', 'confirmed'}
+    return {
+        'total': len(companies),
+        'main_count': sum(bool(company.get('is_main')) for company in companies),
+        'matched_count': sum(company.get('match_status') in matched_statuses for company in companies),
+        'suggested_count': sum(company.get('match_status') == 'suggested' for company in companies),
+        'unmatched_count': sum(not company.get('matched_customer_id') for company in companies),
+        'unmatched_main': [
+            company for company in companies
+            if company.get('is_main') and not company.get('matched_customer_id')
+        ],
+        'categories': category_rows,
+    }
 
 
 def _using_postgres():
@@ -437,7 +466,9 @@ def view_deepdive(deepdive_id):
 
     # Get curated customers for this deepdive
     curated_customers = get_curated_customers_for_deepdive(deepdive_id)
+    reconcile_geographic_deepdive_company_matches(deepdive_id)
     mentioned_companies = get_geographic_deepdive_companies(deepdive_id)
+    company_summary = _build_deepdive_company_summary(mentioned_companies)
 
     # Get all customers for this country/tag for adding to curated list
     country_customers = get_country_customers_by_tag(deepdive['country'], deepdive['tag_id'])
@@ -452,6 +483,7 @@ def view_deepdive(deepdive_id):
                            deepdive=deepdive_with_tags,
                            curated_customers=curated_customers,
                            mentioned_companies=mentioned_companies,
+                           company_summary=company_summary,
                            country_customers=country_customers,
                            customer_links=customer_links,
                            breadcrumbs=breadcrumbs)
