@@ -3246,20 +3246,22 @@ def get_all_deepdives():
         db.close()
 
 
-def get_deepdive_customer_summaries(deepdive_ids):
-    """Return the ordered curated companies and CRM statuses for many deep dives."""
+def get_deepdive_mentioned_company_summaries(deepdive_ids):
+    """Return AI-mentioned companies and any matched CRM status for many deep dives."""
     deepdive_ids = [int(value) for value in deepdive_ids if value is not None]
     if not deepdive_ids:
         return {}
     placeholders = ','.join('?' for _ in deepdive_ids)
     rows = db_execute(f"""
-        SELECT dcc.deepdive_id, c.id, c.name, cs.status,
-               dcc.order_index
-        FROM deepdive_curated_customers dcc
-        JOIN customers c ON c.id = dcc.customer_id
+        SELECT gdc.deepdive_id, gdc.company_name AS name, gdc.company_type,
+               gdc.is_main, gdc.display_order, gdc.match_status,
+               gdc.matched_customer_id AS customer_id,
+               c.name AS matched_customer_name, cs.status
+        FROM geographic_deepdive_companies gdc
+        LEFT JOIN customers c ON c.id = gdc.matched_customer_id
         LEFT JOIN customer_status cs ON cs.id = c.status_id
-        WHERE dcc.deepdive_id IN ({placeholders})
-        ORDER BY dcc.deepdive_id, dcc.order_index, c.name
+        WHERE gdc.deepdive_id IN ({placeholders})
+        ORDER BY gdc.deepdive_id, gdc.is_main DESC, gdc.display_order, gdc.company_name
     """, deepdive_ids, fetch="all") or []
     grouped = {deepdive_id: [] for deepdive_id in deepdive_ids}
     for row in rows:
@@ -3286,7 +3288,101 @@ def get_deepdive_by_id(deepdive_id):
         db.close()
 
 
-def create_deepdive(country, tag_id, title, content):
+def _normalise_deepdive_company_name(value):
+    return re.sub(r'[^a-z0-9]+', '', str(value or '').lower())
+
+
+def _replace_geographic_deepdive_companies(db, deepdive_id, companies):
+    """Replace generated mentions and conservatively match them to CRM customers."""
+    db.execute('DELETE FROM geographic_deepdive_companies WHERE deepdive_id = ?', (deepdive_id,))
+    customer_rows = db.execute('SELECT id, name FROM customers ORDER BY id').fetchall()
+    customers = [
+        {**dict(row), 'normalised_name': _normalise_deepdive_company_name(row['name'])}
+        for row in customer_rows
+    ]
+    exact_customers = {}
+    for customer in customers:
+        exact_customers.setdefault(customer['normalised_name'], []).append(customer)
+
+    seen = set()
+    for display_order, company in enumerate(companies or [], start=1):
+        company_name = str(company.get('name') or '').strip()[:300]
+        normalised_name = _normalise_deepdive_company_name(company_name)
+        if not company_name or not normalised_name or normalised_name in seen:
+            continue
+        seen.add(normalised_name)
+        matched_customer = None
+        match_confidence = None
+        match_method = ''
+        match_status = 'unmatched'
+        exact_matches = exact_customers.get(normalised_name, [])
+        if len(exact_matches) == 1:
+            matched_customer = exact_matches[0]
+            match_confidence = 1.0
+            match_method = 'normalised_exact'
+            match_status = 'matched'
+        elif len(normalised_name) >= 6:
+            candidates = [
+                customer for customer in customers
+                if len(customer['normalised_name']) >= 6
+                and (normalised_name in customer['normalised_name']
+                     or customer['normalised_name'] in normalised_name)
+            ]
+            if len(candidates) == 1:
+                matched_customer = candidates[0]
+                match_confidence = 0.82
+                match_method = 'name_containment'
+                match_status = 'suggested'
+
+        db.execute('''
+            INSERT INTO geographic_deepdive_companies (
+                deepdive_id, company_name, normalized_name, company_type,
+                role_summary, why_relevant, website, country, source_urls,
+                mention_sections, is_main, display_order, matched_customer_id,
+                match_confidence, match_method, match_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?, ?, ?)
+        ''', (
+            deepdive_id, company_name, normalised_name,
+            str(company.get('company_type') or '')[:120],
+            str(company.get('role_summary') or '')[:1000],
+            str(company.get('why_relevant') or '')[:1000],
+            str(company.get('website') or '')[:1000],
+            str(company.get('country') or '')[:120],
+            json.dumps(company.get('source_urls') or []),
+            json.dumps(company.get('mention_sections') or []),
+            bool(company.get('is_main')), display_order,
+            matched_customer['id'] if matched_customer else None,
+            match_confidence, match_method, match_status,
+        ))
+
+
+def get_geographic_deepdive_companies(deepdive_id):
+    rows = db_execute('''
+        SELECT gdc.*, c.name AS matched_customer_name,
+               cs.status AS matched_customer_status
+        FROM geographic_deepdive_companies gdc
+        LEFT JOIN customers c ON c.id = gdc.matched_customer_id
+        LEFT JOIN customer_status cs ON cs.id = c.status_id
+        WHERE gdc.deepdive_id = ?
+        ORDER BY gdc.is_main DESC, gdc.display_order, gdc.company_name
+    ''', (deepdive_id,), fetch='all') or []
+    return [dict(row) for row in rows]
+
+
+def replace_geographic_deepdive_companies(deepdive_id, companies):
+    db = get_db_connection()
+    try:
+        _replace_geographic_deepdive_companies(db, deepdive_id, companies)
+        db.commit()
+        return True, None
+    except Exception as exc:
+        db.rollback()
+        return False, str(exc)
+    finally:
+        db.close()
+
+
+def create_deepdive(country, tag_id, title, content, mentioned_companies=None):
     """Create a new geographic deep dive"""
     db = get_db_connection()
     try:
@@ -3302,10 +3398,16 @@ def create_deepdive(country, tag_id, title, content):
         cursor = db.execute("""
             INSERT INTO geographic_deepdives (country, tag_id, title, content, created_at, updated_at)
             VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            RETURNING id
         """, [country, tag_id, title, content])
 
+        inserted = cursor.fetchone()
+        deepdive_id = inserted['id'] if inserted else None
+        if deepdive_id is None:
+            raise RuntimeError('Deep dive insert did not return an id')
+        _replace_geographic_deepdive_companies(db, deepdive_id, mentioned_companies or [])
         db.commit()
-        return cursor.lastrowid, None
+        return deepdive_id, None
     except Exception as e:
         db.rollback()
         print(f"Error creating deepdive: {str(e)}")

@@ -36,18 +36,22 @@
 
                     <div class="border rounded bg-light-subtle p-3 mb-4">
                         <div class="d-flex justify-content-between align-items-center mb-2">
-                            <h5 class="h6 mb-0">Main companies</h5>
-                            <span class="badge bg-secondary-subtle text-secondary-emphasis">{{ deepdive.main_companies|length }}</span>
+                            <h5 class="h6 mb-0">Companies mentioned</h5>
+                            <span class="badge bg-secondary-subtle text-secondary-emphasis">{{ deepdive.mentioned_companies|length }}</span>
                         </div>
-                        {% if deepdive.main_companies %}
+                        {% if deepdive.mentioned_companies %}
                         <div class="vstack gap-2">
-                            {% for company in deepdive.main_companies[:6] %}
-                            {% set status = (company.status or 'No status') %}
+                            {% for company in deepdive.mentioned_companies[:6] %}
+                            {% set status = company.status or ('Possible CRM match' if company.match_status == 'suggested' else ('CRM customer' if company.customer_id else 'Not a customer')) %}
                             {% set status_key = status|lower %}
                             <div class="d-flex justify-content-between align-items-center gap-3">
-                                <a class="small fw-semibold text-dark text-decoration-none text-truncate" href="{{ url_for('customers.get_customer_details', customer_id=company.id) }}">{{ company.name }}</a>
+                                <div class="small fw-semibold text-dark text-truncate">
+                                    {% if company.customer_id %}<a class="text-dark text-decoration-none" href="{{ url_for('customers.get_customer_details', customer_id=company.customer_id) }}">{{ company.name }}</a>{% else %}{{ company.name }}{% endif %}
+                                    {% if company.is_main %}<span class="text-primary" title="Main market participant">★</span>{% endif %}
+                                </div>
                                 <span class="badge rounded-pill flex-shrink-0
                                     {%- if 'active' in status_key or 'engaged' in status_key or 'qualified' in status_key %} bg-success
+                                    {%- elif 'possible' in status_key %} bg-warning text-dark
                                     {%- elif 'lost' in status_key or 'reject' in status_key %} bg-danger
                                     {%- elif 'initial' in status_key or 'contact' in status_key %} bg-info text-dark
                                     {%- elif 'target' in status_key or 'prospect' in status_key %} bg-primary
@@ -55,11 +59,11 @@
                             </div>
                             {% endfor %}
                         </div>
-                        {% if deepdive.main_companies|length > 6 %}
-                        <div class="small text-muted mt-2">+ {{ deepdive.main_companies|length - 6 }} more in the full deep dive</div>
+                        {% if deepdive.mentioned_companies|length > 6 %}
+                        <div class="small text-muted mt-2">+ {{ deepdive.mentioned_companies|length - 6 }} more in the full deep dive</div>
                         {% endif %}
                         {% else %}
-                        <p class="small text-muted mb-0">No curated companies have been added yet.</p>
+                        <p class="small text-muted mb-0">No company manifest has been extracted yet.</p>
                         {% endif %}
                     </div>
 

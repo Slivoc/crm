@@ -24,6 +24,55 @@
                 </div>
             </div>
 
+            <div class="card mb-3">
+                <div class="card-header d-flex justify-content-between align-items-center gap-2">
+                    <h6 class="mb-0"><i class="fas fa-building"></i> Companies Mentioned by AI</h6>
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="badge bg-secondary">{{ mentioned_companies|length }}</span>
+                        <form method="post" action="{{ url_for('geo_deepdive.extract_deepdive_companies_route', deepdive_id=deepdive.id) }}">
+                            <button class="btn btn-sm btn-outline-primary" type="submit"><i class="fas fa-magic me-1"></i>{{ 'Refresh' if mentioned_companies else 'Extract companies' }}</button>
+                        </form>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    {% if mentioned_companies %}
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead>
+                                <tr><th>Company</th><th>Type and role</th><th>CRM match</th><th>Why relevant</th></tr>
+                            </thead>
+                            <tbody>
+                                {% for company in mentioned_companies %}
+                                <tr>
+                                    <td style="min-width:190px">
+                                        <strong>{{ company.company_name }}</strong>
+                                        {% if company.is_main %}<span class="badge bg-primary ms-1">Main</span>{% endif %}
+                                        {% if company.website %}<a href="{{ company.website }}" target="_blank" rel="noopener" class="ms-1"><i class="bi bi-box-arrow-up-right"></i></a>{% endif %}
+                                        {% if company.country %}<small class="text-muted d-block">{{ company.country }}</small>{% endif %}
+                                    </td>
+                                    <td style="min-width:230px">
+                                        {% if company.company_type %}<span class="badge bg-light text-dark border mb-1">{{ company.company_type }}</span>{% endif %}
+                                        <div class="small">{{ company.role_summary or 'No role summary provided.' }}</div>
+                                    </td>
+                                    <td style="min-width:180px">
+                                        {% if company.matched_customer_id %}
+                                        <a href="{{ url_for('customers.get_customer_details', customer_id=company.matched_customer_id) }}" class="fw-semibold text-decoration-none">{{ company.matched_customer_name }}</a>
+                                        <span class="badge {{ 'bg-success' if company.match_status in ('matched', 'confirmed') else 'bg-warning text-dark' }} d-block mt-1">{{ 'CRM customer' if company.match_status in ('matched', 'confirmed') else 'Possible CRM match' }}</span>
+                                        {% if company.matched_customer_status %}<small class="text-muted">{{ company.matched_customer_status }}</small>{% endif %}
+                                        {% else %}<span class="badge bg-secondary">Not matched</span>{% endif %}
+                                    </td>
+                                    <td class="small" style="min-width:230px">{{ company.why_relevant or 'Not specified.' }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="p-3 text-muted small">No structured company records are stored for this deep dive. Newly AI-generated deep dives will populate this table.</div>
+                    {% endif %}
+                </div>
+            </div>
+
             <div class="card">
                 <div class="card-body">
                     <div class="mb-3">

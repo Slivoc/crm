@@ -2,14 +2,64 @@ from flask import Blueprint, render_template, request, jsonify, flash, redirect,
 import logging
 import re
 import os
+import json
 from openai import OpenAI
 from db import execute as db_execute, db_cursor
 from helpers.geo_deepdive import deepdive_summary_text
-from models import (get_countries_by_continent, get_all_deepdives, get_deepdive_customer_summaries, get_customer_links_for_deepdive, add_customer_link_to_deepdive, remove_customer_link_from_deepdive,
+from models import (get_countries_by_continent, get_all_deepdives, get_deepdive_mentioned_company_summaries, get_customer_links_for_deepdive, add_customer_link_to_deepdive, remove_customer_link_from_deepdive,
                     get_deepdive_by_id, create_deepdive, update_deepdive, delete_deepdive,
+                    get_geographic_deepdive_companies,
+                    replace_geographic_deepdive_companies,
                     get_all_tags_flat, get_all_countries, get_country_customers_by_tag,
                     match_companies_to_customers, get_curated_customers_for_deepdive, add_customer_to_deepdive, remove_customer_from_deepdive, update_customer_notes_in_deepdive, search_customers_for_deepdive, get_country_name)
 geo_deepdive_bp = Blueprint('geo_deepdive', __name__)
+
+
+def _normalise_deepdive_companies(value):
+    """Constrain structured Perplexity company mentions before persistence."""
+    companies = []
+    seen = set()
+    for item in value if isinstance(value, list) else []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get('name') or '').strip()[:300]
+        key = re.sub(r'[^a-z0-9]+', '', name.lower())
+        if not name or not key or key in seen:
+            continue
+        seen.add(key)
+        source_urls = [
+            str(url)[:1000] for url in (item.get('source_urls') or [])
+            if str(url).startswith('https://')
+        ][:6]
+        website = str(item.get('website') or '').strip()[:1000]
+        if website and not website.startswith('https://'):
+            website = ''
+        sections = [str(section).strip()[:160] for section in (item.get('mention_sections') or []) if str(section).strip()][:8]
+        companies.append({
+            'name': name,
+            'company_type': str(item.get('company_type') or '')[:120],
+            'role_summary': str(item.get('role_summary') or '')[:1000],
+            'why_relevant': str(item.get('why_relevant') or '')[:1000],
+            'website': website,
+            'country': str(item.get('country') or '')[:120],
+            'source_urls': source_urls,
+            'mention_sections': sections,
+            'is_main': bool(item.get('is_main')),
+        })
+        if len(companies) == 100:
+            break
+    return companies
+
+
+def _parse_deepdive_ai_result(raw):
+    raw = str(raw or '').strip()
+    if raw.startswith('```'):
+        raw = raw.split('\n', 1)[1].rsplit('```', 1)[0]
+    result = json.loads(raw)
+    content = str(result.get('content_markdown') or '').strip()
+    if not content:
+        raise ValueError('Perplexity returned no deep-dive content')
+    return content, _normalise_deepdive_companies(result.get('mentioned_companies'))
 
 
 def _using_postgres():
@@ -33,7 +83,7 @@ def list_deepdives():
     """List all geographic deep dives"""
     deepdives_raw = get_all_deepdives()
 
-    customer_summaries = get_deepdive_customer_summaries(
+    company_summaries = get_deepdive_mentioned_company_summaries(
         [row['id'] for row in deepdives_raw]
     )
 
@@ -45,7 +95,7 @@ def list_deepdives():
         # Add country name
         deepdive['country_name'] = get_country_name(deepdive['country'])
         deepdive['summary'] = deepdive_summary_text(deepdive.get('content'))
-        deepdive['main_companies'] = customer_summaries.get(deepdive['id'], [])
+        deepdive['mentioned_companies'] = company_summaries.get(deepdive['id'], [])
         deepdives.append(deepdive)
 
     # Add breadcrumbs
@@ -62,7 +112,7 @@ def generate_deepdive_content_with_perplexity(country_code, tag_description):
     perplexity_key = os.getenv("PERPLEXITY_API_KEY")
 
     if not perplexity_key:
-        return None, "Perplexity API key not found"
+        return None, [], "Perplexity API key not found"
 
     # Convert country code to full name for better AI search results
     country_name = get_country_name(country_code)
@@ -155,7 +205,27 @@ Activity is clustered in Alpine regions plus Vienna area.
 - Procurement: centralized (**ÖAMTC, Heli Austria, Wucher**); public sector for police.  
 - Contacts to target: **Stores/Logistics, Maintenance Planners, Base Engineers.**"""
 
-        user_prompt = f"Search for current information about helicopter industry operators in {country_name}, particularly those involved in {tag_description}. Find specific companies, their fleet details, aircraft types, key bases, and procurement processes. Include recent market developments and opportunities for aviation suppliers."
+        user_prompt = f'''Search for current information about helicopter industry operators in {country_name}, particularly those involved in {tag_description}. Find specific companies, their fleet details, aircraft types, key bases, and procurement processes. Include recent market developments and opportunities for aviation suppliers.
+
+Return ONLY valid JSON with this structure:
+{{
+  "content_markdown": "the complete market analysis in the exact Markdown structure requested",
+  "mentioned_companies": [
+    {{
+      "name": "canonical organisation name",
+      "company_type": "operator, MRO, OEM, government operator, distributor, training provider, or other concise category",
+      "role_summary": "one concise factual sentence describing its role in this market",
+      "why_relevant": "one concise sentence explaining relevance to MGC as an aerospace hardware and parts supplier",
+      "website": "official HTTPS website if verified, otherwise empty string",
+      "country": "primary country",
+      "source_urls": ["authoritative HTTPS source"],
+      "mention_sections": ["section headings where the organisation appears"],
+      "is_main": true
+    }}
+  ]
+}}
+
+Log every named company or operating organisation mentioned in content_markdown exactly once. Include commercial operators, MROs, government aviation units, military operators and training organisations. Do not log airports, aircraft types, missions, generic sectors or job titles as companies. Set is_main true only for the principal market participants. Do not place citations outside the JSON.'''
 
         # Use sonar-pro for better search capabilities and add search parameters
         response = client.chat.completions.create(
@@ -174,10 +244,47 @@ Activity is clustered in Alpine regions plus Vienna area.
             }
         )
 
-        return response.choices[0].message.content.strip(), None
+        content, companies = _parse_deepdive_ai_result(response.choices[0].message.content)
+        return content, companies, None
 
     except Exception as e:
-        return None, f"Error generating content: {str(e)}"
+        return None, [], f"Error generating content: {str(e)}"
+
+
+def extract_deepdive_companies_with_perplexity(deepdive):
+    """Distil an existing Markdown deep dive into structured company records."""
+    perplexity_key = os.getenv('PERPLEXITY_API_KEY')
+    if not perplexity_key:
+        return [], 'Perplexity API key not found'
+    try:
+        client = OpenAI(api_key=perplexity_key, base_url='https://api.perplexity.ai')
+        response = client.chat.completions.create(
+            model='sonar-pro',
+            messages=[
+                {'role': 'system', 'content': 'You extract structured aviation market intelligence. Return only valid JSON.'},
+                {'role': 'user', 'content': f'''Extract every named company or operating organisation from this geographic deep dive. Consolidate aliases into one canonical organisation. Include commercial operators, MROs, OEMs, government aviation units, military operators and training organisations. Exclude airports, aircraft types, missions, generic sectors and job titles.
+
+Return JSON exactly as:
+{{"mentioned_companies":[{{"name":"canonical organisation name","company_type":"concise category","role_summary":"one factual sentence","why_relevant":"one sentence explaining relevance to MGC as an aerospace hardware and parts supplier","website":"verified official HTTPS URL or empty string","country":"primary country","source_urls":["authoritative HTTPS source"],"mention_sections":["section heading"],"is_main":true}}]}}
+
+Set is_main true only for principal market participants. Preserve every genuine organisation mentioned, even when it is not a main participant.
+
+Title: {deepdive['title']}
+Country: {get_country_name(deepdive['country'])}
+Focus: {deepdive['tag_description'] or 'Aviation'}
+
+Markdown:
+{deepdive['content']}'''}
+            ],
+            temperature=0.1,
+        )
+        raw = response.choices[0].message.content.strip()
+        if raw.startswith('```'):
+            raw = raw.split('\n', 1)[1].rsplit('```', 1)[0]
+        result = json.loads(raw)
+        return _normalise_deepdive_companies(result.get('mentioned_companies')), None
+    except Exception as exc:
+        return [], f'Unable to extract companies: {exc}'
 
 
 
@@ -222,7 +329,7 @@ def generate_deepdive_content_api():
     tag_description = next((tag['description'] for tag in tags if tag['id'] == tag_id), f"Tag {tag_id}")
 
     # Generate content using Perplexity (pass country_code, function will convert to name)
-    content, error = generate_deepdive_content_with_perplexity(country_code, tag_description)
+    content, mentioned_companies, error = generate_deepdive_content_with_perplexity(country_code, tag_description)
 
     if error:
         return jsonify({'error': error}), 500
@@ -237,6 +344,7 @@ def generate_deepdive_content_api():
     return jsonify({
         'success': True,
         'content': content,
+        'mentioned_companies': mentioned_companies,
         'title': title
     })
 
@@ -263,6 +371,13 @@ def create_deepdive_route():
     tag_id = request.form.get('tag_id', type=int)
     title = request.form.get('title', '').strip()
     content = request.form.get('content', '').strip()
+    mentioned_companies_raw = request.form.get('mentioned_companies', '').strip()
+    try:
+        mentioned_companies = _normalise_deepdive_companies(
+            json.loads(mentioned_companies_raw) if mentioned_companies_raw else []
+        )
+    except (json.JSONDecodeError, TypeError):
+        mentioned_companies = []
 
     # Validation
     if not country_code:
@@ -285,7 +400,9 @@ def create_deepdive_route():
         title = f"{country_name} - {tag_description}"
 
     # Create the deep dive (store country_code in database)
-    deepdive_id, error = create_deepdive(country_code, tag_id, title, content)
+    deepdive_id, error = create_deepdive(
+        country_code, tag_id, title, content, mentioned_companies=mentioned_companies
+    )
 
     if error:
         flash(f'Error creating deep dive: {error}', 'danger')
@@ -320,6 +437,7 @@ def view_deepdive(deepdive_id):
 
     # Get curated customers for this deepdive
     curated_customers = get_curated_customers_for_deepdive(deepdive_id)
+    mentioned_companies = get_geographic_deepdive_companies(deepdive_id)
 
     # Get all customers for this country/tag for adding to curated list
     country_customers = get_country_customers_by_tag(deepdive['country'], deepdive['tag_id'])
@@ -333,9 +451,28 @@ def view_deepdive(deepdive_id):
     return render_template('geo_deepdive_view.html',
                            deepdive=deepdive_with_tags,
                            curated_customers=curated_customers,
+                           mentioned_companies=mentioned_companies,
                            country_customers=country_customers,
                            customer_links=customer_links,
                            breadcrumbs=breadcrumbs)
+
+
+@geo_deepdive_bp.route('/geographic-deepdives/<int:deepdive_id>/extract-companies', methods=['POST'])
+def extract_deepdive_companies_route(deepdive_id):
+    deepdive = get_deepdive_by_id(deepdive_id)
+    if not deepdive:
+        flash('Deep dive not found', 'danger')
+        return redirect(url_for('geo_deepdive.list_deepdives'))
+    companies, error = extract_deepdive_companies_with_perplexity(deepdive)
+    if error:
+        flash(error, 'danger')
+    else:
+        success, save_error = replace_geographic_deepdive_companies(deepdive_id, companies)
+        if success:
+            flash(f'Extracted and matched {len(companies)} companies.', 'success')
+        else:
+            flash(f'Unable to save extracted companies: {save_error}', 'danger')
+    return redirect(url_for('geo_deepdive.view_deepdive', deepdive_id=deepdive_id))
 
 
 
@@ -586,7 +723,17 @@ def apply_improvement_route(deepdive_id):
 
     # Update with improved content (keep existing title)
     if update_deepdive(deepdive_id, deepdive['title'], improved_content):
-        flash('Deep dive content improved successfully', 'success')
+        updated_deepdive = dict(deepdive)
+        updated_deepdive['content'] = improved_content
+        companies, extraction_error = extract_deepdive_companies_with_perplexity(updated_deepdive)
+        if extraction_error:
+            flash(f'Deep dive improved, but company extraction needs refreshing: {extraction_error}', 'warning')
+        else:
+            saved, save_error = replace_geographic_deepdive_companies(deepdive_id, companies)
+            if not saved:
+                flash(f'Deep dive improved, but company records could not be saved: {save_error}', 'warning')
+            else:
+                flash(f'Deep dive improved and {len(companies)} company records refreshed.', 'success')
         return redirect(url_for('geo_deepdive.view_deepdive', deepdive_id=deepdive_id))
     else:
         flash('Error applying improved content', 'danger')

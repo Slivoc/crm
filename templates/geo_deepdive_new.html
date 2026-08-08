@@ -17,6 +17,7 @@
             <div class="card">
                 <div class="card-body">
                     <form method="POST" action="{{ url_for('geo_deepdive.create_deepdive_route') }}">
+                        <input type="hidden" name="mentioned_companies" id="mentionedCompanies" value="[]">
                         <div class="row">
                             <div class="col-md-6">
                                 <div class="form-group">
@@ -60,6 +61,17 @@
                                       rows="15" required placeholder="Enter your deep dive content here or use AI generation..."></textarea>
                             <small class="form-text text-muted">You can use markdown formatting. AI generation requires country and focus area to be selected.</small>
 
+                            <div id="mentionedCompaniesPreview" class="card bg-light mt-3" style="display:none;">
+                                <div class="card-body py-3">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <strong>Companies identified by AI</strong>
+                                        <span class="badge bg-secondary" id="mentionedCompaniesCount">0</span>
+                                    </div>
+                                    <div id="mentionedCompaniesList" class="d-flex flex-wrap gap-2"></div>
+                                    <small class="text-muted d-block mt-2">These records will be saved and matched conservatively against CRM customers.</small>
+                                </div>
+                            </div>
+
                             <!-- Loading indicator for AI generation -->
                             <div id="aiGenerationLoading" class="mt-2" style="display: none;">
                                 <div class="d-flex align-items-center">
@@ -92,6 +104,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const titleInput = document.getElementById('title');
     const contentTextarea = document.getElementById('content');
     const loadingIndicator = document.getElementById('aiGenerationLoading');
+    const companiesInput = document.getElementById('mentionedCompanies');
+    const companiesPreview = document.getElementById('mentionedCompaniesPreview');
+    const companiesList = document.getElementById('mentionedCompaniesList');
+    const companiesCount = document.getElementById('mentionedCompaniesCount');
 
     generateButton.addEventListener('click', function() {
         const country = countrySelect.value;
@@ -127,6 +143,16 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 // Set the generated content
                 contentTextarea.value = data.content;
+                const companies = Array.isArray(data.mentioned_companies) ? data.mentioned_companies : [];
+                companiesInput.value = JSON.stringify(companies);
+                companiesCount.textContent = companies.length;
+                companiesList.innerHTML = companies.map(company => {
+                    const badge = document.createElement('span');
+                    badge.className = `badge ${company.is_main ? 'bg-primary' : 'bg-secondary'}`;
+                    badge.textContent = `${company.name}${company.company_type ? ` · ${company.company_type}` : ''}`;
+                    return badge.outerHTML;
+                }).join('');
+                companiesPreview.style.display = companies.length ? 'block' : 'none';
 
                 // Show success message
                 const successAlert = document.createElement('div');
