@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+
+{% macro fact_card(fact, state) %}
+<div class="col-lg-6">
+    <article class="border rounded p-3 h-100 tv-fact-card" data-fact-id="{{ fact.id }}">
+        <img src="{{ fact.image_url }}" class="rounded w-100 mb-3 fact-preview-image" alt="Image for {{ fact.title }}" style="height:180px;object-fit:cover"{% if not fact.image_url %} hidden{% endif %}>
+        {% if state == 'draft' %}<span class="badge bg-warning text-dark mb-2">Draft</span>
+        {% elif state == 'approved' %}<span class="badge bg-success mb-2">On TV</span>
+        {% else %}<span class="badge bg-secondary mb-2">Previously approved</span>{% endif %}
+        <h5>{{ fact.title }}</h5>
+        <p class="text-muted small">{{ fact.subtitle }}</p>
+        <ul class="small">{% for item in fact.facts %}<li class="mb-1">{{ item }}</li>{% endfor %}</ul>
+        <p class="small text-muted fact-image-credit"{% if not fact.image_credit %} hidden{% endif %}>Image: {{ fact.image_credit }}</p>
+        <div class="small mb-3">{% for source in fact.source_urls %}<a href="{{ source }}" target="_blank" rel="noopener noreferrer" class="me-2">Source {{ loop.index }}</a>{% endfor %}</div>
+
+        <div class="border rounded bg-light p-2 mb-3">
+            <label class="form-label small fw-semibold mb-1" for="factImageQuery{{ fact.id }}">Choose an image via Wikimedia Commons</label>
+            <div class="input-group input-group-sm">
+                <input class="form-control fact-image-query" id="factImageQuery{{ fact.id }}" value="{{ fact.image_query or fact.topic }}" maxlength="180">
+                <button class="btn btn-outline-primary fact-image-search" type="button">Search images</button>
+            </div>
+            <div class="small text-muted mt-1 fact-image-status">Select a result to cache it for the preview and TV.</div>
+            <div class="row g-2 mt-1 fact-image-results"></div>
+        </div>
+
+        <div class="d-flex gap-2">
+            {% if state != 'approved' %}
+            <form method="post" action="{{ url_for('dashboard.update_tv_fact_status', fact_id=fact.id) }}"><input type="hidden" name="next" value="facts"><input type="hidden" name="status" value="approved"><button class="btn btn-success btn-sm">{{ 'Approve for TV' if state == 'draft' else 'Return to TV' }}</button></form>
+            {% endif %}
+            {% if state != 'historical' %}
+            <form method="post" action="{{ url_for('dashboard.update_tv_fact_status', fact_id=fact.id) }}"><input type="hidden" name="next" value="facts"><input type="hidden" name="status" value="archived"><button class="btn btn-outline-danger btn-sm">{{ 'Reject' if state == 'draft' else 'Remove from TV' }}</button></form>
+            {% endif %}
+        </div>
+    </article>
+</div>
+{% endmacro %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+        <div>
+            <h2 class="fw-bold mb-1">TV Fact Slides</h2>
+            <p class="text-muted mb-0">Create, review and manage the AI-researched fact cards shown on the office TV.</p>
+        </div>
+        <div class="d-flex gap-2">
+            <a class="btn btn-outline-secondary" href="{{ url_for('dashboard.tv_control') }}">Back to TV control</a>
+            <a class="btn btn-outline-primary" href="{{ url_for('dashboard.tv_dashboard') }}" target="_blank" rel="noopener"><i class="bi bi-display me-1"></i> Open TV mode</a>
+        </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-white py-3">
+            <h5 class="mb-1">Create an AI fact slide</h5>
+            <small class="text-muted">Type any interesting topic or ask Perplexity for suggestions. The AI still researches and writes the complete card, and it remains a draft until approved.</small>
+        </div>
+        <div class="card-body">
+            <form id="manualFactForm" class="row g-3 align-items-end mb-4">
+                <div class="col-lg-7">
+                    <label class="form-label fw-semibold" for="manualFactTopic">Interesting topic</label>
+                    <input class="form-control" id="manualFactTopic" maxlength="180" required placeholder="e.g. Why aerospace bolts use drilled heads and lockwire">
+                </div>
+                <div class="col-lg-3">
+                    <label class="form-label fw-semibold" for="manualFactImageQuery">Image search <span class="text-muted fw-normal">(optional)</span></label>
+                    <input class="form-control" id="manualFactImageQuery" maxlength="180" placeholder="e.g. aircraft lockwire bolt">
+                </div>
+                <div class="col-lg-2"><button class="btn btn-primary w-100" id="generateManualFact" type="submit"><i class="bi bi-stars me-1"></i> Create draft</button></div>
+            </form>
+            <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+                <button class="btn btn-outline-primary" type="button" id="suggestFactTopics"><i class="bi bi-lightbulb me-1"></i> Suggest topics</button>
+                <span class="small text-muted" id="factAiStatus">Enter your own topic above, or generate some ideas.</span>
+            </div>
+            <div class="row g-3" id="factTopicSuggestions"></div>
+        </div>
+    </div>
+
+    {% if draft_facts %}
+    <section class="mb-4">
+        <h5 class="mb-3">Awaiting approval <span class="badge bg-warning text-dark">{{ draft_facts|length }}</span></h5>
+        <div class="row g-3">{% for fact in draft_facts %}{{ fact_card(fact, 'draft') }}{% endfor %}</div>
+    </section>
+    {% endif %}
+
+    <section class="mb-4">
+        <h5 class="mb-3">Currently approved <span class="badge bg-success">{{ approved_facts|length }}</span></h5>
+        {% if approved_facts %}<div class="row g-3">{% for fact in approved_facts %}{{ fact_card(fact, 'approved') }}{% endfor %}</div>
+        {% else %}<div class="card border-0 shadow-sm"><div class="card-body text-muted">No slides are currently approved for the TV.</div></div>{% endif %}
+    </section>
+
+    <details class="card border-0 shadow-sm mb-4">
+        <summary class="card-header bg-white py-3 fw-semibold">Previously approved history ({{ previously_approved_facts|length }})</summary>
+        <div class="card-body">
+            {% if previously_approved_facts %}<div class="row g-3">{% for fact in previously_approved_facts %}{{ fact_card(fact, 'historical') }}{% endfor %}</div>
+            {% else %}<p class="small text-muted mb-0">No previously approved slides have been removed yet.</p>{% endif %}
+        </div>
+    </details>
+    <p class="small text-muted">One randomly chosen approved slide is shown for 18 seconds in each presentation cycle, without immediately repeating the previous slide.</p>
+</div>
+
+<script>
+(() => {
+    const suggestButton = document.getElementById('suggestFactTopics');
+    const manualForm = document.getElementById('manualFactForm');
+    const manualButton = document.getElementById('generateManualFact');
+    const status = document.getElementById('factAiStatus');
+    const suggestions = document.getElementById('factTopicSuggestions');
+
+    async function generateFact(topic, imageQuery = '') {
+        manualButton.disabled = true;
+        suggestButton.disabled = true;
+        suggestions.querySelectorAll('button').forEach(item => item.disabled = true);
+        status.textContent = `Researching ${topic} and designing its slide…`;
+        try {
+            const response = await fetch('{{ url_for("dashboard.generate_tv_fact") }}', {method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'}, body:JSON.stringify({topic, image_query:imageQuery})});
+            const body = await response.json();
+            if (!response.ok) throw new Error(body.error);
+            window.location.reload();
+        } catch (error) {
+            status.textContent = error.message || 'Slide generation failed.';
+            manualButton.disabled = false;
+            suggestButton.disabled = false;
+            suggestions.querySelectorAll('button').forEach(item => item.disabled = false);
+        }
+    }
+
+    manualForm.addEventListener('submit', event => {
+        event.preventDefault();
+        const topic = document.getElementById('manualFactTopic').value.trim();
+        if (topic) generateFact(topic, document.getElementById('manualFactImageQuery').value.trim());
+    });
+
+    suggestButton.addEventListener('click', async () => {
+        suggestButton.disabled = true;
+        status.textContent = 'Researching a varied set of topics…';
+        suggestions.innerHTML = '';
+        try {
+            const response = await fetch('{{ url_for("dashboard.suggest_tv_fact_topics") }}', {method:'POST', headers:{'Accept':'application/json'}});
+            const body = await response.json();
+            if (!response.ok) throw new Error(body.error);
+            suggestions.innerHTML = body.topics.map(item => `<div class="col-md-6 col-xl-3"><button type="button" class="btn btn-outline-secondary text-start h-100 w-100 fact-topic" data-topic="${escapeHtml(item.topic)}" data-image-query="${escapeHtml(item.image_query)}"><strong>${escapeHtml(item.topic)}</strong><small class="d-block mt-1">${escapeHtml(item.teaser)}</small></button></div>`).join('');
+            status.textContent = 'Select a suggestion, or type your own topic above.';
+        } catch (error) { status.textContent = error.message || 'Suggestions unavailable.'; }
+        finally { suggestButton.disabled = false; }
+    });
+
+    suggestions.addEventListener('click', event => {
+        const topicButton = event.target.closest('.fact-topic');
+        if (topicButton) generateFact(topicButton.dataset.topic, topicButton.dataset.imageQuery || '');
+    });
+
+    document.addEventListener('click', async event => {
+        const card = event.target.closest('.tv-fact-card');
+        if (!card) return;
+        const imageStatus = card.querySelector('.fact-image-status');
+        const results = card.querySelector('.fact-image-results');
+        if (event.target.closest('.fact-image-search')) {
+            const searchButton = event.target.closest('.fact-image-search');
+            const query = card.querySelector('.fact-image-query').value.trim();
+            if (!query) { imageStatus.textContent = 'Enter something to search for.'; return; }
+            searchButton.disabled = true; results.innerHTML = ''; imageStatus.textContent = 'Searching Wikimedia Commons…';
+            try {
+                const response = await fetch(`{{ url_for('dashboard.search_tv_fact_images') }}?q=${encodeURIComponent(query)}`, {headers:{'Accept':'application/json'}});
+                const body = await response.json(); if (!response.ok) throw new Error(body.error);
+                results.innerHTML = body.images.map(image => `<div class="col-md-4"><button type="button" class="btn btn-light border p-1 w-100 text-start fact-image-choice" data-page-id="${image.page_id}"><img src="${escapeHtml(image.preview_url)}" alt="" class="rounded w-100" style="height:100px;object-fit:cover"><small class="d-block text-truncate mt-1" title="${escapeHtml(image.title)}">${escapeHtml(image.title)}</small></button></div>`).join('');
+                imageStatus.textContent = body.images.length ? 'Choose an image below.' : 'No suitable landscape images found. Try a broader search.';
+            } catch (error) { imageStatus.textContent = error.message || 'Image search failed.'; }
+            finally { searchButton.disabled = false; }
+            return;
+        }
+        const choice = event.target.closest('.fact-image-choice');
+        if (!choice) return;
+        results.querySelectorAll('button').forEach(item => item.disabled = true);
+        imageStatus.textContent = 'Downloading and caching your selection…';
+        try {
+            const response = await fetch(`/dashboard/tv/facts/${card.dataset.factId}/image`, {method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'}, body:JSON.stringify({page_id:choice.dataset.pageId})});
+            const body = await response.json(); if (!response.ok) throw new Error(body.error);
+            const preview = card.querySelector('.fact-preview-image');
+            preview.src = `${body.image_url}?v=${Date.now()}`; preview.hidden = false;
+            const credit = card.querySelector('.fact-image-credit');
+            credit.textContent = body.image_credit ? `Image: ${body.image_credit}` : ''; credit.hidden = !body.image_credit;
+            results.innerHTML = ''; imageStatus.textContent = 'Image saved. It will reach the TV on its next data refresh.';
+        } catch (error) {
+            imageStatus.textContent = error.message || 'The image could not be saved.';
+            results.querySelectorAll('button').forEach(item => item.disabled = false);
+        }
+    });
+
+    function escapeHtml(value) { const node=document.createElement('div'); node.textContent=value || ''; return node.innerHTML; }
+})();
+</script>
+{% endblock %}

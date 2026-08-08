@@ -108,6 +108,7 @@
 
 <section class="fact-screen" id="factScreen" aria-live="polite">
     <div class="fact-image" id="factImage"></div><div class="fact-overlay"></div>
+    <div id="factDebugHint" hidden style="position:absolute;z-index:3;top:6.3rem;right:3rem;padding:.65rem 1rem;border:1px solid rgba(255,255,255,.35);border-radius:999px;background:rgba(5,20,31,.82);color:#fff;font-size:1rem;letter-spacing:.04em">Manual preview</div>
     <header><div class="brand"><span class="brand-mark">S</span><span>AEROSPACE SPOTLIGHT</span></div><span id="factTopic"></span></header>
     <div class="fact-body"><p class="eyebrow">Did you know?</p><h1 id="factTitle"></h1><p class="fact-subtitle" id="factSubtitle"></p><ul id="factList"></ul></div>
     <footer><span id="factCredit"></span><span>Aerospace facts · AI researched, human approved</span></footer>
@@ -115,6 +116,6 @@
 
 <div class="wipe" id="sceneWipe"></div>
 <script>window.TV_DASHBOARD_DATA = {{ initial_data|tojson }};</script>
-<script src="{{ url_for('static', filename='js/dashboard-tv.js') }}?v=20260807-1"></script>
+<script src="{{ url_for('static', filename='js/dashboard-tv.js') }}?v=20260808-1"></script>
 </body>
 </html>

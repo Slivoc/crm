@@ -366,6 +366,29 @@ def tv_control():
     )
 
 
+@dashboard_bp.route('/tv/facts/control')
+@login_required
+def tv_fact_control():
+    """Manage AI-researched fact slides separately from the main TV controls."""
+    if not current_user.is_administrator():
+        flash('Administrator access is required to manage TV fact slides.', 'error')
+        return redirect(url_for('dashboard.tv_dashboard'))
+
+    conn = get_db()
+    try:
+        approved_facts = _tv_facts(conn, 'approved')
+        draft_facts = _tv_facts(conn, 'draft')
+        previously_approved_facts = _previously_approved_tv_facts(conn)
+    finally:
+        conn.close()
+    return render_template(
+        'dashboard_tv_facts_control.html',
+        approved_facts=approved_facts,
+        draft_facts=draft_facts,
+        previously_approved_facts=previously_approved_facts,
+    )
+
+
 @dashboard_bp.route('/tv/data')
 @login_required
 def tv_dashboard_data():
@@ -795,7 +818,8 @@ def update_tv_fact_status(fact_id):
         flash('Aerospace slide approved for TV.' if status == 'approved' else 'Aerospace slide removed.', 'success')
     finally:
         conn.close()
-    return redirect(url_for('dashboard.tv_control'))
+    destination = 'dashboard.tv_fact_control' if request.form.get('next') == 'facts' else 'dashboard.tv_control'
+    return redirect(url_for(destination))
 
 
 @dashboard_bp.route('/tv/news/<int:article_id>/extended')

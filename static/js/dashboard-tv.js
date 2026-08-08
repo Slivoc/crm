@@ -7,6 +7,8 @@
     let shownStoryIds = new Set();
     let extendedBatchActive = false;
     let lastFactId = null;
+    let manualFactMode = false;
+    let manualFactIndex = -1;
     let storyScrollTimer;
     // Retained by the dormant legacy scene helpers below; those scenes are no
     // longer scheduled now that the presentation has one deterministic loop.
@@ -142,7 +144,7 @@
     const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
     async function showExtendedStory(item, {firstStory = false, lastStory = false} = {}) {
-        if (!item?.id) return false;
+        if (!item?.id || manualFactMode) return false;
         let story = {
             ...item,
             summary: item.body_excerpt || stripHtml(item.summary_raw) || 'No additional article summary is available yet.',
@@ -157,11 +159,13 @@
         } catch (_) {
             // Use the snapshot detail below when live research is unavailable.
         }
+        if (manualFactMode) return false;
         try {
             // Keep the previous story visible until the wipe covers it.
             if (!firstStory) {
                 el('sceneWipe').classList.add('active');
                 await wait(450);
+                if (manualFactMode) return false;
             }
             text('storyTitle', story.title); text('storySource', [story.customer_names, story.source_name].filter(Boolean).join(' · '));
             el('storyFreshness').classList.toggle('active', Boolean(item.is_today));
@@ -170,8 +174,10 @@
             if (firstStory) {
                 el('newsIntroScreen').classList.add('active');
                 await wait(3000);
+                if (manualFactMode) return false;
                 el('sceneWipe').classList.add('active');
                 await wait(450);
+                if (manualFactMode) return false;
                 el('newsIntroScreen').classList.remove('active');
             }
             el('storyScreen').classList.add('active');
@@ -179,6 +185,7 @@
             el('sceneWipe').classList.remove('active');
             await wait(startStoryScroll());
             clearInterval(storyScrollTimer);
+            if (manualFactMode) return false;
             if (lastStory) {
                 el('sceneWipe').classList.add('active');
                 await wait(450);
@@ -207,6 +214,7 @@
         extendedBatchActive = true;
         try {
             for (let offset = 0; offset < batch.length; offset += 1) {
+                if (manualFactMode) break;
                 const item = batch[offset];
                 await showExtendedStory(item, {
                     firstStory: offset === 0,
@@ -255,10 +263,12 @@
         el('portalQuotes').innerHTML = quotes.slice(0, 6).map(row => `<div class="portal-row"><div><strong>${escapeHtml(row.customer_name)}</strong><span>${escapeHtml(row.reference_number || 'Quote request')}</span></div><div><b>${Number(row.line_count || 0)} lines · ${escapeHtml(row.status || 'New')}</b><span>${formatActivityDate(row.date_submitted)}</span></div></div>`).join('') || '<div class="portal-empty">No quote requests</div>';
         el('sceneWipe').classList.add('active');
         await wait(450);
+        if (manualFactMode) return false;
         el('portalScreen').classList.add('active');
         await wait(600);
         el('sceneWipe').classList.remove('active');
         await wait(PORTAL_ACTIVITY_DURATION);
+        if (manualFactMode) return true;
         await hidePortalActivity();
         return true;
     }
@@ -269,20 +279,25 @@
             .some(id => el(id).classList.contains('active'));
     }
 
-    async function showAerospaceFact() {
-        const facts = data.aerospace_facts || [];
-        if (!facts.length || sceneIsActive()) return false;
-        let choices = facts.filter(item => item.id !== lastFactId);
-        if (!choices.length) choices = facts;
-        const item = choices[Math.floor(Math.random() * choices.length)];
+    function renderAerospaceFact(item) {
         lastFactId = item.id;
         text('factTopic', item.topic); text('factTitle', item.title); text('factSubtitle', item.subtitle);
         el('factList').innerHTML = (item.facts || []).map(fact => `<li>${escapeHtml(fact)}</li>`).join('');
         text('factCredit', item.image_credit ? `Image: ${item.image_credit}` : '');
         el('factImage').style.backgroundImage = item.image_url ? `url("${escapeAttribute(item.image_url)}")` : '';
         el('factScreen').classList.toggle('has-image', Boolean(item.image_url));
+    }
+
+    async function showAerospaceFact() {
+        const facts = data.aerospace_facts || [];
+        if (!facts.length || sceneIsActive()) return false;
+        let choices = facts.filter(item => item.id !== lastFactId);
+        if (!choices.length) choices = facts;
+        const item = choices[Math.floor(Math.random() * choices.length)];
+        renderAerospaceFact(item);
         el('sceneWipe').classList.add('active'); await wait(450); el('factScreen').classList.add('active');
         await wait(600); el('sceneWipe').classList.remove('active'); await wait(18000);
+        if (manualFactMode) return true;
         el('sceneWipe').classList.add('active'); await wait(450); el('factScreen').classList.remove('active');
         await wait(600); el('sceneWipe').classList.remove('active'); return true;
     }
@@ -300,10 +315,12 @@
         text('todayHeadlinesCount', `${items.length} headline${items.length === 1 ? '' : 's'} today`);
         el('sceneWipe').classList.add('active');
         await wait(450);
+        if (manualFactMode) return false;
         el('todayHeadlinesScreen').classList.add('active');
         await wait(600);
         el('sceneWipe').classList.remove('active');
         await wait(12000);
+        if (manualFactMode) return true;
         el('sceneWipe').classList.add('active');
         await wait(450);
         el('todayHeadlinesScreen').classList.remove('active');
@@ -358,6 +375,38 @@
             : customer;
     }
 
+    function showManualFact(direction) {
+        const facts = data.aerospace_facts || [];
+        if (!facts.length) return;
+        if (!manualFactMode) {
+            manualFactMode = true;
+            const currentIndex = facts.findIndex(item => item.id === lastFactId);
+            manualFactIndex = currentIndex >= 0
+                ? (currentIndex + direction + facts.length) % facts.length
+                : (direction > 0 ? 0 : facts.length - 1);
+            clearInterval(storyScrollTimer);
+            clearTimeout(headlineTimer);
+            clearTimeout(todayHeadlinesTimer);
+            ['storyScreen', 'newsIntroScreen', 'portalScreen', 'headlineScreen', 'todayHeadlinesScreen']
+                .forEach(id => el(id).classList.remove('active'));
+            el('sceneWipe').classList.remove('active');
+        } else {
+            manualFactIndex = (manualFactIndex + direction + facts.length) % facts.length;
+        }
+        renderAerospaceFact(facts[manualFactIndex]);
+        el('factScreen').classList.add('active');
+        const hint = el('factDebugHint');
+        hint.hidden = false;
+        hint.textContent = `Manual preview  ${manualFactIndex + 1} / ${facts.length}  ·  ← → browse  ·  Esc resume`;
+    }
+
+    function leaveManualFactMode() {
+        if (!manualFactMode) return;
+        // Restart cleanly so no timer that was paused mid-transition can flash
+        // an old scene after manual preview closes.
+        window.location.reload();
+    }
+
     async function refresh() {
         try {
             const response = await fetch(`/dashboard/tv/data?_=${Date.now()}`, {headers: {'Accept': 'application/json'}, cache: 'no-store'});
@@ -384,6 +433,15 @@
     fitDashboard();
     render(data);
     window.addEventListener('resize', fitDashboard);
+    window.addEventListener('keydown', event => {
+        if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+        if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+            event.preventDefault();
+            showManualFact(event.key === 'ArrowRight' ? 1 : -1);
+        } else if (event.key === 'Escape') {
+            leaveManualFactMode();
+        }
+    });
     setInterval(() => { newsIndex += 1; renderNews(); }, 9000);
     setInterval(refresh, 15000);
     runPresentation();

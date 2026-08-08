@@ -1,40 +1,5 @@
 {% extends "base.html" %}
 
-{% macro fact_card(fact, state) %}
-<div class="col-lg-6">
-    <article class="border rounded p-3 h-100 tv-fact-card" data-fact-id="{{ fact.id }}">
-        <img src="{{ fact.image_url }}" class="rounded w-100 mb-3 fact-preview-image" alt="Image for {{ fact.title }}" style="height:180px;object-fit:cover"{% if not fact.image_url %} hidden{% endif %}>
-        {% if state == 'draft' %}<span class="badge bg-warning text-dark mb-2">Draft</span>
-        {% elif state == 'approved' %}<span class="badge bg-success mb-2">On TV</span>
-        {% else %}<span class="badge bg-secondary mb-2">Previously approved</span>{% endif %}
-        <h5>{{ fact.title }}</h5>
-        <p class="text-muted small">{{ fact.subtitle }}</p>
-        <ul class="small">{% for item in fact.facts %}<li class="mb-1">{{ item }}</li>{% endfor %}</ul>
-        <p class="small text-muted fact-image-credit"{% if not fact.image_credit %} hidden{% endif %}>Image: {{ fact.image_credit }}</p>
-        <div class="small mb-3">{% for source in fact.source_urls %}<a href="{{ source }}" target="_blank" rel="noopener noreferrer" class="me-2">Source {{ loop.index }}</a>{% endfor %}</div>
-
-        <div class="border rounded bg-light p-2 mb-3">
-            <label class="form-label small fw-semibold mb-1" for="factImageQuery{{ fact.id }}">Choose an image via Wikimedia Commons</label>
-            <div class="input-group input-group-sm">
-                <input class="form-control fact-image-query" id="factImageQuery{{ fact.id }}" value="{{ fact.image_query or fact.topic }}" maxlength="180">
-                <button class="btn btn-outline-primary fact-image-search" type="button">Search images</button>
-            </div>
-            <div class="small text-muted mt-1 fact-image-status">Select a result to cache it for the preview and TV.</div>
-            <div class="row g-2 mt-1 fact-image-results"></div>
-        </div>
-
-        <div class="d-flex gap-2">
-            {% if state != 'approved' %}
-            <form method="post" action="{{ url_for('dashboard.update_tv_fact_status', fact_id=fact.id) }}"><input type="hidden" name="status" value="approved"><button class="btn btn-success btn-sm">{{ 'Approve for TV' if state == 'draft' else 'Return to TV' }}</button></form>
-            {% endif %}
-            {% if state != 'historical' %}
-            <form method="post" action="{{ url_for('dashboard.update_tv_fact_status', fact_id=fact.id) }}"><input type="hidden" name="status" value="archived"><button class="btn btn-outline-danger btn-sm">{{ 'Reject' if state == 'draft' else 'Remove from TV' }}</button></form>
-            {% endif %}
-        </div>
-    </article>
-</div>
-{% endmacro %}
-
 {% block content %}
 <div class="container-fluid py-3">
     <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
@@ -48,38 +13,12 @@
     </div>
 
     <div class="card border-0 shadow-sm mb-4">
-        <div class="card-header bg-white py-3">
-            <h5 class="mb-1">AI aerospace facts</h5>
-            <small class="text-muted">Perplexity researches topics and drafts a slide. Nothing appears on TV until you approve it.</small>
-        </div>
-        <div class="card-body">
-            <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
-                <button class="btn btn-primary" type="button" id="suggestFactTopics"><i class="bi bi-stars me-1"></i> Suggest topics</button>
-                <span class="small text-muted" id="factAiStatus">Choose a suggestion to generate a researched draft.</span>
+        <div class="card-body d-flex flex-wrap justify-content-between align-items-center gap-3">
+            <div>
+                <h5 class="mb-1">AI fact slides</h5>
+                <p class="text-muted mb-0">{{ approved_facts|length }} approved · {{ draft_facts|length }} awaiting approval · {{ previously_approved_facts|length }} previously approved</p>
             </div>
-            <div class="row g-3 mb-4" id="factTopicSuggestions"></div>
-            {% if draft_facts %}
-            <h6 class="text-uppercase text-muted small fw-bold">Awaiting approval</h6>
-            <div class="row g-3">
-                {% for fact in draft_facts %}
-                {{ fact_card(fact, 'draft') }}
-                {% endfor %}
-            </div>
-            {% endif %}
-
-            <hr class="my-4">
-            <h6 class="text-uppercase text-muted small fw-bold">Currently approved</h6>
-            {% if approved_facts %}
-            <div class="row g-3">{% for fact in approved_facts %}{{ fact_card(fact, 'approved') }}{% endfor %}</div>
-            {% else %}<p class="small text-muted">No slides are currently approved for the TV.</p>{% endif %}
-
-            <details class="mt-4"{% if previously_approved_facts %} open{% endif %}>
-                <summary class="fw-semibold">Previously approved history ({{ previously_approved_facts|length }})</summary>
-                {% if previously_approved_facts %}
-                <div class="row g-3 mt-1">{% for fact in previously_approved_facts %}{{ fact_card(fact, 'historical') }}{% endfor %}</div>
-                {% else %}<p class="small text-muted mt-2 mb-0">No previously approved slides have been removed yet.</p>{% endif %}
-            </details>
-            <p class="small text-muted mt-3 mb-0">{{ approved_facts|length }} approved slide{{ '' if approved_facts|length == 1 else 's' }} currently rotate on the TV. One randomly chosen slide is shown for 18 seconds in each presentation cycle, without immediately repeating the previous slide. Chosen Wikimedia images are downloaded and served locally after selection.</p>
+            <a class="btn btn-primary" href="{{ url_for('dashboard.tv_fact_control') }}"><i class="bi bi-stars me-1"></i> Manage fact slides</a>
         </div>
     </div>
 
@@ -184,6 +123,7 @@
     const button = document.getElementById('suggestFactTopics');
     const status = document.getElementById('factAiStatus');
     const suggestions = document.getElementById('factTopicSuggestions');
+    if (!button || !status || !suggestions) return;
     const setBusy = (busy, message) => { button.disabled = busy; status.textContent = message; };
     button.addEventListener('click', async () => {
         setBusy(true, 'Researching a varied set of topics…'); suggestions.innerHTML = '';
