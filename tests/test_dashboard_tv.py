@@ -4,6 +4,7 @@ from routes.dashboard import (
     _commons_image_metadata,
     _commons_match,
     _monthly_target_pace,
+    _normalise_customer_focus_insight,
     _normalise_tv_briefing_fields,
     _specific_image_subject,
 )
@@ -98,3 +99,18 @@ def test_commons_image_metadata_builds_safe_display_credit():
     assert metadata['image_source'] == 'Wikimedia Commons'
     assert metadata['image_source_url'].startswith('https://commons.wikimedia.org/')
     assert metadata['image_attribution'] == 'Example Photographer, CC BY-SA 4.0, Wikimedia Commons'
+
+
+def test_customer_focus_insight_is_constrained_for_tv_display():
+    insight = _normalise_customer_focus_insight({
+        'description': 'A helicopter operator and maintenance organisation.',
+        'similar_companies': [
+            {'name': f'Operator {index}', 'reason': 'Similar fleet and maintenance needs'}
+            for index in range(6)
+        ],
+        'source_urls': ['http://unsafe.example', 'https://example.com/company'],
+    })
+
+    assert insight['description'].startswith('A helicopter operator')
+    assert len(insight['similar_companies']) == 4
+    assert insight['source_urls'] == ['https://example.com/company']

@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-pace.css') }}?v=20260802-1">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-customers.css') }}?v=20260801-1">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-focus.css') }}?v=20260808-1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-focus.css') }}?v=20260808-2">
 </head>
 <body>
 <main class="tv-shell" id="tvDashboard">
@@ -117,6 +117,13 @@
                 <h1 id="focusCustomerName"></h1>
                 <div class="customer-focus-tags"><span id="focusCustomerCountry"></span><span id="focusCustomerStatus"></span></div>
                 <p id="focusCustomerOwner"></p>
+                <div class="customer-focus-intel">
+                    <p id="focusCustomerDescription">Loading current company research…</p>
+                    <div>
+                        <span>Similar companies for MGC</span>
+                        <ul id="focusSimilarCompanies"><li>Researching comparable organisations…</li></ul>
+                    </div>
+                </div>
             </div>
         </div>
         <div class="customer-focus-metrics">
@@ -138,6 +145,6 @@
 
 <div class="wipe" id="sceneWipe"></div>
 <script>window.TV_DASHBOARD_DATA = {{ initial_data|tojson }};</script>
-<script src="{{ url_for('static', filename='js/dashboard-tv.js') }}?v=20260808-2"></script>
+<script src="{{ url_for('static', filename='js/dashboard-tv.js') }}?v=20260808-3"></script>
 </body>
 </html>

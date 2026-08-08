@@ -281,6 +281,29 @@
             .some(id => el(id).classList.contains('active'));
     }
 
+    async function loadCustomerFocusInsight(customerId) {
+        text('focusCustomerDescription', 'Loading current company research…');
+        el('focusSimilarCompanies').innerHTML = '<li>Researching comparable organisations…</li>';
+        try {
+            const response = await fetch(`/dashboard/tv/customers/${customerId}/focus`, {
+                headers: {'Accept': 'application/json'}, cache: 'no-store'
+            });
+            const body = await response.json();
+            if (!response.ok) throw new Error(body.error || 'Research unavailable');
+            if (lastFocusCustomerId !== customerId) return;
+            const insight = body.insight || {};
+            text('focusCustomerDescription', insight.description || 'Recent MGC customer with active purchasing activity.');
+            const similar = insight.similar_companies || [];
+            el('focusSimilarCompanies').innerHTML = similar.length
+                ? similar.map(company => `<li title="${escapeAttribute(company.reason || '')}"><strong>${escapeHtml(company.name)}</strong>${company.reason ? ` · ${escapeHtml(company.reason)}` : ''}</li>`).join('')
+                : '<li>No verified comparable organisations returned.</li>';
+        } catch (_) {
+            if (lastFocusCustomerId !== customerId) return;
+            text('focusCustomerDescription', 'Recent MGC customer with active purchasing activity in the last 90 days.');
+            el('focusSimilarCompanies').innerHTML = '<li>Company research temporarily unavailable.</li>';
+        }
+    }
+
     async function showCustomerFocus() {
         const customers = data.customer_focus || [];
         if (!customers.length || sceneIsActive()) return false;
@@ -306,6 +329,7 @@
         initial.style.display = item.logo_url ? 'none' : '';
         logo.onerror = () => { logo.style.display = 'none'; initial.style.display = ''; };
         logo.src = item.logo_url || '';
+        loadCustomerFocusInsight(item.id);
 
         el('sceneWipe').classList.add('active');
         await wait(450);

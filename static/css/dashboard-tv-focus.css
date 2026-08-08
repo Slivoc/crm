@@ -72,7 +72,7 @@
 .customer-focus-logo img { width: 82%; height: 82%; object-fit: contain; display: none; }
 .customer-focus-logo span { color: #0b253d; font-size: clamp(5rem, 9vw, 10rem); font-weight: 900; }
 .customer-focus-identity h1 { margin: 1.5vh 0 2.2vh; font-size: clamp(3.4rem, 6vw, 7rem); line-height: .94; }
-.customer-focus-identity > div > p:last-child { color: var(--muted); font-size: clamp(1rem, 1.35vw, 1.55rem); }
+#focusCustomerOwner { color: var(--muted); font-size: clamp(1rem, 1.35vw, 1.55rem); }
 .customer-focus-tags { display: flex; flex-wrap: wrap; gap: .8rem; }
 .customer-focus-tags span {
     padding: .55rem 1rem;
@@ -83,6 +83,46 @@
     font-size: clamp(.8rem, 1vw, 1.1rem);
     font-weight: 700;
 }
+
+.customer-focus-intel {
+    max-width: 860px;
+    margin-top: 2.2vh;
+    padding: 1.5vh 1.2vw;
+    border-left: 3px solid var(--gold);
+    background: rgba(5, 20, 34, .56);
+}
+.customer-focus-intel > p {
+    margin: 0 0 1.2vh;
+    color: #e5f1f6;
+    font-size: clamp(.9rem, 1.15vw, 1.3rem);
+    line-height: 1.45;
+}
+.customer-focus-intel > div > span {
+    display: block;
+    margin-bottom: .55vh;
+    color: var(--gold);
+    text-transform: uppercase;
+    letter-spacing: .1em;
+    font-size: clamp(.68rem, .82vw, .9rem);
+    font-weight: 800;
+}
+.customer-focus-intel ul {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .45vh 1.3vw;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+.customer-focus-intel li {
+    min-width: 0;
+    color: var(--muted);
+    font-size: clamp(.72rem, .9vw, 1rem);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.customer-focus-intel li strong { color: var(--cyan); }
 
 .customer-focus-metrics { display: grid; gap: 1.6vh; }
 .customer-focus-metrics article {

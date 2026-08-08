@@ -457,6 +457,108 @@ def _perplexity_json(api_key, prompt):
     return _clean_json_response(completion.choices[0].message.content)
 
 
+def _normalise_customer_focus_insight(value):
+    """Validate and constrain Perplexity content before it reaches the TV."""
+    value = value if isinstance(value, dict) else {}
+    description = str(value.get('description') or '').strip()[:700]
+    similar_companies = []
+    for company in value.get('similar_companies') or []:
+        if isinstance(company, str):
+            name, reason = company, ''
+        elif isinstance(company, dict):
+            name = company.get('name')
+            reason = company.get('reason')
+        else:
+            continue
+        name = str(name or '').strip()[:160]
+        reason = str(reason or '').strip()[:240]
+        if name:
+            similar_companies.append({'name': name, 'reason': reason})
+        if len(similar_companies) == 4:
+            break
+    source_urls = [
+        str(url)[:1000] for url in (value.get('source_urls') or [])
+        if str(url).startswith('https://')
+    ][:4]
+    return {
+        'description': description,
+        'similar_companies': similar_companies,
+        'source_urls': source_urls,
+    }
+
+
+@dashboard_bp.route('/tv/customers/<int:customer_id>/focus')
+@login_required
+def tv_customer_focus_insight(customer_id):
+    """Return cached Perplexity context for a recently spending customer."""
+    conn = get_db()
+    try:
+        customer = conn.execute('''
+            SELECT c.id, c.name, c.country, c.website,
+                   SUM(so.total_value) AS spend_90d,
+                   COUNT(*) AS order_count_90d
+            FROM customers c
+            JOIN sales_orders so ON so.customer_id = c.id
+            LEFT JOIN sales_statuses ss ON ss.id = so.sales_status_id
+            WHERE c.id = ?
+              AND so.date_entered >= CURRENT_DATE - INTERVAL '90 days'
+              AND COALESCE(so.total_value, 0) > 0
+              AND COALESCE(ss.status_name, '') <> 'Cancelled'
+            GROUP BY c.id, c.name, c.country, c.website
+            HAVING SUM(so.total_value) > 0
+        ''', (customer_id,)).fetchone()
+        if not customer:
+            return jsonify({'error': 'Customer is not eligible for an In Focus slide'}), 404
+
+        cached = conn.execute('''
+            SELECT description, similar_companies, source_urls
+            FROM office_dashboard_customer_focus_summaries
+            WHERE customer_id = ?
+              AND updated_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+        ''', (customer_id,)).fetchone()
+        if cached:
+            return jsonify({'insight': _normalise_customer_focus_insight(dict(cached)), 'cached': True})
+
+        api_key = _perplexity_api_key(conn)
+        if not api_key:
+            return jsonify({'error': 'Perplexity API key is not configured'}), 503
+        insight = _normalise_customer_focus_insight(_perplexity_json(api_key, f'''Research this current MGC customer for a concise office-TV spotlight.
+
+Customer: {customer['name']}
+Country: {customer['country'] or 'Unknown'}
+Website: {customer['website'] or 'Unknown'}
+Recent relationship: {customer['order_count_90d']} orders in the last 90 days.
+
+MGC supplies aerospace hardware and aircraft parts, particularly to helicopter operators, MROs, aviation suppliers and related organisations.
+
+Return JSON exactly as:
+{{"description":"Two concise factual sentences, 35-55 words total, describing what the customer does and why it is relevant to MGC","similar_companies":[{{"name":"company name","reason":"maximum 18 words explaining the operational or commercial similarity"}}],"source_urls":["https://authoritative-source"]}}
+
+Provide 3-4 real similar organisations that MGC could reasonably research as prospects. Base similarity on sector, fleet, operations, maintenance role or purchasing needs. Do not claim they are unserved prospects or existing MGC customers. Prefer current company and authoritative sources. Do not use markdown or invent details.'''))
+        if not insight['description']:
+            raise ValueError('Perplexity returned no customer description')
+        conn.execute('''
+            INSERT INTO office_dashboard_customer_focus_summaries
+                (customer_id, description, similar_companies, source_urls, model_provider)
+            VALUES (?, ?, ?::jsonb, ?::jsonb, 'perplexity_sonar_pro')
+            ON CONFLICT (customer_id) DO UPDATE SET
+                description = EXCLUDED.description,
+                similar_companies = EXCLUDED.similar_companies,
+                source_urls = EXCLUDED.source_urls,
+                model_provider = EXCLUDED.model_provider,
+                updated_at = CURRENT_TIMESTAMP
+        ''', (customer_id, insight['description'], json.dumps(insight['similar_companies']),
+              json.dumps(insight['source_urls'])))
+        conn.commit()
+        return jsonify({'insight': insight, 'cached': False})
+    except Exception:
+        conn.rollback()
+        current_app.logger.exception('Unable to prepare customer focus insight for customer %s', customer_id)
+        return jsonify({'error': 'Customer research is temporarily unavailable'}), 502
+    finally:
+        conn.close()
+
+
 def _plain_metadata(value):
     """Turn Commons HTML metadata into searchable, display-safe text."""
     return re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', str(value or ''))).strip()
