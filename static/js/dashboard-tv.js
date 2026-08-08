@@ -8,7 +8,6 @@
     let extendedBatchActive = false;
     let lastFactId = null;
     let lastFocusCustomerId = null;
-    let deepDiveIndex = 0;
     let manualFactMode = false;
     let manualFactIndex = -1;
     let storyScrollTimer;
@@ -19,7 +18,6 @@
     const MAIN_DASHBOARD_DURATION = 45000;
     const PORTAL_ACTIVITY_DURATION = 16000;
     const CUSTOMER_FOCUS_DURATION = 16000;
-    const DEEPDIVE_DURATION = 18000;
     const EXTENDED_STORIES_PER_CYCLE = 5;
     const el = id => document.getElementById(id);
     const text = (id, value) => { if (el(id)) el(id).textContent = value; };
@@ -279,7 +277,7 @@
 
     function sceneIsActive() {
         if (extendedBatchActive) return true;
-        return ['storyScreen', 'newsIntroScreen', 'portalScreen', 'headlineScreen', 'todayHeadlinesScreen', 'customerFocusScreen', 'deepdiveScreen', 'factScreen']
+        return ['storyScreen', 'newsIntroScreen', 'portalScreen', 'headlineScreen', 'todayHeadlinesScreen', 'customerFocusScreen', 'factScreen']
             .some(id => el(id).classList.contains('active'));
     }
 
@@ -331,6 +329,10 @@
         initial.style.display = item.logo_url ? 'none' : '';
         logo.onerror = () => { logo.style.display = 'none'; initial.style.display = ''; };
         logo.src = item.logo_url || '';
+        const parts = item.most_ordered_parts || [];
+        el('focusCustomerParts').innerHTML = parts.length
+            ? parts.map(part => `<span class="customer-focus-part"><strong>${escapeHtml(part.base_part_number)}</strong> · ${Number(part.order_count || 0)} order${Number(part.order_count || 0) === 1 ? '' : 's'}</span>`).join('')
+            : '<span class="customer-focus-part">No purchased parts recorded</span>';
         loadCustomerFocusInsight(item.id);
 
         el('sceneWipe').classList.add('active');
@@ -344,41 +346,6 @@
         el('sceneWipe').classList.add('active');
         await wait(450);
         el('customerFocusScreen').classList.remove('active');
-        await wait(600);
-        el('sceneWipe').classList.remove('active');
-        return true;
-    }
-
-    async function showGeographicDeepDive() {
-        const deepdives = data.geographic_deepdives || [];
-        if (!deepdives.length || sceneIsActive()) return false;
-        deepDiveIndex %= deepdives.length;
-        const item = deepdives[deepDiveIndex];
-        const position = deepDiveIndex + 1;
-        deepDiveIndex = (deepDiveIndex + 1) % deepdives.length;
-        const companies = item.main_companies || [];
-
-        text('deepdiveCountry', item.country_name || item.country || 'Geographic market');
-        text('deepdiveFocusArea', item.focus_area || 'Aviation market');
-        text('deepdiveTitle', item.title || 'Geographic deep dive');
-        text('deepdiveSummary', item.summary || 'Open the geographic deep dive for the complete market analysis.');
-        text('deepdiveCompanyCount', `${companies.length} compan${companies.length === 1 ? 'y' : 'ies'}`);
-        text('deepdivePosition', `${position} of ${deepdives.length}`);
-        el('deepdiveCompanies').innerHTML = companies.length
-            ? companies.slice(0, 6).map(company => `<div class="deepdive-company"><strong>${escapeHtml(company.name)}</strong><span>${escapeHtml(company.status || 'No status')}</span></div>`).join('')
-            : '<div class="deepdive-empty">No curated companies have been added yet.</div>';
-
-        el('sceneWipe').classList.add('active');
-        await wait(450);
-        if (manualFactMode) return false;
-        el('deepdiveScreen').classList.add('active');
-        await wait(600);
-        el('sceneWipe').classList.remove('active');
-        await wait(DEEPDIVE_DURATION);
-        if (manualFactMode) return true;
-        el('sceneWipe').classList.add('active');
-        await wait(450);
-        el('deepdiveScreen').classList.remove('active');
         await wait(600);
         el('sceneWipe').classList.remove('active');
         return true;
@@ -492,7 +459,7 @@
             clearInterval(storyScrollTimer);
             clearTimeout(headlineTimer);
             clearTimeout(todayHeadlinesTimer);
-            ['storyScreen', 'newsIntroScreen', 'portalScreen', 'headlineScreen', 'todayHeadlinesScreen', 'customerFocusScreen', 'deepdiveScreen']
+            ['storyScreen', 'newsIntroScreen', 'portalScreen', 'headlineScreen', 'todayHeadlinesScreen', 'customerFocusScreen']
                 .forEach(id => el(id).classList.remove('active'));
             el('sceneWipe').classList.remove('active');
         } else {
@@ -531,7 +498,6 @@
             await wait(MAIN_DASHBOARD_DURATION);
             await showPortalActivity();
             await showCustomerFocus();
-            await showGeographicDeepDive();
             await showAerospaceFact();
             await showExtendedStoryBatch();
         }

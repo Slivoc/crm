@@ -4,8 +4,7 @@ from werkzeug.utils import secure_filename
 import sqlite3
 import calendar
 from datetime import datetime
-from models import get_db, dict_from_row, get_country_name
-from helpers.geo_deepdive import deepdive_summary_text
+from models import get_db, dict_from_row
 import json
 import os
 import re
@@ -210,47 +209,62 @@ def _tv_payload(conn):
         LIMIT 5
     ''').fetchall()
     customer_focus = conn.execute('''
-        SELECT c.id, c.name, c.logo_url, c.country,
-               s.name AS salesperson_name,
-               cs.status AS customer_status,
-               COALESCE(SUM(so.total_value), 0) AS spend_90d,
-               COUNT(*) AS order_count_90d,
-               MAX(so.date_entered) AS last_order_date,
-               (ARRAY_AGG(so.sales_order_ref ORDER BY so.date_entered DESC, so.id DESC))[1]
-                   AS last_order_ref
-        FROM sales_orders so
-        JOIN customers c ON c.id = so.customer_id
-        LEFT JOIN salespeople s ON s.id = c.salesperson_id
-        LEFT JOIN customer_status cs ON cs.id = c.status_id
-        LEFT JOIN sales_statuses ss ON ss.id = so.sales_status_id
-        WHERE so.date_entered >= CURRENT_DATE - INTERVAL '90 days'
-          AND COALESCE(so.total_value, 0) > 0
-          AND COALESCE(ss.status_name, '') <> 'Cancelled'
-        GROUP BY c.id, c.name, c.logo_url, c.country, s.name, cs.status
-        HAVING SUM(so.total_value) > 0
-        ORDER BY MAX(so.date_entered) DESC, SUM(so.total_value) DESC
-        LIMIT 100
-    ''').fetchall()
-    geographic_deepdives = conn.execute('''
-        SELECT gd.id, gd.country, gd.title, gd.content, gd.updated_at,
-               it.tag AS focus_area,
-               COALESCE(
-                   JSONB_AGG(
-                       JSONB_BUILD_OBJECT(
-                           'id', c.id,
-                           'name', c.name,
-                           'status', cs.status
-                       ) ORDER BY dcc.order_index, c.name
-                   ) FILTER (WHERE c.id IS NOT NULL),
-                   '[]'::jsonb
-               ) AS main_companies
-        FROM geographic_deepdives gd
-        LEFT JOIN industry_tags it ON it.id = gd.tag_id
-        LEFT JOIN deepdive_curated_customers dcc ON dcc.deepdive_id = gd.id
-        LEFT JOIN customers c ON c.id = dcc.customer_id
-        LEFT JOIN customer_status cs ON cs.id = c.status_id
-        GROUP BY gd.id, gd.country, gd.title, gd.content, gd.updated_at, it.tag
-        ORDER BY gd.updated_at DESC, gd.id DESC
+        WITH eligible_customers AS (
+            SELECT c.id, c.name, c.logo_url, c.country,
+                   s.name AS salesperson_name,
+                   cs.status AS customer_status,
+                   COALESCE(SUM(so.total_value), 0) AS spend_90d,
+                   COUNT(*) AS order_count_90d,
+                   MAX(so.date_entered) AS last_order_date,
+                   (ARRAY_AGG(so.sales_order_ref ORDER BY so.date_entered DESC, so.id DESC))[1]
+                       AS last_order_ref
+            FROM sales_orders so
+            JOIN customers c ON c.id = so.customer_id
+            LEFT JOIN salespeople s ON s.id = c.salesperson_id
+            LEFT JOIN customer_status cs ON cs.id = c.status_id
+            LEFT JOIN sales_statuses ss ON ss.id = so.sales_status_id
+            WHERE so.date_entered >= CURRENT_DATE - INTERVAL '90 days'
+              AND COALESCE(so.total_value, 0) > 0
+              AND COALESCE(ss.status_name, '') <> 'Cancelled'
+            GROUP BY c.id, c.name, c.logo_url, c.country, s.name, cs.status
+            HAVING SUM(so.total_value) > 0
+            ORDER BY MAX(so.date_entered) DESC, SUM(so.total_value) DESC
+            LIMIT 100
+        )
+        SELECT eligible.*,
+               COALESCE(parts.most_ordered_parts, '[]'::jsonb) AS most_ordered_parts
+        FROM eligible_customers eligible
+        LEFT JOIN LATERAL (
+            SELECT JSONB_AGG(
+                JSONB_BUILD_OBJECT(
+                    'base_part_number', ranked.base_part_number,
+                    'order_count', ranked.order_count,
+                    'total_quantity', ranked.total_quantity
+                ) ORDER BY ranked.order_count DESC, ranked.total_quantity DESC
+            ) AS most_ordered_parts
+            FROM (
+                SELECT COALESCE(NULLIF(sol.base_part_number, ''), 'Unknown part') AS base_part_number,
+                       COUNT(DISTINCT so.id) AS order_count,
+                       COALESCE(SUM(sol.quantity), 0) AS total_quantity,
+                       COALESCE(SUM(
+                           (sol.price * sol.quantity)
+                           / COALESCE(NULLIF(cur.exchange_rate_to_base, 0), 1)
+                       ), 0) AS sales_value_gbp
+                FROM sales_order_lines sol
+                JOIN sales_orders so ON so.id = sol.sales_order_id
+                LEFT JOIN currencies cur ON cur.id = so.currency_id
+                WHERE so.customer_id = eligible.id
+                   OR so.customer_id IN (
+                       SELECT ca.associated_customer_id
+                       FROM customer_associations ca
+                       WHERE ca.main_customer_id = eligible.id
+                   )
+                GROUP BY COALESCE(NULLIF(sol.base_part_number, ''), 'Unknown part')
+                ORDER BY order_count DESC, total_quantity DESC, sales_value_gbp DESC
+                LIMIT 5
+            ) ranked
+        ) parts ON TRUE
+        ORDER BY eligible.last_order_date DESC, eligible.spend_90d DESC
     ''').fetchall()
     news = conn.execute('''
         WITH ranked_customer_articles AS (
@@ -331,19 +345,17 @@ def _tv_payload(conn):
             for customer in (article.get('customers') or [])
         ]
 
-    deepdive_items = []
-    for row in geographic_deepdives:
+    customer_focus_items = []
+    for row in customer_focus:
         item = dict(row)
-        companies = item.get('main_companies') or []
-        if isinstance(companies, str):
+        parts = item.get('most_ordered_parts') or []
+        if isinstance(parts, str):
             try:
-                companies = json.loads(companies)
+                parts = json.loads(parts)
             except json.JSONDecodeError:
-                companies = []
-        item['main_companies'] = companies
-        item['country_name'] = get_country_name(item.get('country'))
-        item['summary'] = deepdive_summary_text(item.pop('content', ''))
-        deepdive_items.append(item)
+                parts = []
+        item['most_ordered_parts'] = parts
+        customer_focus_items.append(item)
 
     return {
         'month_label': now.strftime('%B %Y'),
@@ -361,8 +373,7 @@ def _tv_payload(conn):
         'biggest_non_dave_orders': [dict(row) for row in biggest_non_dave_orders],
         'highest_spending_customers': [dict(row) for row in highest_spending_customers],
         'new_customers': [dict(row) for row in new_customers],
-        'customer_focus': [dict(row) for row in customer_focus],
-        'geographic_deepdives': deepdive_items,
+        'customer_focus': customer_focus_items,
         'news': news_items,
         'portal_activity': {
             'searches': [dict(row) for row in portal_searches],

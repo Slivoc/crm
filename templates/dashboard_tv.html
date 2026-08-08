@@ -7,8 +7,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-pace.css') }}?v=20260802-1">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-customers.css') }}?v=20260801-1">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-focus.css') }}?v=20260808-2">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-deepdives.css') }}?v=20260808-2">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-focus.css') }}?v=20260808-3">
 </head>
 <body>
 <main class="tv-shell" id="tvDashboard">
@@ -124,6 +123,10 @@
                         <span>Similar companies for MGC</span>
                         <ul id="focusSimilarCompanies"><li>Researching comparable organisations…</li></ul>
                     </div>
+                    <div class="customer-focus-parts">
+                        <span>Most commonly bought parts</span>
+                        <div id="focusCustomerParts"></div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -136,22 +139,6 @@
     <footer>Selected from customers with positive order value in the last 90 days <span id="focusCustomerPosition"></span></footer>
 </section>
 
-<section class="deepdive-screen" id="deepdiveScreen" aria-live="polite">
-    <header><div class="brand"><span class="brand-mark">S</span><span>GEOGRAPHIC DEEP DIVE</span></div><span id="deepdiveFocusArea"></span></header>
-    <div class="deepdive-screen-body">
-        <div class="deepdive-overview">
-            <p class="eyebrow" id="deepdiveCountry"></p>
-            <h1 id="deepdiveTitle"></h1>
-            <p id="deepdiveSummary"></p>
-        </div>
-        <div class="deepdive-companies-panel">
-            <div class="deepdive-companies-heading"><span>Main companies</span><small id="deepdiveCompanyCount"></small></div>
-            <div id="deepdiveCompanies" class="deepdive-companies"></div>
-        </div>
-    </div>
-    <footer>Geographic market intelligence <span id="deepdivePosition"></span></footer>
-</section>
-
 <section class="fact-screen" id="factScreen" aria-live="polite">
     <div class="fact-image" id="factImage"></div><div class="fact-overlay"></div>
     <div id="factDebugHint" hidden style="position:absolute;z-index:3;top:6.3rem;right:3rem;padding:.65rem 1rem;border:1px solid rgba(255,255,255,.35);border-radius:999px;background:rgba(5,20,31,.82);color:#fff;font-size:1rem;letter-spacing:.04em">Manual preview</div>
@@ -162,6 +149,6 @@
 
 <div class="wipe" id="sceneWipe"></div>
 <script>window.TV_DASHBOARD_DATA = {{ initial_data|tojson }};</script>
-<script src="{{ url_for('static', filename='js/dashboard-tv.js') }}?v=20260808-4"></script>
+<script src="{{ url_for('static', filename='js/dashboard-tv.js') }}?v=20260808-5"></script>
 </body>
 </html>
