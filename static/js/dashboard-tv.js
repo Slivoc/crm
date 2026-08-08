@@ -8,6 +8,7 @@
     let extendedBatchActive = false;
     let lastFactId = null;
     let lastFocusCustomerId = null;
+    let deepDiveSlideIndex = 0;
     let manualFactMode = false;
     let manualFactIndex = -1;
     let storyScrollTimer;
@@ -18,6 +19,9 @@
     const MAIN_DASHBOARD_DURATION = 45000;
     const PORTAL_ACTIVITY_DURATION = 16000;
     const CUSTOMER_FOCUS_DURATION = 16000;
+    const DEEPDIVE_DURATION = 16000;
+    const DEEPDIVE_SLIDES_PER_CYCLE = 3;
+    const DEEPDIVE_COMPANIES_PER_SLIDE = 7;
     const EXTENDED_STORIES_PER_CYCLE = 5;
     const el = id => document.getElementById(id);
     const text = (id, value) => { if (el(id)) el(id).textContent = value; };
@@ -275,9 +279,103 @@
         return true;
     }
 
+    function buildDeepDiveSlides() {
+        const slides = [];
+        (data.geographic_deepdives || []).forEach(deepdive => {
+            const companies = deepdive.companies || [];
+            if (!companies.length) return;
+            const pageCount = Math.ceil(companies.length / DEEPDIVE_COMPANIES_PER_SLIDE);
+            for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+                const start = pageIndex * DEEPDIVE_COMPANIES_PER_SLIDE;
+                slides.push({
+                    deepdive,
+                    companies: companies.slice(start, start + DEEPDIVE_COMPANIES_PER_SLIDE),
+                    pageIndex,
+                    pageCount,
+                    start,
+                });
+            }
+        });
+        return slides;
+    }
+
+    function renderDeepDiveSlide(slide, position, totalSlides) {
+        const deepdive = slide.deepdive;
+        text('deepDiveTitle', deepdive.title || 'Geographic landscape');
+        text('deepDiveScope', [deepdive.country, deepdive.focus].filter(Boolean).join(' · '));
+        text('deepDiveCompanyCount', Number(deepdive.company_count || 0).toLocaleString());
+        text('deepDiveCoverage', `${Number(deepdive.coverage_percent || 0).toFixed(0)}%`);
+        text('deepDiveGapCount', Number(deepdive.gap_count || 0).toLocaleString());
+        text('deepDiveLifetimeSpend', money.format(Number(deepdive.lifetime_spend || 0)));
+        text('deepDivePosition', `Landscape ${position + 1} of ${totalSlides}`);
+        const firstCompany = slide.start + 1;
+        const lastCompany = slide.start + slide.companies.length;
+        text(
+            'deepDivePageLabel',
+            `Companies ${firstCompany}–${lastCompany} of ${deepdive.company_count}`
+                + (slide.pageCount > 1 ? ` · Page ${slide.pageIndex + 1} of ${slide.pageCount}` : '')
+        );
+
+        el('deepDiveCompanyRows').innerHTML = slide.companies.map((company, index) => {
+            const relationship = ['confirmed', 'possible', 'gap'].includes(company.relationship)
+                ? company.relationship : 'gap';
+            const status = relationship === 'gap'
+                ? 'Not in CRM'
+                : (company.customer_status || 'Status not set');
+            const relationshipNote = relationship === 'confirmed'
+                ? `Confirmed · ${company.customer_name || 'CRM customer'}`
+                : relationship === 'possible'
+                    ? `Possible match · ${company.customer_name || 'Review CRM record'}`
+                    : 'No linked customer record';
+            const spend = Number(company.lifetime_spend || 0);
+            const spendDisplay = spend > 0 ? money.format(spend) : (company.customer_id ? 'No spend recorded' : '—');
+            return `
+                <article class="deepdive-company-row relationship-${relationship}" style="animation-delay:${index * 70}ms">
+                    <div class="deepdive-company-name">
+                        <strong>${escapeHtml(company.name)}</strong>
+                        <small>${company.is_main ? '<span class="deepdive-principal">★ Principal</span>' : ''}${escapeHtml(company.customer_name && company.customer_name !== company.name ? `CRM: ${company.customer_name}` : 'Market participant')}</small>
+                    </div>
+                    <span class="deepdive-company-type">${escapeHtml(company.type || 'Other')}</span>
+                    <div class="deepdive-status"><strong>${escapeHtml(status)}</strong><small>${escapeHtml(relationshipNote)}</small></div>
+                    <span class="deepdive-spend ${spend > 0 ? '' : 'no-spend'}">${escapeHtml(spendDisplay)}</span>
+                </article>`;
+        }).join('');
+    }
+
+    async function showGeographicDeepDive() {
+        const slides = buildDeepDiveSlides();
+        if (!slides.length || sceneIsActive()) return false;
+        const position = deepDiveSlideIndex % slides.length;
+        const slide = slides[position];
+        deepDiveSlideIndex = (position + 1) % slides.length;
+        renderDeepDiveSlide(slide, position, slides.length);
+        el('sceneWipe').classList.add('active');
+        await wait(450);
+        if (manualFactMode) return false;
+        el('deepDiveScreen').classList.add('active');
+        await wait(600);
+        el('sceneWipe').classList.remove('active');
+        await wait(DEEPDIVE_DURATION);
+        if (manualFactMode) return true;
+        el('sceneWipe').classList.add('active');
+        await wait(450);
+        el('deepDiveScreen').classList.remove('active');
+        await wait(600);
+        el('sceneWipe').classList.remove('active');
+        return true;
+    }
+
+    async function showGeographicDeepDiveBatch() {
+        const slideCount = buildDeepDiveSlides().length;
+        for (let index = 0; index < Math.min(DEEPDIVE_SLIDES_PER_CYCLE, slideCount); index += 1) {
+            if (manualFactMode) return;
+            await showGeographicDeepDive();
+        }
+    }
+
     function sceneIsActive() {
         if (extendedBatchActive) return true;
-        return ['storyScreen', 'newsIntroScreen', 'portalScreen', 'headlineScreen', 'todayHeadlinesScreen', 'customerFocusScreen', 'factScreen']
+        return ['storyScreen', 'newsIntroScreen', 'portalScreen', 'headlineScreen', 'todayHeadlinesScreen', 'customerFocusScreen', 'deepDiveScreen', 'factScreen']
             .some(id => el(id).classList.contains('active'));
     }
 
@@ -459,7 +557,7 @@
             clearInterval(storyScrollTimer);
             clearTimeout(headlineTimer);
             clearTimeout(todayHeadlinesTimer);
-            ['storyScreen', 'newsIntroScreen', 'portalScreen', 'headlineScreen', 'todayHeadlinesScreen', 'customerFocusScreen']
+            ['storyScreen', 'newsIntroScreen', 'portalScreen', 'headlineScreen', 'todayHeadlinesScreen', 'customerFocusScreen', 'deepDiveScreen']
                 .forEach(id => el(id).classList.remove('active'));
             el('sceneWipe').classList.remove('active');
         } else {
@@ -497,6 +595,7 @@
         while (true) {
             await wait(MAIN_DASHBOARD_DURATION);
             await showPortalActivity();
+            await showGeographicDeepDiveBatch();
             await showCustomerFocus();
             await showAerospaceFact();
             await showExtendedStoryBatch();

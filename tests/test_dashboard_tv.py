@@ -1,12 +1,16 @@
 from datetime import datetime
+from unittest.mock import MagicMock
 
 from routes.dashboard import (
     _commons_image_metadata,
     _commons_match,
+    _group_tv_geographic_deepdives,
     _monthly_target_pace,
     _normalise_customer_focus_insight,
+    _normalise_tv_company_type,
     _normalise_tv_briefing_fields,
     _specific_image_subject,
+    _tv_geographic_deepdives,
 )
 
 
@@ -114,3 +118,46 @@ def test_customer_focus_insight_is_constrained_for_tv_display():
     assert insight['description'].startswith('A helicopter operator')
     assert len(insight['similar_companies']) == 4
     assert insight['source_urls'] == ['https://example.com/company']
+
+
+def test_tv_company_types_are_distilled_for_landscape_slides():
+    assert _normalise_tv_company_type('Rotary operator / Part-145 MRO') == 'Operator & MRO'
+    assert _normalise_tv_company_type('Fixed-wing maintenance organisation') == 'MRO'
+    assert _normalise_tv_company_type('Commercial airline operator') == 'Operator'
+
+
+def test_tv_geographic_deepdives_include_crm_status_and_lifetime_spend():
+    slides = _group_tv_geographic_deepdives([
+        {
+            'deepdive_id': 3, 'deepdive_title': 'UK Rotary Landscape',
+            'country': 'GB', 'tag_description': 'Rotary Wing', 'deepdive_updated_at': '2026-08-08',
+            'company_id': 10, 'company_name': 'Example Air', 'company_type': 'Operator',
+            'is_main': True, 'display_order': 1, 'match_status': 'confirmed',
+            'matched_customer_id': 7, 'matched_customer_name': 'Example Air Ltd',
+            'matched_customer_status': 'Active Customer', 'lifetime_spend': 125000,
+        },
+        {
+            'deepdive_id': 3, 'deepdive_title': 'UK Rotary Landscape',
+            'country': 'GB', 'tag_description': 'Rotary Wing', 'deepdive_updated_at': '2026-08-08',
+            'company_id': 11, 'company_name': 'Gap MRO', 'company_type': 'Part-145 maintenance',
+            'is_main': True, 'display_order': 2, 'match_status': 'unmatched',
+            'matched_customer_id': None, 'matched_customer_name': None,
+            'matched_customer_status': None, 'lifetime_spend': 0,
+        },
+    ])
+
+    assert slides[0]['company_count'] == 2
+    assert slides[0]['matched_count'] == 1
+    assert slides[0]['gap_count'] == 1
+    assert slides[0]['coverage_percent'] == 50
+    assert slides[0]['companies'][0]['customer_status'] == 'Active Customer'
+    assert slides[0]['companies'][0]['lifetime_spend'] == 125000
+    assert slides[0]['companies'][1]['type'] == 'MRO'
+
+
+def test_tv_geographic_deepdives_do_not_break_tv_when_migration_is_missing():
+    connection = MagicMock()
+    connection.execute.side_effect = RuntimeError('missing table')
+
+    assert _tv_geographic_deepdives(connection) == []
+    connection.rollback.assert_called_once()

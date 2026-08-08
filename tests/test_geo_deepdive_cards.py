@@ -1,5 +1,7 @@
+from unittest.mock import MagicMock, patch
+
 from helpers.geo_deepdive import deepdive_summary_text
-from models.part_4 import _match_geographic_deepdive_company
+from models.part_4 import _match_geographic_deepdive_company, add_customer_link_to_deepdive
 from routes.geo_deepdive import (
     _build_deepdive_company_summary,
     _normalise_deepdive_companies,
@@ -141,3 +143,20 @@ def test_company_summary_handles_an_empty_market_map():
     assert summary['total'] == 0
     assert summary['matched_count'] == 0
     assert summary['coverage_percent'] == 0
+
+
+def test_customer_link_uses_dbapi_fetchone_after_execute():
+    cursor = MagicMock()
+    cursor.execute.return_value = None
+    cursor.fetchone.side_effect = [None, None, {'next_order': 4}]
+    connection = MagicMock()
+    connection.cursor.return_value = cursor
+
+    with patch('models.part_4.get_db_connection', return_value=connection), \
+         patch('models.part_4._reconcile_geographic_deepdive_company_matches'):
+        success, error = add_customer_link_to_deepdive(9, 42, 'Example Aviation')
+
+    assert success is True
+    assert error is None
+    assert cursor.fetchone.call_count == 3
+    connection.commit.assert_called_once()

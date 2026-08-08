@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-pace.css') }}?v=20260802-1">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-customers.css') }}?v=20260801-1">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-focus.css') }}?v=20260808-3">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-deepdives.css') }}?v=20260808-1">
 </head>
 <body>
 <main class="tv-shell" id="tvDashboard">
@@ -139,6 +140,53 @@
     <footer>Selected from customers with positive order value in the last 90 days <span id="focusCustomerPosition"></span></footer>
 </section>
 
+<section class="deepdive-screen" id="deepDiveScreen" aria-live="polite">
+    <header>
+        <div class="brand"><span class="brand-mark">S</span><span>MARKET LANDSCAPE</span></div>
+        <span id="deepDivePosition"></span>
+    </header>
+    <div class="deepdive-screen-body">
+        <aside class="deepdive-summary">
+            <p class="eyebrow">Geographic deep dive</p>
+            <h1 id="deepDiveTitle"></h1>
+            <p class="deepdive-scope" id="deepDiveScope"></p>
+            <div class="deepdive-metrics">
+                <article>
+                    <span>Mapped organisations</span>
+                    <strong id="deepDiveCompanyCount">0</strong>
+                </article>
+                <article>
+                    <span>Confirmed CRM coverage</span>
+                    <strong id="deepDiveCoverage">0%</strong>
+                </article>
+                <article>
+                    <span>Coverage gaps</span>
+                    <strong id="deepDiveGapCount">0</strong>
+                </article>
+                <article>
+                    <span>Known lifetime spend</span>
+                    <strong id="deepDiveLifetimeSpend">£0</strong>
+                </article>
+            </div>
+            <div class="deepdive-relationship-key">
+                <span class="is-confirmed">Confirmed customer</span>
+                <span class="is-possible">Possible match</span>
+                <span class="is-gap">Not in CRM</span>
+            </div>
+        </aside>
+        <section class="deepdive-company-panel">
+            <div class="deepdive-company-heading">
+                <span>Organisation</span><span>Type</span><span>CRM status</span><span>Lifetime spend</span>
+            </div>
+            <div class="deepdive-company-rows" id="deepDiveCompanyRows"></div>
+        </section>
+    </div>
+    <footer>
+        <span>Potential customer landscape matched against live CRM records</span>
+        <span id="deepDivePageLabel"></span>
+    </footer>
+</section>
+
 <section class="fact-screen" id="factScreen" aria-live="polite">
     <div class="fact-image" id="factImage"></div><div class="fact-overlay"></div>
     <div id="factDebugHint" hidden style="position:absolute;z-index:3;top:6.3rem;right:3rem;padding:.65rem 1rem;border:1px solid rgba(255,255,255,.35);border-radius:999px;background:rgba(5,20,31,.82);color:#fff;font-size:1rem;letter-spacing:.04em">Manual preview</div>
@@ -149,6 +197,6 @@
 
 <div class="wipe" id="sceneWipe"></div>
 <script>window.TV_DASHBOARD_DATA = {{ initial_data|tojson }};</script>
-<script src="{{ url_for('static', filename='js/dashboard-tv.js') }}?v=20260808-5"></script>
+<script src="{{ url_for('static', filename='js/dashboard-tv.js') }}?v=20260808-6"></script>
 </body>
 </html>

@@ -120,6 +120,15 @@
             showSection('market-map');
             window.setTimeout(() => root.querySelector('[data-market-filter="gap"]')?.click(), 100);
         });
+
+        root.querySelectorAll('[data-open-market-filter]').forEach((button) => {
+            button.addEventListener('click', () => {
+                showSection('market-map');
+                window.setTimeout(() => {
+                    root.querySelector(`[data-market-filter="${button.dataset.openMarketFilter}"]`)?.click();
+                }, 100);
+            });
+        });
     }
 
     function initialiseSegmentFilter() {

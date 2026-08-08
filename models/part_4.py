@@ -3832,14 +3832,15 @@ def add_customer_link_to_deepdive(deepdive_id, customer_id, linked_text):
     db = get_db_connection()
     try:
         cursor = db.cursor()
-        existing_link = cursor.execute(
+        cursor.execute(
             """
             SELECT id
             FROM deepdive_customer_links
             WHERE deepdive_id = ? AND customer_id = ? AND linked_text = ?
             """,
             (deepdive_id, customer_id, linked_text),
-        ).fetchone()
+        )
+        existing_link = cursor.fetchone()
         if existing_link:
             return False, 'This customer is already linked to that text'
 
@@ -3852,24 +3853,26 @@ def add_customer_link_to_deepdive(deepdive_id, customer_id, linked_text):
             (deepdive_id, customer_id, linked_text),
         )
 
-        existing_curated = cursor.execute(
+        cursor.execute(
             """
             SELECT id
             FROM deepdive_curated_customers
             WHERE deepdive_id = ? AND customer_id = ?
             """,
             (deepdive_id, customer_id),
-        ).fetchone()
+        )
+        existing_curated = cursor.fetchone()
 
         if not existing_curated:
-            next_order_row = cursor.execute(
+            cursor.execute(
                 """
                 SELECT COALESCE(MAX(order_index), 0) + 1 AS next_order
                 FROM deepdive_curated_customers
                 WHERE deepdive_id = ?
                 """,
                 (deepdive_id,),
-            ).fetchone()
+            )
+            next_order_row = cursor.fetchone()
             next_order = next_order_row['next_order'] if next_order_row else 1
 
             cursor.execute(

@@ -1,0 +1,242 @@
+.deepdive-screen {
+    position: fixed;
+    inset: 0;
+    z-index: 12;
+    display: flex;
+    flex-direction: column;
+    padding: 4vh 4vw 3.2vh;
+    color: #f6fbff;
+    background:
+        radial-gradient(circle at 12% 18%, rgba(67, 224, 208, .15), transparent 30%),
+        linear-gradient(140deg, #061424, #0a2035 58%, #071725);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity .35s;
+}
+
+.deepdive-screen::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: .12;
+    background-image:
+        linear-gradient(rgba(121, 242, 189, .18) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(121, 242, 189, .18) 1px, transparent 1px);
+    background-size: 58px 58px;
+    mask-image: linear-gradient(90deg, #000, transparent 58%);
+}
+
+.deepdive-screen.active { opacity: 1; visibility: visible; }
+.deepdive-screen > * { position: relative; z-index: 1; }
+
+.deepdive-screen > header,
+.deepdive-screen > footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: var(--muted);
+    font-size: clamp(.72rem, .9vw, 1rem);
+    letter-spacing: .12em;
+    text-transform: uppercase;
+}
+
+.deepdive-screen-body {
+    display: grid;
+    grid-template-columns: minmax(320px, 28%) minmax(0, 1fr);
+    gap: 3vw;
+    min-height: 0;
+    margin: auto 0;
+}
+
+.deepdive-summary {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding-right: 2.5vw;
+    border-right: 1px solid rgba(148, 169, 186, .22);
+}
+
+.deepdive-summary h1 {
+    margin: 1.2vh 0 1vh;
+    font-size: clamp(2.5rem, 4.2vw, 5.1rem);
+    line-height: .98;
+    letter-spacing: -.045em;
+}
+
+.deepdive-scope {
+    margin: 0 0 3vh;
+    color: var(--cyan);
+    font-size: clamp(1rem, 1.35vw, 1.5rem);
+}
+
+.deepdive-metrics {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .7vw;
+}
+
+.deepdive-metrics article {
+    min-height: 11vh;
+    padding: 1.3vh 1vw;
+    background: rgba(7, 25, 42, .7);
+    border: 1px solid rgba(148, 169, 186, .17);
+    border-top: 3px solid rgba(67, 224, 208, .7);
+}
+
+.deepdive-metrics span {
+    display: block;
+    color: var(--muted);
+    font-size: clamp(.62rem, .72vw, .78rem);
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}
+
+.deepdive-metrics strong {
+    display: block;
+    margin-top: .55vh;
+    color: #fff;
+    font-size: clamp(1.5rem, 2.2vw, 2.6rem);
+    line-height: 1;
+}
+
+.deepdive-metrics article:nth-child(2) strong { color: var(--mint); }
+.deepdive-metrics article:nth-child(3) { border-top-color: #ff846f; }
+.deepdive-metrics article:nth-child(3) strong { color: #ff9b88; }
+.deepdive-metrics article:nth-child(4) { border-top-color: var(--gold); }
+.deepdive-metrics article:nth-child(4) strong { color: var(--gold); }
+
+.deepdive-relationship-key {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem;
+    margin-top: 2vh;
+}
+
+.deepdive-relationship-key span {
+    padding: .35rem .55rem;
+    border-left: 3px solid;
+    background: rgba(255, 255, 255, .05);
+    color: var(--muted);
+    font-size: clamp(.58rem, .68vw, .74rem);
+}
+
+.deepdive-relationship-key .is-confirmed { border-color: var(--mint); }
+.deepdive-relationship-key .is-possible { border-color: var(--gold); }
+.deepdive-relationship-key .is-gap { border-color: #ff846f; }
+
+.deepdive-company-panel {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 0;
+}
+
+.deepdive-company-heading,
+.deepdive-company-row {
+    display: grid;
+    grid-template-columns: minmax(250px, 1.55fr) minmax(130px, .65fr) minmax(190px, .95fr) minmax(150px, .7fr);
+    gap: 1vw;
+    align-items: center;
+}
+
+.deepdive-company-heading {
+    padding: 0 1.2vw 1vh;
+    color: var(--muted);
+    font-size: clamp(.6rem, .72vw, .8rem);
+    font-weight: 700;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+}
+
+.deepdive-company-rows { display: grid; gap: .75vh; }
+
+.deepdive-company-row {
+    position: relative;
+    min-height: 8.5vh;
+    padding: 1.2vh 1.2vw;
+    overflow: hidden;
+    background: rgba(10, 31, 51, .88);
+    border: 1px solid rgba(148, 169, 186, .14);
+    border-left: 5px solid #ff846f;
+    animation: rise .5s both;
+}
+
+.deepdive-company-row.relationship-confirmed { border-left-color: var(--mint); }
+.deepdive-company-row.relationship-possible { border-left-color: var(--gold); }
+.deepdive-company-row.relationship-gap { border-left-color: #ff846f; }
+
+.deepdive-company-name {
+    min-width: 0;
+}
+
+.deepdive-company-name strong {
+    display: block;
+    overflow: hidden;
+    font-size: clamp(1rem, 1.35vw, 1.52rem);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.deepdive-company-name small,
+.deepdive-status small {
+    display: block;
+    margin-top: .2vh;
+    overflow: hidden;
+    color: var(--muted);
+    font-size: clamp(.62rem, .72vw, .8rem);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.deepdive-principal {
+    margin-right: .45rem;
+    color: var(--gold);
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}
+
+.deepdive-company-type {
+    justify-self: start;
+    padding: .4rem .62rem;
+    color: #d9e7ef;
+    background: rgba(67, 224, 208, .09);
+    border: 1px solid rgba(67, 224, 208, .25);
+    font-size: clamp(.7rem, .86vw, .95rem);
+    font-weight: 700;
+}
+
+.deepdive-status strong {
+    display: block;
+    color: #f6fbff;
+    font-size: clamp(.78rem, .95vw, 1.05rem);
+}
+
+.relationship-confirmed .deepdive-status strong { color: var(--mint); }
+.relationship-possible .deepdive-status strong { color: var(--gold); }
+.relationship-gap .deepdive-status strong { color: #ff9b88; }
+
+.deepdive-spend {
+    color: #fff;
+    font-size: clamp(1rem, 1.35vw, 1.5rem);
+    font-weight: 800;
+    text-align: right;
+}
+
+.deepdive-spend.no-spend {
+    color: var(--muted);
+    font-size: clamp(.72rem, .82vw, .9rem);
+    font-weight: 600;
+}
+
+.deepdive-screen > footer { margin-top: 2vh; }
+
+@media (max-width: 1200px) {
+    .deepdive-screen-body { grid-template-columns: 32% minmax(0, 1fr); gap: 2vw; }
+    .deepdive-company-heading,
+    .deepdive-company-row { grid-template-columns: minmax(190px, 1.4fr) 110px minmax(150px, .9fr) 120px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .deepdive-company-row { animation-duration: .01ms !important; }
+}

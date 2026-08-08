@@ -181,11 +181,25 @@
                         {% endif %}
                     </section>
 
-                    <section class="rail-panel intelligence-key">
-                        <span class="section-eyebrow">How to read this</span>
-                        <div><span class="key-dot key-dot-confirmed"></span><strong>Confirmed</strong><small>Linked to an existing CRM customer</small></div>
-                        <div><span class="key-dot key-dot-possible"></span><strong>Possible</strong><small>A match worth reviewing</small></div>
-                        <div><span class="key-dot key-dot-gap"></span><strong>Gap</strong><small>No CRM relationship found</small></div>
+                    <section class="rail-panel coverage-signals">
+                        <header class="rail-heading">
+                            <div>
+                                <span class="section-eyebrow">CRM relationship</span>
+                                <h3>Coverage signals</h3>
+                            </div>
+                        </header>
+                        <button type="button" class="coverage-signal coverage-signal-confirmed" data-open-market-filter="matched">
+                            <span><i class="bi bi-check2-circle"></i><strong>Confirmed in CRM</strong><small>Existing customer records</small></span>
+                            <b>{{ company_summary.matched_count }}</b>
+                        </button>
+                        <button type="button" class="coverage-signal coverage-signal-possible" data-open-market-filter="suggested">
+                            <span><i class="bi bi-question-circle"></i><strong>Needs review</strong><small>Possible customer matches</small></span>
+                            <b>{{ company_summary.suggested_count }}</b>
+                        </button>
+                        <button type="button" class="coverage-signal coverage-signal-gap" data-open-market-filter="gap">
+                            <span><i class="bi bi-dash-circle"></i><strong>Coverage gaps</strong><small>No CRM relationship found</small></span>
+                            <b>{{ company_summary.unmatched_count }}</b>
+                        </button>
                     </section>
                 </aside>
             </div>

@@ -3,6 +3,7 @@ from flask_login import current_user, login_required
 from werkzeug.utils import secure_filename
 import sqlite3
 import calendar
+import logging
 from datetime import datetime
 from models import get_db, dict_from_row
 import json
@@ -133,6 +134,160 @@ def _previously_approved_tv_facts(conn):
             item[field] = value or []
         facts.append(item)
     return facts
+
+
+def _normalise_tv_company_type(value):
+    """Collapse free-text deep-dive company types into TV-readable labels."""
+    value = re.sub(r'\s+', ' ', str(value or '').strip())
+    lowered = value.lower()
+    is_operator = any(term in lowered for term in (
+        'operator', 'airline', 'charter', 'hems', 'air ambulance', 'sar', 'flight operations'
+    ))
+    is_mro = any(term in lowered for term in (
+        'mro', 'maintenance', 'part-145', 'part 145', 'repair', 'overhaul'
+    ))
+    if is_operator and is_mro:
+        return 'Operator & MRO'
+    if is_mro:
+        return 'MRO'
+    if is_operator:
+        return 'Operator'
+    if 'oem' in lowered or 'manufacturer' in lowered:
+        return 'OEM'
+    if 'training' in lowered or 'flight school' in lowered:
+        return 'Training'
+    if any(term in lowered for term in ('government', 'military', 'police', 'public sector')):
+        return 'Government'
+    if 'distributor' in lowered or 'supplier' in lowered:
+        return 'Distributor'
+    return value[:32] or 'Other'
+
+
+def _group_tv_geographic_deepdives(rows):
+    """Build compact, serialisable landscape slides from deep-dive company rows."""
+    deepdives = {}
+    for raw_row in rows or []:
+        row = dict(raw_row)
+        deepdive_id = row['deepdive_id']
+        deepdive = deepdives.setdefault(deepdive_id, {
+            'id': deepdive_id,
+            'title': row.get('deepdive_title') or 'Geographic deep dive',
+            'country': row.get('country') or '',
+            'focus': row.get('tag_description') or 'Aviation',
+            'updated_at': row.get('deepdive_updated_at'),
+            'companies': [],
+        })
+        if not row.get('company_id'):
+            continue
+        match_status = str(row.get('match_status') or '').lower()
+        if match_status in ('matched', 'confirmed'):
+            relationship = 'confirmed'
+        elif match_status == 'suggested':
+            relationship = 'possible'
+        else:
+            relationship = 'gap'
+        deepdive['companies'].append({
+            'id': row['company_id'],
+            'name': row.get('company_name') or 'Unnamed organisation',
+            'type': _normalise_tv_company_type(row.get('company_type')),
+            'is_main': bool(row.get('is_main')),
+            'relationship': relationship,
+            'customer_id': row.get('matched_customer_id'),
+            'customer_name': row.get('matched_customer_name') or '',
+            'customer_status': (
+                row.get('matched_customer_status') or 'Status not set'
+                if row.get('matched_customer_id') else 'Not in CRM'
+            ),
+            'lifetime_spend': float(row.get('lifetime_spend') or 0),
+            'display_order': int(row.get('display_order') or 0),
+        })
+
+    type_order = {'Operator & MRO': 0, 'MRO': 1, 'Operator': 2}
+    relationship_order = {'confirmed': 0, 'possible': 1, 'gap': 2}
+    result = []
+    for deepdive in deepdives.values():
+        companies = deepdive['companies']
+        companies.sort(key=lambda company: (
+            not company['is_main'],
+            relationship_order[company['relationship']],
+            type_order.get(company['type'], 3),
+            -company['lifetime_spend'],
+            company['display_order'],
+            company['name'].lower(),
+        ))
+        deepdive['company_count'] = len(companies)
+        deepdive['matched_count'] = sum(company['relationship'] == 'confirmed' for company in companies)
+        deepdive['review_count'] = sum(company['relationship'] == 'possible' for company in companies)
+        deepdive['gap_count'] = sum(company['relationship'] == 'gap' for company in companies)
+        deepdive['coverage_percent'] = round(
+            deepdive['matched_count'] / len(companies) * 100
+        ) if companies else 0
+        spend_by_customer = {
+            company['customer_id']: company['lifetime_spend']
+            for company in companies if company['customer_id']
+        }
+        deepdive['lifetime_spend'] = sum(spend_by_customer.values())
+        result.append(deepdive)
+    return result
+
+
+def _tv_geographic_deepdives(conn, limit=12):
+    """Return the most recently maintained geographic landscapes for TV rotation."""
+    try:
+        rows = conn.execute('''
+            WITH recent_deepdives AS (
+            SELECT gd.id, gd.title, gd.country, gd.tag_id, gd.updated_at
+            FROM geographic_deepdives gd
+            ORDER BY gd.updated_at DESC, gd.id DESC
+            LIMIT ?
+        ), matched_customers AS (
+            SELECT DISTINCT gdc.matched_customer_id AS customer_id
+            FROM geographic_deepdive_companies gdc
+            JOIN recent_deepdives rd ON rd.id = gdc.deepdive_id
+            WHERE gdc.matched_customer_id IS NOT NULL
+        ), customer_family AS (
+            SELECT customer_id AS root_customer_id, customer_id AS member_customer_id
+            FROM matched_customers
+            UNION
+            SELECT mc.customer_id, ca.associated_customer_id
+            FROM matched_customers mc
+            JOIN customer_associations ca ON ca.main_customer_id = mc.customer_id
+        ), lifetime_spend AS (
+            SELECT cf.root_customer_id AS customer_id,
+                   COALESCE(SUM(so.total_value), 0) AS lifetime_spend
+            FROM customer_family cf
+            JOIN sales_orders so ON so.customer_id = cf.member_customer_id
+            LEFT JOIN sales_statuses ss ON ss.id = so.sales_status_id
+            WHERE COALESCE(ss.status_name, '') <> 'Cancelled'
+            GROUP BY cf.root_customer_id
+        )
+        SELECT rd.id AS deepdive_id, rd.title AS deepdive_title,
+               rd.country, rd.updated_at AS deepdive_updated_at,
+               it.tag AS tag_description,
+               gdc.id AS company_id, gdc.company_name, gdc.company_type,
+               gdc.is_main, gdc.display_order, gdc.match_status,
+               gdc.matched_customer_id,
+               c.name AS matched_customer_name,
+               cs.status AS matched_customer_status,
+               COALESCE(ls.lifetime_spend, 0) AS lifetime_spend
+        FROM recent_deepdives rd
+        LEFT JOIN industry_tags it ON it.id = rd.tag_id
+        LEFT JOIN geographic_deepdive_companies gdc ON gdc.deepdive_id = rd.id
+        LEFT JOIN customers c ON c.id = gdc.matched_customer_id
+        LEFT JOIN customer_status cs ON cs.id = c.status_id
+        LEFT JOIN lifetime_spend ls ON ls.customer_id = gdc.matched_customer_id
+            ORDER BY rd.updated_at DESC, rd.id DESC, gdc.is_main DESC,
+                     gdc.display_order, gdc.company_name
+        ''', (limit,)).fetchall()
+    except Exception:
+        # Some development databases may not have the structured-company
+        # migration yet. Keep the wider TV payload available in that case.
+        conn.rollback()
+        logging.getLogger(__name__).warning(
+            'Geographic deep-dive TV slides are unavailable; check the structured-company migration.'
+        )
+        return []
+    return _group_tv_geographic_deepdives(rows)
 
 
 def _tv_payload(conn):
@@ -379,6 +534,7 @@ def _tv_payload(conn):
             'searches': [dict(row) for row in portal_searches],
             'quote_requests': [dict(row) for row in portal_quote_requests],
         },
+        'geographic_deepdives': _tv_geographic_deepdives(conn),
         'employee': employee,
         'aerospace_facts': _tv_facts(conn),
     }
