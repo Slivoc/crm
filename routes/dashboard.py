@@ -4,7 +4,8 @@ from werkzeug.utils import secure_filename
 import sqlite3
 import calendar
 from datetime import datetime
-from models import get_db, dict_from_row
+from models import get_db, dict_from_row, get_country_name
+from helpers.geo_deepdive import deepdive_summary_text
 import json
 import os
 import re
@@ -230,6 +231,27 @@ def _tv_payload(conn):
         ORDER BY MAX(so.date_entered) DESC, SUM(so.total_value) DESC
         LIMIT 100
     ''').fetchall()
+    geographic_deepdives = conn.execute('''
+        SELECT gd.id, gd.country, gd.title, gd.content, gd.updated_at,
+               it.tag AS focus_area,
+               COALESCE(
+                   JSONB_AGG(
+                       JSONB_BUILD_OBJECT(
+                           'id', c.id,
+                           'name', c.name,
+                           'status', cs.status
+                       ) ORDER BY dcc.order_index, c.name
+                   ) FILTER (WHERE c.id IS NOT NULL),
+                   '[]'::jsonb
+               ) AS main_companies
+        FROM geographic_deepdives gd
+        LEFT JOIN industry_tags it ON it.id = gd.tag_id
+        LEFT JOIN deepdive_curated_customers dcc ON dcc.deepdive_id = gd.id
+        LEFT JOIN customers c ON c.id = dcc.customer_id
+        LEFT JOIN customer_status cs ON cs.id = c.status_id
+        GROUP BY gd.id, gd.country, gd.title, gd.content, gd.updated_at, it.tag
+        ORDER BY gd.updated_at DESC, gd.id DESC
+    ''').fetchall()
     news = conn.execute('''
         WITH ranked_customer_articles AS (
             SELECT acm.article_id, acm.customer_id,
@@ -309,6 +331,20 @@ def _tv_payload(conn):
             for customer in (article.get('customers') or [])
         ]
 
+    deepdive_items = []
+    for row in geographic_deepdives:
+        item = dict(row)
+        companies = item.get('main_companies') or []
+        if isinstance(companies, str):
+            try:
+                companies = json.loads(companies)
+            except json.JSONDecodeError:
+                companies = []
+        item['main_companies'] = companies
+        item['country_name'] = get_country_name(item.get('country'))
+        item['summary'] = deepdive_summary_text(item.pop('content', ''))
+        deepdive_items.append(item)
+
     return {
         'month_label': now.strftime('%B %Y'),
         'updated_at': now.isoformat(timespec='seconds'),
@@ -326,6 +362,7 @@ def _tv_payload(conn):
         'highest_spending_customers': [dict(row) for row in highest_spending_customers],
         'new_customers': [dict(row) for row in new_customers],
         'customer_focus': [dict(row) for row in customer_focus],
+        'geographic_deepdives': deepdive_items,
         'news': news_items,
         'portal_activity': {
             'searches': [dict(row) for row in portal_searches],

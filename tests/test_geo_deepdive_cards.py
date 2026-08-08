@@ -1,4 +1,4 @@
-from routes.geo_deepdive import _deepdive_card_summary
+from helpers.geo_deepdive import deepdive_summary_text
 
 
 def test_card_summary_prefers_whats_big_here_section():
@@ -13,7 +13,7 @@ Austria is overwhelmingly a HEMS-driven market with several major operators.
 - **Example Air** – national operator.
 """
 
-    assert _deepdive_card_summary(content) == (
+    assert deepdive_summary_text(content) == (
         'Austria is overwhelmingly a HEMS-driven market with several major operators.'
     )
 
@@ -21,7 +21,7 @@ Austria is overwhelmingly a HEMS-driven market with several major operators.
 def test_card_summary_removes_markdown_and_truncates_cleanly():
     content = '# Market\n\nThis is a **busy** market with [important operators](https://example.com). ' + ('Growth is strong. ' * 30)
 
-    summary = _deepdive_card_summary(content, limit=120)
+    summary = deepdive_summary_text(content, limit=120)
 
     assert '**' not in summary
     assert '](' not in summary
