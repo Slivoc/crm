@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-customers.css') }}?v=20260801-1">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-focus.css') }}?v=20260808-3">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-deepdives.css') }}?v=20260808-2">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-tv-aircraft.css') }}?v=20260808-1">
 </head>
 <body{% if request.args.get('preview') == 'deepdive' %} class="deepdive-preview-mode"{% endif %}>
 <main class="tv-shell" id="tvDashboard">
@@ -108,6 +109,39 @@
     <footer>Customer portal activity <span>No personal or technical tracking data shown</span></footer>
 </section>
 
+<section class="aircraft-traffic-screen" id="aircraftTrafficScreen" aria-live="polite">
+    <header>
+        <div class="brand"><span class="brand-mark">S</span><span>AIRCRAFT TRAFFIC</span></div>
+        <span>Rolling 30-day view</span>
+    </header>
+    <div class="aircraft-traffic-body">
+        <div class="aircraft-traffic-title">
+            <div><p class="eyebrow">FlightRadar activity</p><h1>Customer fleet in motion</h1></div>
+            <div class="aircraft-traffic-metrics">
+                <article><strong id="aircraftTrafficHours">0</strong><span>flight hours</span></article>
+                <article><strong id="aircraftTrafficFlights">0</strong><span>flights tracked</span></article>
+                <article><strong id="aircraftTrafficAircraft">0</strong><span>aircraft</span></article>
+                <article><strong id="aircraftTrafficCustomers">0</strong><span>customers</span></article>
+            </div>
+        </div>
+        <div class="aircraft-traffic-columns">
+            <article class="aircraft-traffic-panel">
+                <h2>Hours by aircraft type</h2>
+                <div id="aircraftTypeHours" class="aircraft-ranking"></div>
+            </article>
+            <article class="aircraft-traffic-panel">
+                <h2>Top customers by hours</h2>
+                <div id="aircraftCustomerHours" class="aircraft-ranking"></div>
+            </article>
+            <article class="aircraft-traffic-panel">
+                <h2>Top tail numbers</h2>
+                <div id="aircraftTailHours" class="aircraft-ranking"></div>
+            </article>
+        </div>
+    </div>
+    <footer><span>Estimated airborne hours from linked customer aircraft</span><span>Last 30 days</span></footer>
+</section>
+
 <section class="customer-focus-screen" id="customerFocusScreen" aria-live="polite">
     <header><div class="brand"><span class="brand-mark">S</span><span>CUSTOMER IN FOCUS</span></div><span>Recent customer relationship</span></header>
     <div class="customer-focus-body">
@@ -197,6 +231,6 @@
 
 <div class="wipe" id="sceneWipe"></div>
 <script>window.TV_DASHBOARD_DATA = {{ initial_data|tojson }};</script>
-<script src="{{ url_for('static', filename='js/dashboard-tv.js') }}?v=20260808-7"></script>
+<script src="{{ url_for('static', filename='js/dashboard-tv.js') }}?v=20260808-8"></script>
 </body>
 </html>

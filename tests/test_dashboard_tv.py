@@ -10,6 +10,7 @@ from routes.dashboard import (
     _normalise_tv_company_type,
     _normalise_tv_briefing_fields,
     _specific_image_subject,
+    _tv_aircraft_traffic,
     _tv_geographic_deepdives,
 )
 
@@ -160,4 +161,48 @@ def test_tv_geographic_deepdives_do_not_break_tv_when_migration_is_missing():
     connection.execute.side_effect = RuntimeError('missing table')
 
     assert _tv_geographic_deepdives(connection) == []
+    connection.rollback.assert_called_once()
+
+
+def test_tv_aircraft_traffic_returns_ranked_30_day_snapshot():
+    connection = MagicMock()
+    connection.execute.return_value.fetchone.return_value = {
+        'flight_count': 82,
+        'aircraft_count': 14,
+        'customer_count': 5,
+        'estimated_flight_hours': '126.75',
+        'aircraft_types': [{
+            'name': 'H145', 'flight_count': 28, 'aircraft_count': 4,
+            'estimated_flight_hours': 48.5,
+        }],
+        'customers': [{
+            'customer_id': 7, 'name': 'Example Air', 'flight_count': 20,
+            'aircraft_count': 3, 'estimated_flight_hours': 42.25,
+        }],
+        'aircraft': [{
+            'name': 'G-TEST', 'aircraft_type': 'H145', 'customer_name': 'Example Air',
+            'flight_count': 12, 'estimated_flight_hours': 21.5,
+        }],
+    }
+
+    traffic = _tv_aircraft_traffic(connection)
+
+    assert traffic['period_days'] == 30
+    assert traffic['summary']['estimated_flight_hours'] == 126.75
+    assert traffic['aircraft_types'][0]['name'] == 'H145'
+    assert traffic['customers'][0]['name'] == 'Example Air'
+    assert traffic['aircraft'][0]['name'] == 'G-TEST'
+    query = connection.execute.call_args.args[0]
+    assert "INTERVAL '30 days'" in query
+    assert 'ORDER BY estimated_flight_hours DESC' in query
+
+
+def test_tv_aircraft_traffic_does_not_break_tv_when_integration_is_missing():
+    connection = MagicMock()
+    connection.execute.side_effect = RuntimeError('missing table')
+
+    traffic = _tv_aircraft_traffic(connection)
+
+    assert traffic['summary']['flight_count'] == 0
+    assert traffic['aircraft_types'] == []
     connection.rollback.assert_called_once()

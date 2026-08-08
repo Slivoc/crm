@@ -18,6 +18,7 @@
     let todayHeadlinesTimer;
     const MAIN_DASHBOARD_DURATION = 45000;
     const PORTAL_ACTIVITY_DURATION = 16000;
+    const AIRCRAFT_TRAFFIC_DURATION = 18000;
     const CUSTOMER_FOCUS_DURATION = 16000;
     const DEEPDIVE_DURATION = 16000;
     const DEEPDIVE_SLIDES_PER_CYCLE = 3;
@@ -279,6 +280,58 @@
         return true;
     }
 
+    function flightHours(value) {
+        return Number(value || 0).toLocaleString([], {minimumFractionDigits: 1, maximumFractionDigits: 1});
+    }
+
+    function aircraftRankingRows(items, detail) {
+        if (!items.length) return '<div class="aircraft-ranking-empty">No tracked activity in this period</div>';
+        return items.slice(0, 6).map((item, index) => `
+            <div class="aircraft-rank-row" style="animation-delay:${index * 65}ms">
+                <span class="aircraft-rank-number">${index + 1}</span>
+                <span class="aircraft-rank-copy"><strong>${escapeHtml(item.name || 'Unknown')}</strong><small>${escapeHtml(detail(item))}</small></span>
+                <span class="aircraft-rank-hours">${flightHours(item.estimated_flight_hours)} <small>hrs</small></span>
+            </div>`).join('');
+    }
+
+    async function showAircraftTraffic() {
+        const traffic = data.aircraft_traffic || {};
+        const summary = traffic.summary || {};
+        if (!Number(summary.flight_count || 0) || sceneIsActive()) return false;
+
+        text('aircraftTrafficHours', flightHours(summary.estimated_flight_hours));
+        text('aircraftTrafficFlights', Number(summary.flight_count || 0).toLocaleString());
+        text('aircraftTrafficAircraft', Number(summary.aircraft_count || 0).toLocaleString());
+        text('aircraftTrafficCustomers', Number(summary.customer_count || 0).toLocaleString());
+        el('aircraftTypeHours').innerHTML = aircraftRankingRows(
+            traffic.aircraft_types || [],
+            item => `${Number(item.aircraft_count || 0)} aircraft · ${Number(item.flight_count || 0)} flights`
+        );
+        el('aircraftCustomerHours').innerHTML = aircraftRankingRows(
+            traffic.customers || [],
+            item => `${Number(item.aircraft_count || 0)} aircraft · ${Number(item.flight_count || 0)} flights`
+        );
+        el('aircraftTailHours').innerHTML = aircraftRankingRows(
+            traffic.aircraft || [],
+            item => [item.aircraft_type, item.customer_name, `${Number(item.flight_count || 0)} flights`].filter(Boolean).join(' · ')
+        );
+
+        el('sceneWipe').classList.add('active');
+        await wait(450);
+        if (manualFactMode) return false;
+        el('aircraftTrafficScreen').classList.add('active');
+        await wait(600);
+        el('sceneWipe').classList.remove('active');
+        await wait(AIRCRAFT_TRAFFIC_DURATION);
+        if (manualFactMode) return true;
+        el('sceneWipe').classList.add('active');
+        await wait(450);
+        el('aircraftTrafficScreen').classList.remove('active');
+        await wait(600);
+        el('sceneWipe').classList.remove('active');
+        return true;
+    }
+
     function buildDeepDiveSlides() {
         const slides = [];
         (data.geographic_deepdives || []).forEach(deepdive => {
@@ -396,7 +449,7 @@
 
     function sceneIsActive() {
         if (extendedBatchActive) return true;
-        return ['storyScreen', 'newsIntroScreen', 'portalScreen', 'headlineScreen', 'todayHeadlinesScreen', 'customerFocusScreen', 'deepDiveScreen', 'factScreen']
+        return ['storyScreen', 'newsIntroScreen', 'portalScreen', 'aircraftTrafficScreen', 'headlineScreen', 'todayHeadlinesScreen', 'customerFocusScreen', 'deepDiveScreen', 'factScreen']
             .some(id => el(id).classList.contains('active'));
     }
 
@@ -578,7 +631,7 @@
             clearInterval(storyScrollTimer);
             clearTimeout(headlineTimer);
             clearTimeout(todayHeadlinesTimer);
-            ['storyScreen', 'newsIntroScreen', 'portalScreen', 'headlineScreen', 'todayHeadlinesScreen', 'customerFocusScreen', 'deepDiveScreen']
+            ['storyScreen', 'newsIntroScreen', 'portalScreen', 'aircraftTrafficScreen', 'headlineScreen', 'todayHeadlinesScreen', 'customerFocusScreen', 'deepDiveScreen']
                 .forEach(id => el(id).classList.remove('active'));
             el('sceneWipe').classList.remove('active');
         } else {
@@ -616,6 +669,7 @@
         while (true) {
             await wait(MAIN_DASHBOARD_DURATION);
             await showPortalActivity();
+            await showAircraftTraffic();
             await showGeographicDeepDiveBatch();
             await showCustomerFocus();
             await showAerospaceFact();

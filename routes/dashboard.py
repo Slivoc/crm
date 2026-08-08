@@ -290,6 +290,118 @@ def _tv_geographic_deepdives(conn, limit=12):
     return _group_tv_geographic_deepdives(rows)
 
 
+def _empty_tv_aircraft_traffic():
+    return {
+        'period_days': 30,
+        'summary': {
+            'flight_count': 0,
+            'aircraft_count': 0,
+            'customer_count': 0,
+            'estimated_flight_hours': 0,
+        },
+        'aircraft_types': [],
+        'customers': [],
+        'aircraft': [],
+    }
+
+
+def _tv_aircraft_traffic(conn):
+    """Return a compact 30-day FlightRadar snapshot for the TV rotation."""
+    try:
+        row = conn.execute('''
+            WITH recent_flights AS MATERIALIZED (
+                SELECT f.customer_id,
+                       c.name AS customer_name,
+                       NULLIF(TRIM(f.registration), '') AS registration,
+                       NULLIF(TRIM(f.aircraft_type), '') AS aircraft_type,
+                       COALESCE(f.estimated_flight_hours, 0) AS estimated_flight_hours
+                FROM customer_flightradar_flights f
+                JOIN customers c ON c.id = f.customer_id
+                WHERE COALESCE(f.first_seen, f.datetime_takeoff, f.created_at)
+                      >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+            ), aircraft_types AS (
+                SELECT COALESCE(aircraft_type, 'Unknown type') AS name,
+                       COUNT(*) AS flight_count,
+                       COUNT(DISTINCT registration) AS aircraft_count,
+                       COALESCE(SUM(estimated_flight_hours), 0) AS estimated_flight_hours
+                FROM recent_flights
+                GROUP BY COALESCE(aircraft_type, 'Unknown type')
+                ORDER BY estimated_flight_hours DESC, flight_count DESC, name
+                LIMIT 6
+            ), top_customers AS (
+                SELECT customer_id,
+                       customer_name AS name,
+                       COUNT(*) AS flight_count,
+                       COUNT(DISTINCT registration) AS aircraft_count,
+                       COALESCE(SUM(estimated_flight_hours), 0) AS estimated_flight_hours
+                FROM recent_flights
+                GROUP BY customer_id, customer_name
+                ORDER BY estimated_flight_hours DESC, flight_count DESC, name
+                LIMIT 6
+            ), top_aircraft AS (
+                SELECT registration AS name,
+                       MAX(aircraft_type) AS aircraft_type,
+                       STRING_AGG(DISTINCT customer_name, ', ' ORDER BY customer_name) AS customer_name,
+                       COUNT(*) AS flight_count,
+                       COALESCE(SUM(estimated_flight_hours), 0) AS estimated_flight_hours
+                FROM recent_flights
+                WHERE registration IS NOT NULL
+                GROUP BY registration
+                ORDER BY estimated_flight_hours DESC, flight_count DESC, name
+                LIMIT 6
+            )
+            SELECT COUNT(*) AS flight_count,
+                   COUNT(DISTINCT registration) AS aircraft_count,
+                   COUNT(DISTINCT customer_id) AS customer_count,
+                   COALESCE(SUM(estimated_flight_hours), 0) AS estimated_flight_hours,
+                   COALESCE((
+                       SELECT JSONB_AGG(TO_JSONB(item) ORDER BY item.estimated_flight_hours DESC,
+                                                               item.flight_count DESC, item.name)
+                       FROM aircraft_types item
+                   ), '[]'::jsonb) AS aircraft_types,
+                   COALESCE((
+                       SELECT JSONB_AGG(TO_JSONB(item) ORDER BY item.estimated_flight_hours DESC,
+                                                               item.flight_count DESC, item.name)
+                       FROM top_customers item
+                   ), '[]'::jsonb) AS customers,
+                   COALESCE((
+                       SELECT JSONB_AGG(TO_JSONB(item) ORDER BY item.estimated_flight_hours DESC,
+                                                               item.flight_count DESC, item.name)
+                       FROM top_aircraft item
+                   ), '[]'::jsonb) AS aircraft
+            FROM recent_flights
+        ''').fetchone()
+    except Exception:
+        # FlightRadar is an optional integration. A missing migration or a
+        # temporary query failure must never take the main office TV offline.
+        conn.rollback()
+        logging.getLogger(__name__).warning(
+            'Aircraft traffic TV slide is unavailable; check the FlightRadar tables.'
+        )
+        return _empty_tv_aircraft_traffic()
+
+    if not row:
+        return _empty_tv_aircraft_traffic()
+
+    result = _empty_tv_aircraft_traffic()
+    item = dict(row)
+    result['summary'] = {
+        'flight_count': int(item.get('flight_count') or 0),
+        'aircraft_count': int(item.get('aircraft_count') or 0),
+        'customer_count': int(item.get('customer_count') or 0),
+        'estimated_flight_hours': float(item.get('estimated_flight_hours') or 0),
+    }
+    for key in ('aircraft_types', 'customers', 'aircraft'):
+        value = item.get(key) or []
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                value = []
+        result[key] = value
+    return result
+
+
 def _tv_payload(conn):
     """Build the read-only snapshot used by the office TV presentation."""
     now = datetime.now()
@@ -534,6 +646,7 @@ def _tv_payload(conn):
             'searches': [dict(row) for row in portal_searches],
             'quote_requests': [dict(row) for row in portal_quote_requests],
         },
+        'aircraft_traffic': _tv_aircraft_traffic(conn),
         'geographic_deepdives': _tv_geographic_deepdives(conn),
         'employee': employee,
         'aerospace_facts': _tv_facts(conn),
