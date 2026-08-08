@@ -4,11 +4,56 @@ import re
 import os
 from openai import OpenAI
 from db import execute as db_execute, db_cursor
-from models import (get_countries_by_continent, get_all_deepdives, get_customer_links_for_deepdive, add_customer_link_to_deepdive, remove_customer_link_from_deepdive,
+from models import (get_countries_by_continent, get_all_deepdives, get_deepdive_customer_summaries, get_customer_links_for_deepdive, add_customer_link_to_deepdive, remove_customer_link_from_deepdive,
                     get_deepdive_by_id, create_deepdive, update_deepdive, delete_deepdive,
                     get_all_tags_flat, get_all_countries, get_country_customers_by_tag,
                     match_companies_to_customers, get_curated_customers_for_deepdive, add_customer_to_deepdive, remove_customer_from_deepdive, update_customer_notes_in_deepdive, search_customers_for_deepdive, get_country_name)
 geo_deepdive_bp = Blueprint('geo_deepdive', __name__)
+
+
+def _deepdive_card_summary(content, limit=280):
+    """Extract a short plain-text market overview from an AI-authored Markdown deep dive."""
+    content = str(content or '').replace('\r\n', '\n').replace('\r', '\n')
+    lines = content.split('\n')
+    preferred_heading = re.compile(
+        r"^#{1,6}\s*(?:what(?:'|’)s big here|overview|market summary|executive summary)\s*$",
+        re.IGNORECASE,
+    )
+    start = next((index + 1 for index, line in enumerate(lines) if preferred_heading.match(line.strip())), 0)
+    candidates = lines[start:] if start else lines
+    summary_lines = []
+    for line in candidates:
+        stripped = line.strip()
+        if not stripped or stripped == '---':
+            if summary_lines:
+                break
+            continue
+        if stripped.startswith('#'):
+            if summary_lines:
+                break
+            continue
+        if re.match(r'^[-*]\s+', stripped):
+            if summary_lines:
+                break
+            continue
+        summary_lines.append(stripped)
+
+    if not summary_lines and start:
+        for line in lines:
+            stripped = line.strip()
+            if (stripped and stripped != '---' and not stripped.startswith('#')
+                    and not re.match(r'^[-*]\s+', stripped)):
+                summary_lines.append(stripped)
+                break
+    summary = ' '.join(summary_lines)
+    summary = re.sub(r'!\[[^]]*]\([^)]*\)', '', summary)
+    summary = re.sub(r'\[([^]]+)]\([^)]*\)', r'\1', summary)
+    summary = re.sub(r'[*_`>#]', '', summary)
+    summary = re.sub(r'\s+', ' ', summary).strip(' -–')
+    if len(summary) <= limit:
+        return summary
+    shortened = summary[:limit + 1].rsplit(' ', 1)[0].rstrip(' ,;:-')
+    return f'{shortened}…'
 
 
 def _using_postgres():
@@ -32,13 +77,19 @@ def list_deepdives():
     """List all geographic deep dives"""
     deepdives_raw = get_all_deepdives()
 
-    # Convert row objects to dictionaries and add country names
+    customer_summaries = get_deepdive_customer_summaries(
+        [row['id'] for row in deepdives_raw]
+    )
+
+    # Convert row objects to dictionaries and add card summary data.
     deepdives = []
     for deepdive_row in deepdives_raw:
         # Convert row to dict (SQLite row or Postgres dict-row)
         deepdive = dict(deepdive_row)
         # Add country name
         deepdive['country_name'] = get_country_name(deepdive['country'])
+        deepdive['summary'] = _deepdive_card_summary(deepdive.get('content'))
+        deepdive['main_companies'] = customer_summaries.get(deepdive['id'], [])
         deepdives.append(deepdive)
 
     # Add breadcrumbs

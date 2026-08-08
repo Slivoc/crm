@@ -208,6 +208,28 @@ def _tv_payload(conn):
         ORDER BY fo.first_order_date DESC, c.name
         LIMIT 5
     ''').fetchall()
+    customer_focus = conn.execute('''
+        SELECT c.id, c.name, c.logo_url, c.country,
+               s.name AS salesperson_name,
+               cs.status AS customer_status,
+               COALESCE(SUM(so.total_value), 0) AS spend_90d,
+               COUNT(*) AS order_count_90d,
+               MAX(so.date_entered) AS last_order_date,
+               (ARRAY_AGG(so.sales_order_ref ORDER BY so.date_entered DESC, so.id DESC))[1]
+                   AS last_order_ref
+        FROM sales_orders so
+        JOIN customers c ON c.id = so.customer_id
+        LEFT JOIN salespeople s ON s.id = c.salesperson_id
+        LEFT JOIN customer_status cs ON cs.id = c.status_id
+        LEFT JOIN sales_statuses ss ON ss.id = so.sales_status_id
+        WHERE so.date_entered >= CURRENT_DATE - INTERVAL '90 days'
+          AND COALESCE(so.total_value, 0) > 0
+          AND COALESCE(ss.status_name, '') <> 'Cancelled'
+        GROUP BY c.id, c.name, c.logo_url, c.country, s.name, cs.status
+        HAVING SUM(so.total_value) > 0
+        ORDER BY MAX(so.date_entered) DESC, SUM(so.total_value) DESC
+        LIMIT 100
+    ''').fetchall()
     news = conn.execute('''
         WITH ranked_customer_articles AS (
             SELECT acm.article_id, acm.customer_id,
@@ -303,6 +325,7 @@ def _tv_payload(conn):
         'biggest_non_dave_orders': [dict(row) for row in biggest_non_dave_orders],
         'highest_spending_customers': [dict(row) for row in highest_spending_customers],
         'new_customers': [dict(row) for row in new_customers],
+        'customer_focus': [dict(row) for row in customer_focus],
         'news': news_items,
         'portal_activity': {
             'searches': [dict(row) for row in portal_searches],

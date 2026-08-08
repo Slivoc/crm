@@ -7,6 +7,7 @@
     let shownStoryIds = new Set();
     let extendedBatchActive = false;
     let lastFactId = null;
+    let lastFocusCustomerId = null;
     let manualFactMode = false;
     let manualFactIndex = -1;
     let storyScrollTimer;
@@ -16,6 +17,7 @@
     let todayHeadlinesTimer;
     const MAIN_DASHBOARD_DURATION = 45000;
     const PORTAL_ACTIVITY_DURATION = 16000;
+    const CUSTOMER_FOCUS_DURATION = 16000;
     const EXTENDED_STORIES_PER_CYCLE = 5;
     const el = id => document.getElementById(id);
     const text = (id, value) => { if (el(id)) el(id).textContent = value; };
@@ -275,8 +277,50 @@
 
     function sceneIsActive() {
         if (extendedBatchActive) return true;
-        return ['storyScreen', 'newsIntroScreen', 'portalScreen', 'headlineScreen', 'todayHeadlinesScreen', 'factScreen']
+        return ['storyScreen', 'newsIntroScreen', 'portalScreen', 'headlineScreen', 'todayHeadlinesScreen', 'customerFocusScreen', 'factScreen']
             .some(id => el(id).classList.contains('active'));
+    }
+
+    async function showCustomerFocus() {
+        const customers = data.customer_focus || [];
+        if (!customers.length || sceneIsActive()) return false;
+        let choices = customers.filter(item => item.id !== lastFocusCustomerId);
+        if (!choices.length) choices = customers;
+        const item = choices[Math.floor(Math.random() * choices.length)];
+        lastFocusCustomerId = item.id;
+
+        text('focusCustomerName', item.name || 'Customer');
+        text('focusCustomerCountry', item.country || 'International');
+        text('focusCustomerStatus', item.customer_status || 'Customer');
+        text('focusCustomerOwner', item.salesperson_name ? `Account owner · ${item.salesperson_name}` : 'MGC customer relationship');
+        text('focusCustomerSpend', money.format(Number(item.spend_90d || 0)));
+        text('focusCustomerOrders', Number(item.order_count_90d || 0).toLocaleString());
+        text('focusCustomerLastOrder', item.last_order_ref || 'Recent order');
+        text('focusCustomerLastDate', item.last_order_date ? new Date(item.last_order_date).toLocaleDateString([], {day:'2-digit', month:'long', year:'numeric'}) : 'Within the last 90 days');
+        text('focusCustomerPosition', `${customers.length} eligible customer${customers.length === 1 ? '' : 's'}`);
+
+        const logo = el('focusCustomerLogo');
+        const initial = el('focusCustomerInitial');
+        initial.textContent = (item.name || '?').charAt(0).toUpperCase();
+        logo.style.display = item.logo_url ? 'block' : 'none';
+        initial.style.display = item.logo_url ? 'none' : '';
+        logo.onerror = () => { logo.style.display = 'none'; initial.style.display = ''; };
+        logo.src = item.logo_url || '';
+
+        el('sceneWipe').classList.add('active');
+        await wait(450);
+        if (manualFactMode) return false;
+        el('customerFocusScreen').classList.add('active');
+        await wait(600);
+        el('sceneWipe').classList.remove('active');
+        await wait(CUSTOMER_FOCUS_DURATION);
+        if (manualFactMode) return true;
+        el('sceneWipe').classList.add('active');
+        await wait(450);
+        el('customerFocusScreen').classList.remove('active');
+        await wait(600);
+        el('sceneWipe').classList.remove('active');
+        return true;
     }
 
     function renderAerospaceFact(item) {
@@ -387,7 +431,7 @@
             clearInterval(storyScrollTimer);
             clearTimeout(headlineTimer);
             clearTimeout(todayHeadlinesTimer);
-            ['storyScreen', 'newsIntroScreen', 'portalScreen', 'headlineScreen', 'todayHeadlinesScreen']
+            ['storyScreen', 'newsIntroScreen', 'portalScreen', 'headlineScreen', 'todayHeadlinesScreen', 'customerFocusScreen']
                 .forEach(id => el(id).classList.remove('active'));
             el('sceneWipe').classList.remove('active');
         } else {
@@ -425,6 +469,7 @@
         while (true) {
             await wait(MAIN_DASHBOARD_DURATION);
             await showPortalActivity();
+            await showCustomerFocus();
             await showAerospaceFact();
             await showExtendedStoryBatch();
         }

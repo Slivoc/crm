@@ -3246,6 +3246,28 @@ def get_all_deepdives():
         db.close()
 
 
+def get_deepdive_customer_summaries(deepdive_ids):
+    """Return the ordered curated companies and CRM statuses for many deep dives."""
+    deepdive_ids = [int(value) for value in deepdive_ids if value is not None]
+    if not deepdive_ids:
+        return {}
+    placeholders = ','.join('?' for _ in deepdive_ids)
+    rows = db_execute(f"""
+        SELECT dcc.deepdive_id, c.id, c.name, cs.status,
+               dcc.order_index
+        FROM deepdive_curated_customers dcc
+        JOIN customers c ON c.id = dcc.customer_id
+        LEFT JOIN customer_status cs ON cs.id = c.status_id
+        WHERE dcc.deepdive_id IN ({placeholders})
+        ORDER BY dcc.deepdive_id, dcc.order_index, c.name
+    """, deepdive_ids, fetch="all") or []
+    grouped = {deepdive_id: [] for deepdive_id in deepdive_ids}
+    for row in rows:
+        item = dict(row)
+        grouped.setdefault(item['deepdive_id'], []).append(item)
+    return grouped
+
+
 def get_deepdive_by_id(deepdive_id):
     """Get a specific geographic deep dive"""
     db = get_db_connection()

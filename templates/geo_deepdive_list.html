@@ -2,98 +2,101 @@
 {% block title %}Geographic Deep Dives{% endblock %}
 
 {% block customer_discovery_content %}
-<!-- templates/geo_deepdive_list.html -->
 <div class="container-fluid">
-    <div class="row">
-        <div class="col-12">
-            <div class="d-flex justify-content-between align-items-center mb-4">
-                <h2 class="fw-bold mb-1">Geographic Deep Dives</h2>
-                <a href="{{ url_for('geo_deepdive.new_deepdive') }}" class="btn btn-primary">
-                    <i class="fas fa-plus"></i> New Deep Dive
-                </a>
-            </div>
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+        <div>
+            <h2 class="fw-bold mb-1">Geographic Deep Dives</h2>
+            <p class="text-muted mb-0">Market summaries and the main CRM companies for each geographic focus.</p>
+        </div>
+        <a href="{{ url_for('geo_deepdive.new_deepdive') }}" class="btn btn-primary">
+            <i class="fas fa-plus me-1"></i> New Deep Dive
+        </a>
+    </div>
 
-            {% if deepdives %}
-            <div class="card">
-                <div class="card-body table-container">
-                    <div class="table-responsive">
-                        <table class="table table-hover">
-                            <thead>
-                                <tr>
-                                    <th>Country</th>
-                                    <th>Focus Area</th>
-                                    <th>Title</th>
-                                    <th>Updated</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for deepdive in deepdives %}
-                                <tr>
-                                    <td>
-                                        <span class="badge bg-primary text-white">{{ deepdive.country_name or deepdive.country }}</span>
-                                    </td>
-                                    <td>{{ deepdive.tag_description or 'Unknown' }}</td>
-                                    <td>
-                                        <a href="{{ url_for('geo_deepdive.view_deepdive', deepdive_id=deepdive.id) }}">
-                                            {{ deepdive.title }}
-                                        </a>
-                                    </td>
-                                    <td>{{ deepdive.updated_at }}</td>
-                                    <td>
-                                        <div class="btn-group btn-group-sm">
-                                            <a href="{{ url_for('geo_deepdive.view_deepdive', deepdive_id=deepdive.id) }}"
-                                               class="btn btn-outline-primary">
-                                                <i class="fas fa-eye"></i>
-                                            </a>
-                                            <a href="{{ url_for('geo_deepdive.edit_deepdive', deepdive_id=deepdive.id) }}"
-                                               class="btn btn-outline-secondary">
-                                                <i class="fas fa-edit"></i>
-                                            </a>
-                                            <button type="button" class="btn btn-danger"
-                                                    onclick="confirmDelete({{ deepdive.id }})">
-                                                <i class="fas fa-trash"></i>
-                                            </button>
-                                        </div>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
+    {% if deepdives %}
+    <div class="row g-4">
+        {% for deepdive in deepdives %}
+        <div class="col-12 col-xl-6">
+            <article class="card border-0 shadow-sm h-100">
+                <div class="card-body p-4 d-flex flex-column">
+                    <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+                        <div>
+                            <div class="d-flex flex-wrap gap-2 mb-2">
+                                <span class="badge bg-primary">{{ deepdive.country_name or deepdive.country }}</span>
+                                <span class="badge bg-light text-dark border">{{ deepdive.tag_description or 'Unknown focus' }}</span>
+                            </div>
+                            <h4 class="h5 mb-0">
+                                <a class="text-decoration-none" href="{{ url_for('geo_deepdive.view_deepdive', deepdive_id=deepdive.id) }}">{{ deepdive.title }}</a>
+                            </h4>
+                        </div>
+                        <small class="text-muted text-nowrap" title="Last updated">{{ deepdive.updated_at.strftime('%d %b %Y') if deepdive.updated_at and deepdive.updated_at.strftime is defined else deepdive.updated_at }}</small>
+                    </div>
+
+                    <p class="text-secondary mb-4">{{ deepdive.summary or 'Open this deep dive to review its market analysis and opportunities.' }}</p>
+
+                    <div class="border rounded bg-light-subtle p-3 mb-4">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h5 class="h6 mb-0">Main companies</h5>
+                            <span class="badge bg-secondary-subtle text-secondary-emphasis">{{ deepdive.main_companies|length }}</span>
+                        </div>
+                        {% if deepdive.main_companies %}
+                        <div class="vstack gap-2">
+                            {% for company in deepdive.main_companies[:6] %}
+                            {% set status = (company.status or 'No status') %}
+                            {% set status_key = status|lower %}
+                            <div class="d-flex justify-content-between align-items-center gap-3">
+                                <a class="small fw-semibold text-dark text-decoration-none text-truncate" href="{{ url_for('customers.get_customer_details', customer_id=company.id) }}">{{ company.name }}</a>
+                                <span class="badge rounded-pill flex-shrink-0
+                                    {%- if 'active' in status_key or 'engaged' in status_key or 'qualified' in status_key %} bg-success
+                                    {%- elif 'lost' in status_key or 'reject' in status_key %} bg-danger
+                                    {%- elif 'initial' in status_key or 'contact' in status_key %} bg-info text-dark
+                                    {%- elif 'target' in status_key or 'prospect' in status_key %} bg-primary
+                                    {%- else %} bg-secondary{% endif %}">{{ status }}</span>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% if deepdive.main_companies|length > 6 %}
+                        <div class="small text-muted mt-2">+ {{ deepdive.main_companies|length - 6 }} more in the full deep dive</div>
+                        {% endif %}
+                        {% else %}
+                        <p class="small text-muted mb-0">No curated companies have been added yet.</p>
+                        {% endif %}
+                    </div>
+
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-auto">
+                        <a href="{{ url_for('geo_deepdive.view_deepdive', deepdive_id=deepdive.id) }}" class="btn btn-primary btn-sm">
+                            Open deep dive <i class="fas fa-arrow-right ms-1"></i>
+                        </a>
+                        <div class="btn-group btn-group-sm">
+                            <a href="{{ url_for('geo_deepdive.edit_deepdive', deepdive_id=deepdive.id) }}" class="btn btn-outline-secondary" title="Edit"><i class="fas fa-edit"></i></a>
+                            <button type="button" class="btn btn-outline-danger" onclick="confirmDelete({{ deepdive.id }})" title="Delete"><i class="fas fa-trash"></i></button>
+                        </div>
                     </div>
                 </div>
-            </div>
-            {% else %}
-            <div class="alert alert-info">
-                <h4>No Deep Dives Yet</h4>
-                <p>You haven't created any geographic deep dives yet.</p>
-                <a href="{{ url_for('geo_deepdive.new_deepdive') }}" class="btn btn-primary">
-                    Create Your First Deep Dive
-                </a>
-            </div>
-            {% endif %}
+            </article>
         </div>
+        {% endfor %}
     </div>
+    {% else %}
+    <div class="alert alert-info">
+        <h4>No Deep Dives Yet</h4>
+        <p>You haven't created any geographic deep dives yet.</p>
+        <a href="{{ url_for('geo_deepdive.new_deepdive') }}" class="btn btn-primary">Create Your First Deep Dive</a>
+    </div>
+    {% endif %}
 </div>
 
-<!-- Delete Confirmation Modal -->
-<div class="modal fade" id="deleteModal" tabindex="-1">
+<div class="modal fade" id="deleteModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title">Confirm Delete</h5>
-                <button type="button" class="close" data-dismiss="modal">
-                    <span>&times;</span>
-                </button>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
-            <div class="modal-body">
-                Are you sure you want to delete this deep dive? This action cannot be undone.
-            </div>
+            <div class="modal-body">Are you sure you want to delete this deep dive? This action cannot be undone.</div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
-                <form method="POST" style="display: inline;" id="deleteForm">
-                    <button type="submit" class="btn btn-danger">Delete</button>
-                </form>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form method="post" id="deleteForm"><button type="submit" class="btn btn-danger">Delete</button></form>
             </div>
         </div>
     </div>
@@ -102,7 +105,7 @@
 <script>
 function confirmDelete(deepdiveId) {
     document.getElementById('deleteForm').action = `/geographic-deepdives/${deepdiveId}/delete`;
-    $('#deleteModal').modal('show');
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('deleteModal')).show();
 }
 </script>
 {% endblock %}
