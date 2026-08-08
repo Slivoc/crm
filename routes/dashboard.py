@@ -82,15 +82,44 @@ def _tv_employee(conn):
 
 def _tv_facts(conn, status='approved'):
     rows = conn.execute('''
-        SELECT id, topic, title, subtitle, facts,
+        SELECT id, topic, title, subtitle, facts, status, image_query,
                CASE WHEN image_file_path <> ''
                     THEN '/dashboard/tv/facts/image/' || id
                     ELSE image_url END AS image_url,
-               image_credit, source_urls
+               image_credit, image_source, image_source_url, image_attribution,
+               source_urls, approved_by, created_at, updated_at
         FROM office_dashboard_facts
         WHERE status = ?
         ORDER BY updated_at DESC, id DESC
     ''', (status,)).fetchall()
+    facts = []
+    for row in rows:
+        item = dict(row)
+        for field in ('facts', 'source_urls'):
+            value = item.get(field)
+            if isinstance(value, str):
+                try:
+                    value = json.loads(value)
+                except json.JSONDecodeError:
+                    value = []
+            item[field] = value or []
+        facts.append(item)
+    return facts
+
+
+def _previously_approved_tv_facts(conn):
+    """Return slides removed from rotation after having been approved."""
+    rows = conn.execute('''
+        SELECT id, topic, title, subtitle, facts, status, image_query,
+               CASE WHEN image_file_path <> ''
+                    THEN '/dashboard/tv/facts/image/' || id
+                    ELSE image_url END AS image_url,
+               image_credit, image_source, image_source_url, image_attribution,
+               source_urls, approved_by, created_at, updated_at
+        FROM office_dashboard_facts
+        WHERE status = 'archived' AND approved_by IS NOT NULL
+        ORDER BY updated_at DESC, id DESC
+    ''').fetchall()
     facts = []
     for row in rows:
         item = dict(row)
@@ -310,6 +339,7 @@ def tv_control():
     try:
         payload = _tv_payload(conn)
         draft_facts = _tv_facts(conn, 'draft')
+        previously_approved_facts = _previously_approved_tv_facts(conn)
         cached_briefings = conn.execute('''
             SELECT article_id, created_at
             FROM news_ai_summaries
@@ -332,6 +362,7 @@ def tv_control():
         updated_at=payload['updated_at'],
         approved_facts=payload['aerospace_facts'],
         draft_facts=draft_facts,
+        previously_approved_facts=previously_approved_facts,
     )
 
 
@@ -389,10 +420,40 @@ def _commons_image_candidates(image_query):
     response = requests.get(COMMONS_API_URL, params={
         'action': 'query', 'generator': 'search', 'gsrsearch': image_query,
         'gsrnamespace': 6, 'gsrlimit': 12, 'prop': 'imageinfo',
-        'iiprop': 'url|size|mime|extmetadata', 'format': 'json', 'formatversion': 2,
+        'iiprop': 'url|size|mime|extmetadata', 'iiurlwidth': 1920,
+        'format': 'json', 'formatversion': 2,
     }, headers={'User-Agent': 'SprouttCRM/1.0 (office TV image retrieval)'}, timeout=12)
     response.raise_for_status()
     return (response.json().get('query') or {}).get('pages') or []
+
+
+def _commons_image_by_page_id(page_id):
+    """Resolve a selection server-side rather than trusting a browser-supplied URL."""
+    response = requests.get(COMMONS_API_URL, params={
+        'action': 'query', 'pageids': page_id, 'prop': 'imageinfo',
+        'iiprop': 'url|size|mime|extmetadata', 'iiurlwidth': 1920,
+        'format': 'json', 'formatversion': 2,
+    }, headers={'User-Agent': 'SprouttCRM/1.0 (office TV image retrieval)'}, timeout=12)
+    response.raise_for_status()
+    pages = (response.json().get('query') or {}).get('pages') or []
+    return pages[0] if pages else None
+
+
+def _commons_image_metadata(candidate):
+    info = (candidate.get('imageinfo') or [{}])[0]
+    metadata = info.get('extmetadata') or {}
+    author = _plain_metadata((metadata.get('Artist') or {}).get('value'))[:300]
+    licence = _plain_metadata((metadata.get('LicenseShortName') or {}).get('value'))[:120]
+    attribution = _plain_metadata((metadata.get('Attribution') or {}).get('value'))[:500]
+    if not attribution:
+        attribution = ', '.join(value for value in (author, licence, 'Wikimedia Commons') if value)
+    return info, {
+        'image_source': 'Wikimedia Commons',
+        'image_source_url': info.get('descriptionurl') or info.get('url') or '',
+        'image_author': author,
+        'image_license': licence,
+        'image_attribution': attribution,
+    }
 
 
 def _commons_match(candidate, image_query, specific_subject=False):
@@ -615,6 +676,85 @@ Prefer manufacturer, museum, government and reputable reference sources. Every c
         conn.rollback()
         current_app.logger.exception('Unable to generate TV aerospace fact for %s', topic)
         return jsonify({'error': 'The slide could not be generated'}), 502
+    finally:
+        conn.close()
+
+
+@dashboard_bp.route('/tv/facts/images/search')
+@login_required
+def search_tv_fact_images():
+    """Return reviewable, landscape Wikimedia Commons choices for a fact slide."""
+    if not _require_tv_admin():
+        return jsonify({'error': 'Administrator access required'}), 403
+    query = str(request.args.get('q') or '').strip()[:180]
+    if not query:
+        return jsonify({'error': 'Enter an image search'}), 400
+    try:
+        results = []
+        for candidate in _commons_image_candidates(query):
+            match = _commons_match(candidate, query, False)
+            if not match:
+                continue
+            info, image = _commons_image_metadata(candidate)
+            results.append({
+                'page_id': candidate.get('pageid'),
+                'title': re.sub(r'^File:', '', candidate.get('title') or '', flags=re.I),
+                'preview_url': info.get('thumburl') or info.get('url'),
+                'width': info.get('width'),
+                'height': info.get('height'),
+                'credit': image['image_attribution'],
+                'source_url': image['image_source_url'],
+            })
+        return jsonify({'images': results})
+    except Exception:
+        current_app.logger.exception('Unable to search Commons for TV fact image %s', query)
+        return jsonify({'error': 'Image search is temporarily unavailable'}), 502
+
+
+@dashboard_bp.route('/tv/facts/<int:fact_id>/image', methods=['POST'])
+@login_required
+def select_tv_fact_image(fact_id):
+    """Cache an administrator-selected Commons image for preview and TV display."""
+    if not _require_tv_admin():
+        return jsonify({'error': 'Administrator access required'}), 403
+    request_data = request.get_json(silent=True) or {}
+    try:
+        page_id = int(request_data.get('page_id'))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Choose a valid image'}), 400
+
+    conn = get_db()
+    try:
+        fact = conn.execute('SELECT id FROM office_dashboard_facts WHERE id = ?', (fact_id,)).fetchone()
+        if not fact:
+            return jsonify({'error': 'Fact slide not found'}), 404
+        candidate = _commons_image_by_page_id(page_id)
+        if not candidate:
+            return jsonify({'error': 'The selected image is no longer available'}), 404
+        info, image = _commons_image_metadata(candidate)
+        if not _commons_match(candidate, '', False):
+            return jsonify({'error': 'Choose a landscape JPG, PNG or WebP image at least 1200 pixels wide'}), 400
+        image['image_file_path'] = _download_fact_image(
+            info.get('thumburl') or info.get('url'), fact_id, info.get('mime'))
+        conn.execute('''
+            UPDATE office_dashboard_facts SET
+                image_url = '', image_file_path = ?, image_source = ?, image_source_url = ?,
+                image_author = ?, image_license = ?, image_attribution = ?, image_credit = ?,
+                image_retrieved_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ''', (image['image_file_path'], image['image_source'], image['image_source_url'],
+              image['image_author'], image['image_license'], image['image_attribution'],
+              image['image_attribution'][:300], fact_id))
+        conn.commit()
+        return jsonify({
+            'success': True,
+            'image_url': url_for('dashboard.tv_fact_image', fact_id=fact_id),
+            'image_credit': image['image_attribution'],
+        })
+    except Exception:
+        conn.rollback()
+        current_app.logger.exception('Unable to select TV fact image for slide %s', fact_id)
+        return jsonify({'error': 'The selected image could not be saved'}), 502
     finally:
         conn.close()
 

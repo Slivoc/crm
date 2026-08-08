@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from routes.dashboard import (
+    _commons_image_metadata,
     _commons_match,
     _monthly_target_pace,
     _normalise_tv_briefing_fields,
@@ -78,3 +79,22 @@ def test_commons_match_rejects_portrait_and_low_resolution_images():
     }
 
     assert _commons_match(candidate, 'aircraft rivet close up') is None
+
+
+def test_commons_image_metadata_builds_safe_display_credit():
+    candidate = {
+        'imageinfo': [{
+            'url': 'https://upload.wikimedia.org/example.jpg',
+            'descriptionurl': 'https://commons.wikimedia.org/wiki/File:Example.jpg',
+            'extmetadata': {
+                'Artist': {'value': '<b>Example Photographer</b>'},
+                'LicenseShortName': {'value': 'CC BY-SA 4.0'},
+            },
+        }],
+    }
+
+    _, metadata = _commons_image_metadata(candidate)
+
+    assert metadata['image_source'] == 'Wikimedia Commons'
+    assert metadata['image_source_url'].startswith('https://commons.wikimedia.org/')
+    assert metadata['image_attribution'] == 'Example Photographer, CC BY-SA 4.0, Wikimedia Commons'
