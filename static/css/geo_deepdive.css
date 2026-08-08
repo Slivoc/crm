@@ -545,6 +545,51 @@
 
 .organisation-role { min-height: 2.8em; margin: 1rem 0; color: #4c5d66; font-size: .8rem; line-height: 1.5; }
 
+.organisation-size-signals {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr) auto;
+    gap: .65rem;
+    align-items: center;
+    margin-bottom: .75rem;
+    padding: .7rem .75rem;
+    background: #f5f8f7;
+    border: 1px solid #e3e9e7;
+}
+
+.organisation-size-signals > span > small {
+    display: block;
+    margin-bottom: .18rem;
+    color: var(--geo-muted);
+    font-size: .6rem;
+    font-weight: 800;
+    letter-spacing: .055em;
+    text-transform: uppercase;
+}
+
+.organisation-size-signals > span > strong { color: var(--geo-ink); font-size: .8rem; }
+.scale-signals { display: flex; flex-wrap: wrap; gap: .25rem .55rem; }
+.scale-signals > span { white-space: nowrap; }
+.scale-signals i { margin-right: .15rem; color: var(--geo-teal); }
+.scale-signals .size-missing { color: var(--geo-muted); font-weight: 500; }
+.mro-score-inline { display: block; margin-top: .2rem; color: var(--geo-muted); font-size: .66rem; white-space: nowrap; }
+
+.size-enrich-button {
+    display: inline-flex;
+    align-items: center;
+    gap: .3rem;
+    padding: .38rem .5rem;
+    color: var(--geo-teal);
+    background: #fff;
+    border: 1px solid #b9d9d1;
+    border-radius: 3px;
+    font-size: .68rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.size-enrich-button:hover { background: var(--geo-teal-soft); }
+.size-enrich-button:disabled { cursor: wait; opacity: .62; }
+
 .relationship-block {
     display: grid;
     grid-template-columns: minmax(115px, .8fr) minmax(0, 1.2fr);
@@ -596,7 +641,7 @@
 .focus-table th:nth-child(4) { width: 12%; }
 .focus-table th:nth-child(5) { width: 39%; }
 .notes-cell { min-width: 260px; }
-.row-actions { width: 80px; white-space: nowrap; }
+.row-actions { width: 112px; white-space: nowrap; }
 .table-empty { padding: 1.6rem; color: var(--geo-muted); text-align: center; }
 .segment-table-wrap { max-height: 560px; overflow-y: auto; }
 .segment-table-wrap thead { position: sticky; top: 0; z-index: 2; }
@@ -804,4 +849,6 @@
     .hero-actions .btn { width: 100%; }
     .relationship-block { grid-template-columns: 1fr; }
     .relationship-block .relationship-label { grid-row: auto; }
+    .organisation-size-signals { grid-template-columns: 1fr 1fr; }
+    .size-enrich-button { grid-column: 1 / -1; justify-content: center; }
 }

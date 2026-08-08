@@ -12,11 +12,17 @@
 </button>
 {%- endmacro %}
 
+{% macro company_scale(customer) -%}
+{% if customer.fleet_size is not none %}<span><i class="bi bi-airplane"></i> Fleet {{ '{:,}'.format(customer.fleet_size) }}</span>{% endif %}
+{% if customer.mro_score is not none %}<span><i class="bi bi-tools"></i> MRO {{ customer.mro_score }}/100</span>{% endif %}
+{% if customer.fleet_size is none and customer.mro_score is none %}<span class="size-missing">Scale not researched</span>{% endif %}
+{%- endmacro %}
+
 {% block title %}{{ deepdive.title }}{% endblock %}
 
 {% block extra_css %}
 {{ super() }}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/geo_deepdive.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/geo_deepdive.css') }}?v=20260808-1">
 {% endblock %}
 
 {% block content %}
@@ -78,9 +84,9 @@
             <small>{{ company_summary.matched_count }} of {{ company_summary.total }} market records</small>
         </article>
         <article class="coverage-metric">
-            <span class="metric-label">CRM records in segment</span>
-            <strong>{{ country_customers|length }}</strong>
-            <small>{{ deepdive.country_name }} / {{ deepdive.tag_description or 'Aviation' }}</small>
+            <span class="metric-label">Known est. revenue</span>
+            <strong>{{ '£{:,.0f}'.format(company_summary.estimated_revenue) if company_summary.revenue_company_count else '—' }}</strong>
+            <small>{{ company_summary.sized_count }} of {{ company_summary.total }} mapped organisations sized</small>
         </article>
         <article class="coverage-metric {% if company_summary.unmatched_main %}coverage-metric-alert{% endif %}">
             <span class="metric-label">Priority coverage gaps</span>
@@ -88,9 +94,9 @@
             <small>{{ company_summary.suggested_count }} possible CRM {{ 'match' if company_summary.suggested_count == 1 else 'matches' }}</small>
         </article>
         <article class="coverage-metric">
-            <span class="metric-label">Focus accounts</span>
-            <strong>{{ curated_customers|length }}</strong>
-            <small>Manually curated for follow-up</small>
+            <span class="metric-label">CRM records in segment</span>
+            <strong>{{ country_customers|length }}</strong>
+            <small>{{ curated_customers|length }} manually selected focus accounts</small>
         </article>
     </section>
 
@@ -264,6 +270,16 @@
 
                         <p class="organisation-role">{{ company.role_summary or 'No role summary has been recorded yet.' }}</p>
 
+                        {% if company.matched_customer_id %}
+                        <div class="organisation-size-signals">
+                            <span><small>Est. revenue</small><strong>{{ '£{:,.0f}'.format(company.estimated_revenue) if company.estimated_revenue else '—' }}</strong></span>
+                            <span><small>Operating scale</small><strong class="scale-signals">{{ company_scale(company) }}</strong></span>
+                            <button type="button" class="size-enrich-button" data-enrich-customer="{{ company.matched_customer_id }}" title="Research revenue, fleet and MRO scale with Perplexity">
+                                <i class="bi bi-stars"></i><span>Research size</span>
+                            </button>
+                        </div>
+                        {% endif %}
+
                         <div class="relationship-block relationship-{{ relationship }}">
                             {% if relationship == 'matched' %}
                             <span class="relationship-label"><i class="bi bi-check2-circle"></i> Confirmed in CRM</span>
@@ -316,8 +332,8 @@
                                 <tr>
                                     <th>Account</th>
                                     <th>Status</th>
-                                    <th>Fleet</th>
-                                    <th>Est. value</th>
+                                    <th>Fleet / MRO</th>
+                                    <th>Est. revenue</th>
                                     <th>Working note</th>
                                     <th><span class="visually-hidden">Actions</span></th>
                                 </tr>
@@ -336,6 +352,7 @@
                                             <input type="number" class="field-input" value="{{ customer.fleet_size or '' }}" min="0" aria-label="Fleet size">
                                             <button type="button" class="edit-field" title="Edit fleet size"><i class="bi bi-pencil"></i></button>
                                         </div>
+                                        {% if customer.mro_score is not none %}<small class="mro-score-inline">MRO {{ customer.mro_score }}/100</small>{% endif %}
                                     </td>
                                     <td>
                                         <div class="editable-field" data-field="estimated_revenue" data-customer-id="{{ customer.id }}">
@@ -352,6 +369,7 @@
                                         </div>
                                     </td>
                                     <td class="row-actions">
+                                        <button type="button" class="icon-button" data-enrich-customer="{{ customer.id }}" title="Research company size with Perplexity"><i class="bi bi-stars"></i></button>
                                         <button type="button" class="icon-button" onclick="showApolloLeadFinder({{ customer.id }})" title="Find contacts"><i class="bi bi-person-search"></i></button>
                                         <button type="button" class="icon-button danger" data-remove-focus-account="{{ customer.id }}" title="Remove from focus accounts"><i class="bi bi-x-lg"></i></button>
                                     </td>
@@ -379,19 +397,20 @@
                     <div class="table-responsive segment-table-wrap">
                         <table class="deepdive-table" id="segmentCustomerTable">
                             <thead>
-                                <tr><th>CRM account</th><th>Status</th><th>Fleet</th><th>Est. value</th><th>Owner</th></tr>
+                                <tr><th>CRM account</th><th>Status</th><th>Fleet / MRO</th><th>Est. revenue</th><th>Owner</th><th><span class="visually-hidden">Actions</span></th></tr>
                             </thead>
                             <tbody>
                                 {% for customer in country_customers %}
                                 <tr data-segment-customer data-search="{{ (customer.name ~ ' ' ~ (customer.status or '') ~ ' ' ~ (customer.assigned_salesperson_name or ''))|lower }}">
                                     <td><a class="account-link" href="{{ url_for('customers.get_customer_details', customer_id=customer.id) }}">{{ customer.name }}</a></td>
                                     <td>{{ status_badge(customer) }}</td>
-                                    <td>{{ customer.fleet_size if customer.fleet_size is not none else '—' }}</td>
+                                    <td><span class="scale-signals">{{ company_scale(customer) }}</span></td>
                                     <td>{{ '£{:,.0f}'.format(customer.estimated_revenue) if customer.estimated_revenue else '—' }}</td>
                                     <td>{{ customer.assigned_salesperson_name or 'Unassigned' }}</td>
+                                    <td class="row-actions"><button type="button" class="icon-button" data-enrich-customer="{{ customer.id }}" title="Research company size with Perplexity"><i class="bi bi-stars"></i></button></td>
                                 </tr>
                                 {% else %}
-                                <tr><td colspan="5"><div class="table-empty">No CRM accounts currently match this country and segment tag.</div></td></tr>
+                                <tr><td colspan="6"><div class="table-empty">No CRM accounts currently match this country and segment tag.</div></td></tr>
                                 {% endfor %}
                             </tbody>
                         </table>
@@ -575,5 +594,5 @@
 
 {% block scripts %}
 {{ super() }}
-<script src="{{ url_for('static', filename='js/geo_deepdive.js') }}"></script>
+<script src="{{ url_for('static', filename='js/geo_deepdive.js') }}?v=20260808-1"></script>
 {% endblock %}

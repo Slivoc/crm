@@ -110,6 +110,9 @@ def test_company_summary_prioritises_main_categories_and_unmatched_companies():
             'is_main': True,
             'matched_customer_id': 1,
             'match_status': 'confirmed',
+            'estimated_revenue': 12000000,
+            'fleet_size': 24,
+            'mro_score': None,
         },
         {
             'company_name': 'Unmatched Air',
@@ -117,6 +120,9 @@ def test_company_summary_prioritises_main_categories_and_unmatched_companies():
             'is_main': True,
             'matched_customer_id': None,
             'match_status': 'unmatched',
+            'estimated_revenue': None,
+            'fleet_size': None,
+            'mro_score': None,
         },
         {
             'company_name': 'Possible MRO',
@@ -124,6 +130,9 @@ def test_company_summary_prioritises_main_categories_and_unmatched_companies():
             'is_main': False,
             'matched_customer_id': 2,
             'match_status': 'suggested',
+            'estimated_revenue': 3000000,
+            'fleet_size': None,
+            'mro_score': 72,
         },
     ])
 
@@ -132,6 +141,9 @@ def test_company_summary_prioritises_main_categories_and_unmatched_companies():
     assert summary['matched_count'] == 1
     assert summary['suggested_count'] == 1
     assert summary['coverage_percent'] == 33
+    assert summary['estimated_revenue'] == 15000000
+    assert summary['revenue_company_count'] == 2
+    assert summary['sized_count'] == 2
     assert summary['unmatched_count'] == 1
     assert [row['company_name'] for row in summary['unmatched_main']] == ['Unmatched Air']
     assert [category['name'] for category in summary['categories']] == ['Operator', 'MRO']

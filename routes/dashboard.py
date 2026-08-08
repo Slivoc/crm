@@ -198,6 +198,16 @@ def _group_tv_geographic_deepdives(rows):
                 row.get('matched_customer_status') or 'Status not set'
                 if row.get('matched_customer_id') else 'Not in CRM'
             ),
+            'estimated_revenue': (
+                float(row['estimated_revenue'])
+                if row.get('estimated_revenue') is not None else None
+            ),
+            'fleet_size': (
+                int(row['fleet_size']) if row.get('fleet_size') is not None else None
+            ),
+            'mro_score': (
+                int(row['mro_score']) if row.get('mro_score') is not None else None
+            ),
             'lifetime_spend': float(row.get('lifetime_spend') or 0),
             'display_order': int(row.get('display_order') or 0),
         })
@@ -227,6 +237,19 @@ def _group_tv_geographic_deepdives(rows):
             for company in companies if company['customer_id']
         }
         deepdive['lifetime_spend'] = sum(spend_by_customer.values())
+        revenue_by_customer = {
+            company['customer_id']: company['estimated_revenue']
+            for company in companies
+            if company['customer_id'] and company['estimated_revenue'] is not None
+        }
+        deepdive['estimated_revenue'] = sum(revenue_by_customer.values())
+        deepdive['revenue_company_count'] = len(revenue_by_customer)
+        deepdive['sized_company_count'] = sum(
+            company['estimated_revenue'] is not None
+            or company['fleet_size'] is not None
+            or company['mro_score'] is not None
+            for company in companies
+        )
         result.append(deepdive)
     return result
 
@@ -269,6 +292,7 @@ def _tv_geographic_deepdives(conn, limit=12):
                gdc.matched_customer_id,
                c.name AS matched_customer_name,
                cs.status AS matched_customer_status,
+               c.estimated_revenue, c.fleet_size, c.mro_score,
                COALESCE(ls.lifetime_spend, 0) AS lifetime_spend
         FROM recent_deepdives rd
         LEFT JOIN industry_tags it ON it.id = rd.tag_id

@@ -21,6 +21,7 @@
     const AIRCRAFT_TRAFFIC_DURATION = 18000;
     const CUSTOMER_FOCUS_DURATION = 16000;
     const DEEPDIVE_DURATION = 16000;
+    const DEEPDIVE_PAGE_DURATION = 6500;
     const DEEPDIVE_SLIDES_PER_CYCLE = 3;
     const DEEPDIVE_COMPANIES_PER_SLIDE = 7;
     const EXTENDED_STORIES_PER_CYCLE = 5;
@@ -333,43 +334,29 @@
     }
 
     function buildDeepDiveSlides() {
-        const slides = [];
-        (data.geographic_deepdives || []).forEach(deepdive => {
+        return (data.geographic_deepdives || []).flatMap(deepdive => {
             const companies = deepdive.companies || [];
-            if (!companies.length) return;
-            const pageCount = Math.ceil(companies.length / DEEPDIVE_COMPANIES_PER_SLIDE);
-            for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
-                const start = pageIndex * DEEPDIVE_COMPANIES_PER_SLIDE;
-                slides.push({
-                    deepdive,
-                    companies: companies.slice(start, start + DEEPDIVE_COMPANIES_PER_SLIDE),
-                    pageIndex,
-                    pageCount,
-                    start,
-                });
-            }
+            if (!companies.length) return [];
+            return [{
+                deepdive,
+                pageCount: Math.ceil(companies.length / DEEPDIVE_COMPANIES_PER_SLIDE),
+            }];
         });
-        return slides;
     }
 
-    function renderDeepDiveSlide(slide, position, totalSlides) {
+    function renderDeepDivePage(slide, pageIndex) {
         const deepdive = slide.deepdive;
-        text('deepDiveTitle', deepdive.title || 'Geographic landscape');
-        text('deepDiveScope', [deepdive.country, deepdive.focus].filter(Boolean).join(' · '));
-        text('deepDiveCompanyCount', Number(deepdive.company_count || 0).toLocaleString());
-        text('deepDiveCoverage', `${Number(deepdive.coverage_percent || 0).toFixed(0)}%`);
-        text('deepDiveGapCount', Number(deepdive.gap_count || 0).toLocaleString());
-        text('deepDiveLifetimeSpend', money.format(Number(deepdive.lifetime_spend || 0)));
-        text('deepDivePosition', `Landscape ${position + 1} of ${totalSlides}`);
-        const firstCompany = slide.start + 1;
-        const lastCompany = slide.start + slide.companies.length;
+        const start = pageIndex * DEEPDIVE_COMPANIES_PER_SLIDE;
+        const companies = (deepdive.companies || []).slice(start, start + DEEPDIVE_COMPANIES_PER_SLIDE);
+        const firstCompany = start + 1;
+        const lastCompany = start + companies.length;
         text(
             'deepDivePageLabel',
             `Companies ${firstCompany}–${lastCompany} of ${deepdive.company_count}`
-                + (slide.pageCount > 1 ? ` · Page ${slide.pageIndex + 1} of ${slide.pageCount}` : '')
+                + (slide.pageCount > 1 ? ` · Page ${pageIndex + 1} of ${slide.pageCount}` : '')
         );
 
-        el('deepDiveCompanyRows').innerHTML = slide.companies.map((company, index) => {
+        el('deepDiveCompanyRows').innerHTML = companies.map((company, index) => {
             const relationship = ['confirmed', 'possible', 'gap'].includes(company.relationship)
                 ? company.relationship : 'gap';
             const status = relationship === 'gap'
@@ -381,18 +368,48 @@
                     ? `Possible match · ${company.customer_name || 'Review CRM record'}`
                     : 'No linked customer record';
             const spend = Number(company.lifetime_spend || 0);
-            const spendDisplay = spend > 0 ? money.format(spend) : (company.customer_id ? 'No spend recorded' : '—');
+            const revenue = Number(company.estimated_revenue || 0);
+            const scale = [];
+            if (company.fleet_size !== null && company.fleet_size !== undefined) {
+                scale.push(`Fleet ${Number(company.fleet_size).toLocaleString()}`);
+            }
+            if (company.mro_score !== null && company.mro_score !== undefined) {
+                scale.push(`MRO ${Number(company.mro_score).toLocaleString()}/100`);
+            }
+            const spendDisplay = spend > 0 ? `${money.format(spend)} MGC spend` : 'No MGC spend recorded';
+            const revenueDisplay = revenue > 0 ? money.format(revenue) : 'Revenue not researched';
             return `
                 <article class="deepdive-company-row relationship-${relationship}" style="animation-delay:${index * 70}ms">
                     <div class="deepdive-company-name">
                         <strong>${escapeHtml(company.name)}</strong>
                         <small>${company.is_main ? '<span class="deepdive-principal">★ Principal</span>' : ''}${escapeHtml(company.customer_name && company.customer_name !== company.name ? `CRM: ${company.customer_name}` : 'Market participant')}</small>
                     </div>
-                    <span class="deepdive-company-type">${escapeHtml(company.type || 'Other')}</span>
+                    <div class="deepdive-type-scale"><span class="deepdive-company-type">${escapeHtml(company.type || 'Other')}</span><small>${escapeHtml(scale.join(' · ') || 'Scale not researched')}</small></div>
                     <div class="deepdive-status"><strong>${escapeHtml(status)}</strong><small>${escapeHtml(relationshipNote)}</small></div>
-                    <span class="deepdive-spend ${spend > 0 ? '' : 'no-spend'}">${escapeHtml(spendDisplay)}</span>
+                    <div class="deepdive-company-value ${revenue > 0 ? '' : 'no-value'}"><strong>${escapeHtml(revenueDisplay)}</strong><small>${escapeHtml(spendDisplay)}</small></div>
                 </article>`;
         }).join('');
+    }
+
+    function renderDeepDiveSlide(slide, position, totalSlides, pageIndex = 0) {
+        const deepdive = slide.deepdive;
+        text('deepDiveTitle', deepdive.title || 'Geographic landscape');
+        text('deepDiveScope', [deepdive.country, deepdive.focus].filter(Boolean).join(' · '));
+        text('deepDiveCompanyCount', Number(deepdive.company_count || 0).toLocaleString());
+        text('deepDiveCoverage', `${Number(deepdive.coverage_percent || 0).toFixed(0)}%`);
+        text('deepDiveGapCount', Number(deepdive.gap_count || 0).toLocaleString());
+        text('deepDiveEstimatedRevenue', Number(deepdive.revenue_company_count || 0)
+            ? money.format(Number(deepdive.estimated_revenue || 0)) : 'Not researched');
+        text('deepDivePosition', `Landscape ${position + 1} of ${totalSlides}`);
+        renderDeepDivePage(slide, pageIndex);
+    }
+
+    async function turnDeepDivePage(slide, pageIndex) {
+        const rows = el('deepDiveCompanyRows');
+        rows.classList.add('is-paging');
+        await wait(260);
+        renderDeepDivePage(slide, pageIndex);
+        rows.classList.remove('is-paging');
     }
 
     function initialiseDeepDivePreview() {
@@ -403,14 +420,14 @@
         const deepdiveId = params.get('deepdive_id');
         const requestedPage = Math.max(Number.parseInt(params.get('page') || '1', 10) - 1, 0);
         const matchingSlides = slides.filter(slide => String(slide.deepdive.id) === String(deepdiveId));
-        const slide = matchingSlides.find(item => item.pageIndex === requestedPage) || matchingSlides[0] || slides[0];
+        const slide = matchingSlides[0] || slides[0];
         if (!slide) {
             document.body.classList.remove('deepdive-preview-mode');
             return true;
         }
 
         const position = slides.indexOf(slide);
-        renderDeepDiveSlide(slide, position, slides.length);
+        renderDeepDiveSlide(slide, position, slides.length, Math.min(requestedPage, slide.pageCount - 1));
         text('deepDivePosition', `Paused preview · Landscape ${position + 1} of ${slides.length}`);
         el('deepDiveScreen').classList.add('active');
         return true;
@@ -429,7 +446,12 @@
         el('deepDiveScreen').classList.add('active');
         await wait(600);
         el('sceneWipe').classList.remove('active');
-        await wait(DEEPDIVE_DURATION);
+        const pageDuration = slide.pageCount > 1 ? DEEPDIVE_PAGE_DURATION : DEEPDIVE_DURATION;
+        for (let pageIndex = 0; pageIndex < slide.pageCount; pageIndex += 1) {
+            await wait(pageDuration);
+            if (manualFactMode) return true;
+            if (pageIndex + 1 < slide.pageCount) await turnDeepDivePage(slide, pageIndex + 1);
+        }
         if (manualFactMode) return true;
         el('sceneWipe').classList.add('active');
         await wait(450);

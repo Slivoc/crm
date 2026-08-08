@@ -136,6 +136,7 @@ def test_tv_geographic_deepdives_include_crm_status_and_lifetime_spend():
             'is_main': True, 'display_order': 1, 'match_status': 'confirmed',
             'matched_customer_id': 7, 'matched_customer_name': 'Example Air Ltd',
             'matched_customer_status': 'Active Customer', 'lifetime_spend': 125000,
+            'estimated_revenue': 18000000, 'fleet_size': 42, 'mro_score': None,
         },
         {
             'deepdive_id': 3, 'deepdive_title': 'UK Rotary Landscape',
@@ -144,6 +145,7 @@ def test_tv_geographic_deepdives_include_crm_status_and_lifetime_spend():
             'is_main': True, 'display_order': 2, 'match_status': 'unmatched',
             'matched_customer_id': None, 'matched_customer_name': None,
             'matched_customer_status': None, 'lifetime_spend': 0,
+            'estimated_revenue': None, 'fleet_size': None, 'mro_score': None,
         },
     ])
 
@@ -153,7 +155,12 @@ def test_tv_geographic_deepdives_include_crm_status_and_lifetime_spend():
     assert slides[0]['coverage_percent'] == 50
     assert slides[0]['companies'][0]['customer_status'] == 'Active Customer'
     assert slides[0]['companies'][0]['lifetime_spend'] == 125000
+    assert slides[0]['companies'][0]['estimated_revenue'] == 18000000
+    assert slides[0]['companies'][0]['fleet_size'] == 42
     assert slides[0]['companies'][1]['type'] == 'MRO'
+    assert slides[0]['estimated_revenue'] == 18000000
+    assert slides[0]['revenue_company_count'] == 1
+    assert slides[0]['sized_company_count'] == 1
 
 
 def test_tv_geographic_deepdives_do_not_break_tv_when_migration_is_missing():

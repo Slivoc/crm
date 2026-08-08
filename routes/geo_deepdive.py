@@ -80,12 +80,31 @@ def _build_deepdive_company_summary(companies):
     total = len(companies)
     matched_count = sum(company.get('match_status') in matched_statuses for company in companies)
     suggested_count = sum(company.get('match_status') == 'suggested' for company in companies)
+    customer_sizes = {
+        company['matched_customer_id']: company
+        for company in companies
+        if company.get('matched_customer_id')
+    }
     return {
         'total': total,
         'main_count': sum(bool(company.get('is_main')) for company in companies),
         'matched_count': matched_count,
         'suggested_count': suggested_count,
         'coverage_percent': round((matched_count / total) * 100) if total else 0,
+        'estimated_revenue': sum(
+            float(company.get('estimated_revenue') or 0)
+            for company in customer_sizes.values()
+        ),
+        'revenue_company_count': sum(
+            company.get('estimated_revenue') is not None
+            for company in customer_sizes.values()
+        ),
+        'sized_count': sum(
+            company.get('estimated_revenue') is not None
+            or company.get('fleet_size') is not None
+            or company.get('mro_score') is not None
+            for company in companies
+        ),
         'unmatched_count': sum(not company.get('matched_customer_id') for company in companies),
         'unmatched_main': [
             company for company in companies

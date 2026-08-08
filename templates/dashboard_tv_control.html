@@ -37,7 +37,7 @@
         <div class="card-header bg-white py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
             <div>
                 <h5 class="mb-1">Geographic deep-dive slides</h5>
-                <small class="text-muted">Preview the exact, paused slide that will appear in the TV rotation. Each page contains up to seven organisations.</small>
+                <small class="text-muted">Preview the TV landscape. Long lists now paginate in place without another full-screen swipe; each page contains up to seven organisations.</small>
             </div>
             <span class="badge bg-light text-dark">{{ geographic_deepdives|length }} landscapes</span>
         </div>
@@ -59,6 +59,7 @@
                             <div class="tv-landscape-metric"><strong class="d-block text-warning">{{ deepdive.review_count }}</strong><small class="text-muted">Review</small></div>
                             <div class="tv-landscape-metric"><strong class="d-block text-danger">{{ deepdive.gap_count }}</strong><small class="text-muted">Gaps</small></div>
                             <div class="tv-landscape-metric"><strong class="d-block">£{{ '{:,.0f}'.format(deepdive.lifetime_spend or 0) }}</strong><small class="text-muted">Lifetime spend</small></div>
+                            <div class="tv-landscape-metric"><strong class="d-block">{{ ('£' ~ '{:,.0f}'.format(deepdive.estimated_revenue or 0)) if deepdive.revenue_company_count else 'Not researched' }}</strong><small class="text-muted">Est. revenue</small></div>
                         </div>
                     </div>
                     <div class="d-flex flex-wrap align-items-center justify-content-xl-end gap-2">
@@ -232,7 +233,7 @@
     const previewPaging = document.getElementById('deepDivePreviewPaging');
     const previewStatus = document.getElementById('deepDivePreviewStatus');
     const previewDeepdives = {{ geographic_deepdives|tojson }};
-    const deepDiveCssUrl = {{ url_for('static', filename='css/dashboard-tv-deepdives.css')|tojson }};
+    const deepDiveCssUrl = {{ (url_for('static', filename='css/dashboard-tv-deepdives.css') ~ '?v=20260808-3')|tojson }};
     const previewMoney = new Intl.NumberFormat('en-GB', {style: 'currency', currency: 'GBP', maximumFractionDigits: 0});
     let previewState = null;
 
@@ -251,14 +252,19 @@
                     ? `Possible match · ${company.customer_name || 'Review CRM record'}`
                     : 'No linked customer record';
             const spend = Number(company.lifetime_spend || 0);
-            const spendDisplay = spend > 0 ? previewMoney.format(spend) : (company.customer_id ? 'No spend recorded' : '—');
+            const revenue = Number(company.estimated_revenue || 0);
+            const scale = [];
+            if (company.fleet_size !== null && company.fleet_size !== undefined) scale.push(`Fleet ${Number(company.fleet_size).toLocaleString()}`);
+            if (company.mro_score !== null && company.mro_score !== undefined) scale.push(`MRO ${Number(company.mro_score).toLocaleString()}/100`);
+            const spendDisplay = spend > 0 ? `${previewMoney.format(spend)} MGC spend` : 'No MGC spend recorded';
+            const revenueDisplay = revenue > 0 ? previewMoney.format(revenue) : 'Revenue not researched';
             const marketParticipant = company.customer_name && company.customer_name !== company.name
                 ? `CRM: ${company.customer_name}` : 'Market participant';
             return `<article class="deepdive-company-row relationship-${relationship}" style="animation-delay:${index * 70}ms">
                 <div class="deepdive-company-name"><strong>${escapeHtml(company.name)}</strong><small>${company.is_main ? '<span class="deepdive-principal">★ Principal</span>' : ''}${escapeHtml(marketParticipant)}</small></div>
-                <span class="deepdive-company-type">${escapeHtml(company.type || 'Other')}</span>
+                <div class="deepdive-type-scale"><span class="deepdive-company-type">${escapeHtml(company.type || 'Other')}</span><small>${escapeHtml(scale.join(' · ') || 'Scale not researched')}</small></div>
                 <div class="deepdive-status"><strong>${escapeHtml(status)}</strong><small>${escapeHtml(relationshipNote)}</small></div>
-                <span class="deepdive-spend ${spend > 0 ? '' : 'no-spend'}">${escapeHtml(spendDisplay)}</span>
+                <div class="deepdive-company-value ${revenue > 0 ? '' : 'no-value'}"><strong>${escapeHtml(revenueDisplay)}</strong><small>${escapeHtml(spendDisplay)}</small></div>
             </article>`;
         }).join('');
         const firstCompany = start + 1;
@@ -271,9 +277,9 @@
             </head><body><section class="deepdive-screen active">
                 <header><div class="brand"><span class="brand-mark">S</span><span>MARKET LANDSCAPE</span></div><span>Paused preview · Landscape ${landscapePosition + 1} of ${previewDeepdives.length}</span></header>
                 <div class="deepdive-screen-body"><aside class="deepdive-summary"><p class="eyebrow">Geographic deep dive</p><h1>${escapeHtml(deepdive.title || 'Geographic landscape')}</h1><p class="deepdive-scope">${escapeHtml([deepdive.country, deepdive.focus].filter(Boolean).join(' · '))}</p>
-                    <div class="deepdive-metrics"><article><span>Mapped organisations</span><strong>${Number(deepdive.company_count || 0).toLocaleString()}</strong></article><article><span>Confirmed CRM coverage</span><strong>${Number(deepdive.coverage_percent || 0).toFixed(0)}%</strong></article><article><span>Coverage gaps</span><strong>${Number(deepdive.gap_count || 0).toLocaleString()}</strong></article><article><span>Known lifetime spend</span><strong>${previewMoney.format(Number(deepdive.lifetime_spend || 0))}</strong></article></div>
+                    <div class="deepdive-metrics"><article><span>Mapped organisations</span><strong>${Number(deepdive.company_count || 0).toLocaleString()}</strong></article><article><span>Confirmed CRM coverage</span><strong>${Number(deepdive.coverage_percent || 0).toFixed(0)}%</strong></article><article><span>Coverage gaps</span><strong>${Number(deepdive.gap_count || 0).toLocaleString()}</strong></article><article><span>Known est. revenue</span><strong>${Number(deepdive.revenue_company_count || 0) ? previewMoney.format(Number(deepdive.estimated_revenue || 0)) : 'Not researched'}</strong></article></div>
                     <div class="deepdive-relationship-key"><span class="is-confirmed">Confirmed customer</span><span class="is-possible">Possible match</span><span class="is-gap">Not in CRM</span></div></aside>
-                    <section class="deepdive-company-panel"><div class="deepdive-company-heading"><span>Organisation</span><span>Type</span><span>CRM status</span><span>Lifetime spend</span></div><div class="deepdive-company-rows">${rows}</div></section></div>
+                    <section class="deepdive-company-panel"><div class="deepdive-company-heading"><span>Organisation</span><span>Type / scale</span><span>CRM status</span><span>Est. revenue / MGC spend</span></div><div class="deepdive-company-rows">${rows}</div></section></div>
                 <footer><span>Potential customer landscape matched against live CRM records</span><span>${pageLabel}</span></footer>
             </section></body></html>`;
     };

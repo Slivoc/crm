@@ -3257,7 +3257,8 @@ def get_deepdive_mentioned_company_summaries(deepdive_ids):
         SELECT gdc.deepdive_id, gdc.company_name AS name, gdc.company_type,
                gdc.is_main, gdc.display_order, gdc.match_status,
                gdc.matched_customer_id AS customer_id,
-               c.name AS matched_customer_name, cs.status
+               c.name AS matched_customer_name, cs.status,
+               c.estimated_revenue, c.fleet_size, c.mro_score
         FROM geographic_deepdive_companies gdc
         LEFT JOIN customers c ON c.id = gdc.matched_customer_id
         LEFT JOIN customer_status cs ON cs.id = c.status_id
@@ -3438,7 +3439,8 @@ def _replace_geographic_deepdive_companies(db, deepdive_id, companies):
 def get_geographic_deepdive_companies(deepdive_id):
     rows = db_execute('''
         SELECT gdc.*, c.name AS matched_customer_name,
-               cs.status AS matched_customer_status
+               cs.status AS matched_customer_status,
+               c.estimated_revenue, c.fleet_size, c.mro_score
         FROM geographic_deepdive_companies gdc
         LEFT JOIN customers c ON c.id = gdc.matched_customer_id
         LEFT JOIN customer_status cs ON cs.id = c.status_id

@@ -344,6 +344,39 @@
         });
     }
 
+    function initialiseCompanyEnrichment() {
+        root.addEventListener('click', async (event) => {
+            const button = event.target.closest('[data-enrich-customer]');
+            if (!button || button.disabled) return;
+            const customerId = button.dataset.enrichCustomer;
+            const matchingButtons = root.querySelectorAll(`[data-enrich-customer="${customerId}"]`);
+            matchingButtons.forEach((item) => {
+                item.disabled = true;
+                item.dataset.originalHtml = item.innerHTML;
+                item.innerHTML = '<span class="spinner-border spinner-border-sm"></span><span class="visually-hidden">Researching company size</span>';
+            });
+            try {
+                const data = await readJson(await fetch(`/customers/${customerId}/enrich-single`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                }));
+                const enrichment = data.enrichment || {};
+                const details = [];
+                if (enrichment.estimated_revenue) details.push(`revenue ${formatCurrency(enrichment.estimated_revenue, true)}`);
+                if (enrichment.fleet_size) details.push(`fleet ${Number(enrichment.fleet_size).toLocaleString()}`);
+                if (enrichment.mro_score) details.push(`MRO ${enrichment.mro_score}/100`);
+                showToast(`Company size researched${details.length ? `: ${details.join(' · ')}` : '.'}`);
+                window.setTimeout(() => window.location.reload(), 650);
+            } catch (error) {
+                matchingButtons.forEach((item) => {
+                    item.disabled = false;
+                    item.innerHTML = item.dataset.originalHtml || '<i class="bi bi-stars"></i>';
+                });
+                showToast(error.message, 'danger');
+            }
+        });
+    }
+
     function initialiseStatusUpdates() {
         root.addEventListener('click', async (event) => {
             const badge = event.target.closest('.status-badge.clickable');
@@ -663,6 +696,7 @@
     initialiseSegmentFilter();
     initialiseFocusAccounts();
     initialiseInlineEditing();
+    initialiseCompanyEnrichment();
     initialiseStatusUpdates();
     initialiseNarrativeConnections();
     initialiseManualConnections();
